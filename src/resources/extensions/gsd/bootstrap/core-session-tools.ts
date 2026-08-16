@@ -29,6 +29,7 @@ const NON_REPEATABLE_FROM_MINIMAL_BASE = new Set<string>([
 /** Additional core tools not in MINIMAL_AUTO_BASE but routinely multi-called per turn. */
 const EXTRA_INHERENTLY_REPEATABLE = [
   "gsd_exec",
+  "gsd_plan_task",
   "multi_edit",
   "todo_write",
   "notebook_edit",

@@ -33,6 +33,7 @@ import {
 	resolveMcpEnv,
 	type ManagedMcpServerConfig,
 } from "./manager.js";
+import { hasPersistedStdioTrust, persistStdioTrust, stdioPersistTrustKey } from "./stdio-trust-store.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,14 +63,7 @@ const activeStdioTrustApprovalAborts = new Set<(err: Error) => void>();
 const queuedStdioTrustApprovalAborts = new Set<(err: Error) => void>();
 
 function stdioTrustKey(config: McpServerConfig): string {
-	return JSON.stringify({
-		name: config.name,
-		sourcePath: config.sourcePath,
-		command: config.command,
-		args: config.args ?? [],
-		cwd: config.cwd,
-		env: config.env ?? {},
-	});
+	return stdioPersistTrustKey(config);
 }
 
 function readConfigs(): McpServerConfig[] {
@@ -219,12 +213,15 @@ async function assertTrustedStdioServer(
 ): Promise<string | undefined> {
 	if (config.transport !== "stdio") return undefined;
 	const trustKey = stdioTrustKey(config);
-	if (trustedStdioServers.has(trustKey)) return undefined;
+	if (trustedStdioServers.has(trustKey) || hasPersistedStdioTrust(config)) {
+		trustedStdioServers.add(trustKey);
+		return undefined;
+	}
 
 	if (!ctx?.hasUI) {
 		throw new Error(
-			`MCP server "${config.name}" is a project-local stdio command from ${config.sourcePath}. ` +
-			"Run this from an interactive GSD session and approve the server before use.",
+			`MCP server "${config.name}" is a ${config.sourceKind} stdio command from ${config.sourcePath}. ` +
+			"Trust required, run once interactively to approve this server before use.",
 		);
 	}
 
@@ -243,6 +240,7 @@ async function assertTrustedStdioServer(
 		if (!approved) {
 			throw new Error(`MCP server "${config.name}" was not approved by the user.`);
 		}
+		persistStdioTrust(config);
 		return trustKey;
 	});
 }

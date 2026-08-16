@@ -322,6 +322,26 @@ With this configuration, a Haiku-4-5 subagent sees only `gsd-workflow` and `goog
 | `GSD_TOOL_LOOP_REPEATED_REPEATABLE_CAP` | (from preferences) | Per-turn per-tool cap for inherently repeatable tools. Overrides `tool_call_loop_guard.repeated_tool.repeatable_cap`. |
 | `GSD_TOOL_LOOP_EXEMPT_TOOLS` | (from preferences) | Comma-separated tool names exempted from the per-tool cap. Added to the built-in exempt defaults and any `tool_call_loop_guard.repeated_tool.exempt_tools`. |
 
+How to set `GSD_WEB_ALLOW_UNAUTHENTICATED_LAN` (copy-paste for each OS family):
+
+```bash
+# POSIX shell (bash, zsh)
+export GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1
+gsd --web --host 0.0.0.0 --no-auth
+```
+
+```powershell
+# PowerShell
+$env:GSD_WEB_ALLOW_UNAUTHENTICATED_LAN="1"
+gsd --web --host 0.0.0.0 --no-auth
+```
+
+```bat
+REM CMD
+set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1
+gsd --web --host 0.0.0.0 --no-auth
+```
+
 ### Developer and test environment variables
 
 These are for contributors debugging locally or running specific test tiers — not for normal use. See [CONTRIBUTING.md](../../CONTRIBUTING.md).

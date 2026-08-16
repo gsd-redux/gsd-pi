@@ -655,7 +655,7 @@ export async function launchWebMode(
       hostKind: 'unresolved',
       hostPath: null,
       hostRoot: null,
-      failureReason: `refusing to disable auth on non-loopback host ${host}: this exposes terminal and file APIs to the network. Bind to 127.0.0.1, keep token auth on, or set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 to override.`,
+      failureReason: `refusing to disable auth on non-loopback host ${host}: this exposes terminal and file APIs to the network. Bind to 127.0.0.1, keep token auth on, or set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 to override. See docs/user-docs/web-interface.md.`,
       candidates: [],
     }
     emitLaunchStatus(stderr, failure)

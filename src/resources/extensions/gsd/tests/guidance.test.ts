@@ -70,6 +70,21 @@ describe("guidance catalog", () => {
     }
   });
 
+  test("runtime-unknown names the observed error and recovery options (#1693)", () => {
+    const text = recoveryRemediation("runtime-unknown", "ENOENT: missing /tmp/unit.lock");
+    assert.match(text, /ENOENT: missing \/tmp\/unit\.lock/);
+    assert.match(text, /\/gsd doctor/);
+    assert.match(text, /\/gsd auto/);
+    assert.match(text, /dedicated recovery classification/);
+  });
+
+  test("classifyFailure runtime-unknown remediation includes the thrown message", () => {
+    const result = classifyFailure({ error: new Error("unclassified foobar widget") });
+    assert.equal(result.failureKind, "runtime-unknown");
+    assert.match(result.remediation, /unclassified foobar widget/);
+    assert.match(result.remediation, /\/gsd doctor/);
+  });
+
   test("formatGuidance numbers steps under the summary", () => {
     const text = formatGuidance({ summary: "It broke.", steps: ["Fix it.", "Retry."] });
     assert.equal(text, "It broke.\n\n1. Fix it.\n2. Retry.");

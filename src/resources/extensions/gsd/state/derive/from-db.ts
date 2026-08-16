@@ -35,6 +35,10 @@ import {
   needsAttentionBlockerGuidance as formatNeedsAttentionBlocker,
   needsRemediationBlockerGuidance as formatNeedsRemediationBlocker,
 } from '../../guidance.js';
+import {
+  outOfSurfaceBlockerGuidance,
+  routeBlockerCategory,
+} from '../../out-of-surface-blocker.js';
 import { detectPendingEscalation } from '../../escalation.js';
 import { countUnmappedActiveRequirements, formatCompletePhaseNextAction } from '../../requirements-backlog.js';
 import { logWarning } from '../../workflow-logger.js';
@@ -598,6 +602,18 @@ export async function deriveStateFromDb(
 
   const blockerTaskId = await detectBlockers(basePath, activeMilestone.id, activeSlice.id, tasks);
   if (blockerTaskId) {
+    const blockerTask = tasks.find((task) => task.id === blockerTaskId);
+    if (routeBlockerCategory(blockerTask?.blocker_source) === "surface-widen") {
+      return buildDerivedState(
+        activeTaskStateContext,
+        "escalating-task",
+        outOfSurfaceBlockerGuidance(blockerTaskId, activeSlice.id),
+        {
+          blockers: [outOfSurfaceBlockerGuidance(blockerTaskId, activeSlice.id)],
+          includeActiveWorkspace: true,
+        },
+      );
+    }
     const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
     if (replanHistory.length === 0) {
       return buildDerivedState(

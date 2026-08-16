@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 
 // Regression tests for #4416: python invocation normalization for Windows.
 // These tests import from python-resolver.ts which is created as part of the fix.
-import { normalizePythonCommand, detectPythonExecutable } from "../python-resolver.ts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
+import { normalizePythonCommand, detectPythonExecutable, resolveVenvInterpreter, normalizeVerifyCommandForVenv, venvPythonCandidates } from "../python-resolver.ts";
+import { discoverCommands, runVerificationGate } from "../verification-gate.ts";
 
 describe("normalizePythonCommand", () => {
   test("passes through command that does not start with python", () => {
@@ -114,12 +118,13 @@ describe("detectPythonExecutable", () => {
     assert.ok(result === null || typeof result === "string");
   });
 
-  test("return value is a known python invocation form or null", () => {
+  test("return value is a known python invocation form, venv path, or null", () => {
     const result = detectPythonExecutable();
     const valid = [null, "python3", "python", "py -3"];
+    const isVenvPath = typeof result === "string" && /(?:[\\/](?:bin|Scripts)[\\/]python(?:3)?(?:\.exe)?)$/.test(result);
     assert.ok(
-      valid.includes(result as string | null),
-      `Expected one of ${valid.join(", ")}, got: ${String(result)}`,
+      valid.includes(result as string | null) || isVenvPath,
+      `Expected a system form, venv path, or null, got: ${String(result)}`,
     );
   });
 
@@ -127,5 +132,125 @@ describe("detectPythonExecutable", () => {
     const first = detectPythonExecutable();
     const second = detectPythonExecutable();
     assert.equal(first, second, "detectPythonExecutable must return consistent cached result");
+  });
+});
+
+describe("venv awareness (#1700 / #1784)", () => {
+  function makeProject(layout: "posix" | "win32"): { dir: string; python: string } {
+    const dir = mkdtempSync(join(tmpdir(), "gsd-venv-"));
+    const platform = layout === "win32" ? "win32" : "linux";
+    const python = venvPythonCandidates(join(dir, ".venv"), platform)[0];
+    mkdirSync(join(python, ".."), { recursive: true });
+    writeFileSync(python, "");
+    return { dir, python };
+  }
+
+  test("detectPythonExecutable prefers project .venv over system", () => {
+    const { dir, python } = makeProject("posix");
+    const previous = process.env.VIRTUAL_ENV;
+    delete process.env.VIRTUAL_ENV;
+    try {
+      assert.equal(resolveVenvInterpreter(dir, {}, "linux"), python);
+      assert.equal(detectPythonExecutable(dir), python);
+    } finally {
+      if (previous === undefined) delete process.env.VIRTUAL_ENV;
+      else process.env.VIRTUAL_ENV = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("Windows Scripts/python.exe is detected the same way as POSIX bin/python", () => {
+    const { dir, python } = makeProject("win32");
+    try {
+      assert.equal(resolveVenvInterpreter(dir, {}, "win32"), python);
+      assert.match(python, /Scripts[/\\]python\.exe$/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("VIRTUAL_ENV wins over project-local venv", () => {
+    const local = makeProject("posix");
+    const active = makeProject("posix");
+    try {
+      assert.equal(
+        resolveVenvInterpreter(local.dir, { VIRTUAL_ENV: join(active.dir, ".venv") }, "linux"),
+        active.python,
+      );
+    } finally {
+      rmSync(local.dir, { recursive: true, force: true });
+      rmSync(active.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("discoverPythonPytestCommand uses the venv interpreter", () => {
+    const { dir, python } = makeProject("posix");
+    const previous = process.env.VIRTUAL_ENV;
+    delete process.env.VIRTUAL_ENV;
+    try {
+      mkdirSync(join(dir, "tests"));
+      writeFileSync(join(dir, "tests", "test_sample.py"), "def test_ok():\n    assert True\n");
+      const result = discoverCommands({ cwd: dir });
+      assert.equal(result.source, "python-project");
+      assert.deepEqual(result.commands, [`${python} -m pytest`]);
+    } finally {
+      if (previous === undefined) delete process.env.VIRTUAL_ENV;
+      else process.env.VIRTUAL_ENV = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("verification child PATH prepends the venv bin directory", () => {
+    const { dir, python } = makeProject("posix");
+    const previous = process.env.VIRTUAL_ENV;
+    delete process.env.VIRTUAL_ENV;
+    try {
+      writeFileSync(
+        join(dir, "probe.js"),
+        "process.stdout.write(process.env.PATH || '');\n",
+      );
+      const result = runVerificationGate({
+        cwd: dir,
+        preferenceCommands: ["node probe.js"],
+      });
+      assert.equal(result.passed, true);
+      const pathOut = result.checks[0]?.stdout ?? "";
+      assert.equal(pathOut.split(delimiter)[0], dirname(python));
+    } finally {
+      if (previous === undefined) delete process.env.VIRTUAL_ENV;
+      else process.env.VIRTUAL_ENV = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("no-venv project still discovers python3 -m pytest", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gsd-novenv-"));
+    try {
+      mkdirSync(join(dir, "tests"));
+      writeFileSync(join(dir, "tests", "test_sample.py"), "def test_ok():\n    assert True\n");
+      const result = discoverCommands({ cwd: dir });
+      assert.equal(result.source, "python-project");
+      assert.deepEqual(result.commands, ["python3 -m pytest"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("plan-time rewrites bare pytest and python; leaves qualified commands", () => {
+    const { dir, python } = makeProject("posix");
+    const empty = mkdtempSync(join(tmpdir(), "gsd-novenv-"));
+    const previous = process.env.VIRTUAL_ENV;
+    delete process.env.VIRTUAL_ENV;
+    try {
+      assert.equal(normalizeVerifyCommandForVenv("pytest", dir), `${python} -m pytest`);
+      assert.equal(normalizeVerifyCommandForVenv("python -m pytest tests/", dir), `${python} -m pytest tests/`);
+      assert.equal(normalizeVerifyCommandForVenv("/usr/bin/pytest tests/", dir), "/usr/bin/pytest tests/");
+      assert.equal(normalizeVerifyCommandForVenv("pytest", empty), "pytest");
+    } finally {
+      if (previous === undefined) delete process.env.VIRTUAL_ENV;
+      else process.env.VIRTUAL_ENV = previous;
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(empty, { recursive: true, force: true });
+    }
   });
 });

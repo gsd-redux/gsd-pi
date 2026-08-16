@@ -1,6 +1,6 @@
 // Project/App: gsd-pi
 // File Purpose: One-time migration from legacy nested .gsd/milestones/ to
-// flat-phase .gsd/phases/. Runs on startup when the legacy structure is detected.
+// flat-phase .gsd/phases/. Used by startup and pre-reconciliation layout settlement.
 
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -33,6 +33,9 @@ import {
 } from "./atomic-write.js";
 
 const LEGACY_MIGRATING_SEGMENT = "milestones.migrating";
+const EXPLICIT_RECOVERY_REQUIRED =
+  "flat-phase migration skipped: legacy markdown contains state absent from the canonical DB. " +
+  "Recommended: run `/gsd recover` and approve its exact Preview hash to import explicitly.";
 const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
 type FlatPhaseMigrationStage = "before-remove" | "after-remove" | "before-move" | "after-move";
 let flatPhaseMigrationBoundaryForTest: ((stage: FlatPhaseMigrationStage, path: string) => void) | null = null;
@@ -45,6 +48,27 @@ export function _setFlatPhaseMigrationBoundaryForTest(
 
 function legacyMigratingPath(basePath: string): string {
   return join(basePath, ".gsd", LEGACY_MIGRATING_SEGMENT);
+}
+
+function ensureMigrationLockDirectory(path: string): void {
+  try {
+    mkdirSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`flat-phase migration lock path contains an unsupported symbolic link or non-directory: ${path}`);
+  }
+}
+
+function flatPhaseMigrationLockTarget(basePath: string): string {
+  const migrationRoot = join(gsdProjectionRoot(basePath), "migration");
+  ensureMigrationLockDirectory(migrationRoot);
+  const lockTarget = join(migrationRoot, "flat-phase-migration");
+  ensureMigrationLockDirectory(lockTarget);
+  return lockTarget;
 }
 
 function removeManagedPath(path: string): void {
@@ -411,10 +435,20 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
  * 5. Prune legacy milestones/ artifact rows
  * 6. Remove the renamed legacy tree
  *
- * Idempotent: if .gsd/milestones/ doesn't exist, returns immediately.
+ * Idempotent and resumable: no-ops when migration is complete and resumes an
+ * interrupted `.gsd/milestones.migrating/` tree when present.
  */
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
+
+  // With no milestone rows, every content-bearing legacy milestone is outside
+  // database authority. Refuse before creating the persistent lock anchors so
+  // an implicit migration attempt remains read-only.
+  if (getAllMilestones().length === 0) {
+    throw new Error(EXPLICIT_RECOVERY_REQUIRED);
+  }
+
+  const migrationLockTarget = flatPhaseMigrationLockTarget(basePath);
 
   // Headless runs the gsd extension in two processes (host + RPC child) and both
   // fire session_start, so two migrations race over the same tree: one moves
@@ -425,7 +459,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   // entire projection and can legitimately run for minutes on a large project.
   try {
     await withFileLock(
-      join(basePath, ".gsd"),
+      migrationLockTarget,
       async () => {
         // Re-check under the lock: the winner may have completed the migration
         // while this process was waiting, which makes the loser a clean no-op
@@ -438,7 +472,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       // stale window therefore has to exceed the whole migration, not the gap
       // between keepalives, or a waiting process declares the lock dead and
       // steals it mid-render.
-      { retries: 30, stale: 600_000 },
+      { realpath: false, retries: 30, stale: 600_000 },
     );
   } catch (err) {
     // If the lock was stolen anyway, the holder's release() throws even though
@@ -463,10 +497,7 @@ async function migrateToFlatPhaseLocked(basePath: string): Promise<void> {
   // for known identities is archived in the migration backup, then rebuilt from DB.
   const legacySource = resumingInterrupted ? migratingPath : milestonesPath;
   if (legacyHierarchyContainsUnknownIdentity(basePath, legacySource)) {
-    throw new Error(
-      "flat-phase migration skipped: legacy markdown contains state absent from the canonical DB. " +
-      "Recommended: run `/gsd recover` and approve its exact Preview hash to import explicitly.",
-    );
+    throw new Error(EXPLICIT_RECOVERY_REQUIRED);
   }
 
   const milestonesBefore = getAllMilestones().length;

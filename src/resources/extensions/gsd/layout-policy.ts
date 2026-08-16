@@ -60,11 +60,11 @@ export function milestoneIdUniqueSuffix(milestoneId: string): string | undefined
 }
 
 /**
- * Extract the numeric portion of a slice id (S01 → 1).
+ * Extract the numeric portion of a slice id (S01 → 1, S01-replan → 1).
  * Used by the renderer to derive the plan number from the DB's slice_id.
  */
 export function sliceIdToPlanNum(sliceId: string): number {
-  const m = sliceId.match(/^S0*(\d+)$/i);
+  const m = sliceId.match(/^S0*(\d+)(?:-.*)?$/i);
   return m ? Number.parseInt(m[1]!, 10) : 1;
 }
 

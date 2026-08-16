@@ -126,7 +126,7 @@ export const GLOBAL_STATE_CODES = new Set<DoctorIssueCode>([
 export interface DoctorIssue {
   severity: DoctorSeverity;
   code: DoctorIssueCode;
-  scope: "project" | "milestone" | "slice" | "task";
+  scope: "project" | "global" | "milestone" | "slice" | "task";
   unitId: string;
   message: string;
   file?: string;

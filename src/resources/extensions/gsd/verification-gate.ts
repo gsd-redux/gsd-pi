@@ -5,11 +5,11 @@
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, delimiter } from "node:path";
 import type { AuditWarning, RuntimeError, VerificationCheck, VerificationResult } from "./types.js";
 import { DEFAULT_COMMAND_TIMEOUT_MS } from "./constants.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
-import { normalizePythonCommand } from "./python-resolver.js";
+import { normalizePythonCommand, resolveVenvInterpreter, venvBinDirectory, formatPythonInvocation } from "./python-resolver.js";
 import {
   isWorkflowSurfaceAliasTool,
   isWorkflowToolSurfaceName,
@@ -204,8 +204,9 @@ function discoverPythonPytestCommand(cwd: string): string | null {
     return null;
   }
 
+  const pytestCommand = resolvedPytestCommand(cwd);
   if (hasPytestConfig || hasPythonTestFiles) {
-    return "python3 -m pytest";
+    return pytestCommand;
   }
 
   try {
@@ -216,13 +217,18 @@ function discoverPythonPytestCommand(cwd: string): string | null {
       pyproject.includes("[pytest]") ||
       pyproject.includes("[tool:pytest]")
     ) {
-      return "python3 -m pytest";
+      return pytestCommand;
     }
   } catch {
     // Ignore unreadable pyproject.toml and fall through.
   }
 
   return null;
+}
+
+function resolvedPytestCommand(cwd: string): string {
+  const venv = resolveVenvInterpreter(cwd);
+  return venv ? `${formatPythonInvocation(venv)} -m pytest` : "python3 -m pytest";
 }
 
 function hasPythonTests(dir: string): boolean {
@@ -671,7 +677,7 @@ export interface VerificationTarget {
   preferenceCommands?: string[];
 }
 
-function verificationChildEnvironment(): NodeJS.ProcessEnv {
+function verificationChildEnvironment(cwd: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const key of [
     "GSD_PROJECT_ROOT",
@@ -681,6 +687,11 @@ function verificationChildEnvironment(): NodeJS.ProcessEnv {
     "GSD_SLICE_WORKER_TOKEN",
   ]) {
     delete env[key];
+  }
+  const venv = resolveVenvInterpreter(cwd);
+  if (venv) {
+    const bin = venvBinDirectory(venv);
+    env.PATH = `${bin}${delimiter}${env.PATH ?? ""}`;
   }
   return env;
 }
@@ -740,7 +751,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
 
   for (const command of commands) {
     const start = Date.now();
-    const rewrittenCommand = normalizePythonCommand(rewriteCommandWithRtk(command));
+    const rewrittenCommand = normalizePythonCommand(rewriteCommandWithRtk(command), options.cwd);
     // Pass the command string as an argument to the shell explicitly
     // to avoid Node.js DEP0190 (spawnSync with shell: true and no args).
     const shellBin = process.platform === "win32" ? "cmd" : "sh";
@@ -754,7 +765,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
         ];
     const result: SpawnSyncReturns<string> = spawnSync(shellBin, shellArgs, {
       cwd: options.cwd,
-      env: verificationChildEnvironment(),
+      env: verificationChildEnvironment(options.cwd),
       stdio: "pipe",
       encoding: "utf-8",
       timeout: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,

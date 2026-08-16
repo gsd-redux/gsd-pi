@@ -88,10 +88,13 @@ export function buildCursorPrompt(context: Context): string {
 	if (context.systemPrompt?.trim()) parts.push(`System instructions:\n${context.systemPrompt.trim()}`);
 	if (context.messages.length > 0) parts.push(context.messages.map(messageToText).join("\n\n"));
 	if (context.tools?.length) {
+		const names = context.tools.map((tool) => tool.name);
+		const bridged = names.filter((name) => isCursorBridgedGsdTool(name));
 		parts.push(
 			`The external Cursor agent may execute its own tools. ` +
 			`GSD will not redispatch Cursor-owned internal tool events locally. ` +
-			`Requested GSD tools: ${context.tools.map((tool) => tool.name).join(", ")}`,
+			`GSD lifecycle tools executed locally: ${bridged.join(", ") || "(none)"}. ` +
+			`Requested GSD tools: ${names.join(", ")}`,
 		);
 	}
 	return parts.join("\n\n").trim();
@@ -116,6 +119,29 @@ export function buildCursorAgentRunPlan(
 		["-p", prompt, "--output-format", "stream-json", "--model", modelId, "--workspace", cwd, "--trust"],
 		platform,
 	);
+}
+
+const CURSOR_BRIDGED_GSD_TOOLS = new Set([
+	"gsd_task_complete",
+	"gsd_complete_task",
+]);
+
+function gsdToolBaseName(name: string): string {
+	return name.replace(/^mcp__.+?__/, "");
+}
+
+export function isCursorBridgedGsdTool(name: string): boolean {
+	const base = gsdToolBaseName(name);
+	return CURSOR_BRIDGED_GSD_TOOLS.has(name) || CURSOR_BRIDGED_GSD_TOOLS.has(base);
+}
+
+export function isGsdToolName(name: string): boolean {
+	const base = gsdToolBaseName(name);
+	return base.startsWith("gsd_") || name.startsWith("gsd_");
+}
+
+export function unsupportedCursorGsdToolError(name: string): string {
+	return `tool unsupported under cursor-agent: ${name}`;
 }
 
 function emitCompleteLines(chunk: string, pending: { value: string }, onLine: CursorAgentLineHandler): void {
@@ -406,6 +432,9 @@ export function streamViaCursorAgent(
 					return;
 				}
 				if (parsed.type === "tool_call") {
+					if (isGsdToolName(parsed.toolCall.name) && !isCursorBridgedGsdTool(parsed.toolCall.name)) {
+						throw new Error(unsupportedCursorGsdToolError(parsed.toolCall.name));
+					}
 					ensureStart();
 					toolCalls.set(parsed.toolCall.id, parsed.toolCall);
 					content.push(parsed.toolCall);
@@ -417,6 +446,7 @@ export function streamViaCursorAgent(
 				}
 				if (parsed.type === "tool_result") {
 					const toolCall = toolCalls.get(parsed.toolCallId);
+					if (toolCall && isCursorBridgedGsdTool(toolCall.name)) return;
 					if (toolCall) toolCall.externalResult = parsed.result;
 				}
 			};

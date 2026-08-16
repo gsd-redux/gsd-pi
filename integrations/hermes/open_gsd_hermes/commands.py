@@ -27,7 +27,7 @@ class GsdCommandRouter:
         client: GsdMcpClient,
         bind_store: SessionBindStore,
         supervisor: SupervisorFsm,
-        get_session_key: Callable[[], str],
+        get_session_key: Callable[[], str | None],
         get_binding_ctx: Callable[[], BindingContext],
         get_supervisor_ctx: Callable[[], SupervisorContext],
         set_supervisor_ctx: Callable[[SupervisorContext], None],
@@ -82,7 +82,7 @@ class GsdCommandRouter:
         base = self._get_binding_ctx()
         return BindingContext(
             slash_path=slash_path,
-            session_bind=self._bind_store.get(sk) or base.session_bind,
+            session_bind=(self._bind_store.get(sk) if sk else None) or base.session_bind,
             platform=platform or base.platform,
             channel_id=channel or base.channel_id,
             cron_project=base.cron_project,
@@ -94,6 +94,8 @@ class GsdCommandRouter:
             return "Usage: `/gsd bind <project-path>`"
         path = rest[0]
         sk = self._get_session_key()
+        if not sk:
+            return "No live session is bound; cannot bind a project."
         try:
             project_dir = resolve_explicit_project_dir(path)
         except BindingError as e:

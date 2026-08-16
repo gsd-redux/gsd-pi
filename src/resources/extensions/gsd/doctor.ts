@@ -229,7 +229,7 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     issues.push({
       severity: diagnostic.severity,
       code: "invalid_preferences",
-      scope: "project",
+      scope: diagnostic.scope,
       unitId: "project",
       message: `GSD preferences ${diagnostic.kind}: ${formatPreferenceDiagnosticDetail(diagnostic)}`,
       file: diagnostic.path,

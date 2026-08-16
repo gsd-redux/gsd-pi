@@ -13,6 +13,7 @@ from open_gsd_hermes.gsd_client import GsdMcpClient
 from open_gsd_hermes.inject import make_pre_llm_call_handler
 from open_gsd_hermes.memory import GsdMemoryProvider
 from open_gsd_hermes.notifications import NotificationService
+from open_gsd_hermes.session_key import resolve_session_key
 from open_gsd_hermes.supervisor import SupervisorContext, SupervisorFsm
 from open_gsd_hermes.types import BindingContext, DeliveryTarget, PluginContext
 
@@ -23,14 +24,11 @@ def register(ctx: PluginContext) -> None:
     client = GsdMcpClient(config)
     bind_store = SessionBindStore()
 
-    session_key = os.environ.get(
-        "HERMES_SESSION_KEY", "agent:main:cli:direct:local"
-    )
     binding_ctx = BindingContext(cwd=os.getcwd())
     supervisor_ctx = SupervisorContext()
 
-    def get_session_key() -> str:
-        return session_key
+    def get_session_key() -> str | None:
+        return resolve_session_key()
 
     def get_binding_ctx() -> BindingContext:
         return binding_ctx
@@ -42,12 +40,11 @@ def register(ctx: PluginContext) -> None:
         nonlocal supervisor_ctx
         supervisor_ctx = sctx
 
-    delivery_target: DeliveryTarget | None = DeliveryTarget.from_session_key(
-        session_key
-    )
-
     def get_target() -> DeliveryTarget | None:
-        return delivery_target
+        key = get_session_key()
+        if not key:
+            return None
+        return DeliveryTarget.from_session_key(key)
 
     def get_platform_channel() -> tuple[str | None, str | None]:
         t = get_target()
@@ -99,6 +96,8 @@ def register(ctx: PluginContext) -> None:
         "client": client,
         "router": router,
         "supervisor": supervisor,
+        "get_session_key": get_session_key,
+        "get_target": get_target,
     }
 
 

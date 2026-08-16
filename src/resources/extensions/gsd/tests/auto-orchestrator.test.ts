@@ -46,7 +46,7 @@ import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from ".
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
-import { normalizeRealPath } from "../paths.js";
+import { normalizeRealPath, resolveMilestoneFile } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
 import { queryJournal } from "../journal.js";
 import { invalidateAllCaches } from "../cache.js";
@@ -124,7 +124,18 @@ function makeFixture(opts: FixtureOptions = {}): Fixture {
   invalidateStateCache();
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Milestone", status: opts.complete ? "complete" : "active" });
-  if (!opts.noTask && !opts.complete) {
+  if (opts.complete) {
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      title: "Slice",
+      status: "complete",
+      risk: "low",
+      depends: [],
+      demo: "",
+      sequence: 1,
+    });
+  } else if (!opts.noTask) {
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active", risk: "low", depends: [], demo: "", sequence: 1 });
     insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "active" });
   }
@@ -374,7 +385,9 @@ test("advance() preserves an external projection edit without blocking valid wor
   assert.equal(result.kind, "advanced");
   if (result.kind !== "advanced") return;
   assert.deepEqual(result.unit, { unitType: "execute-task", unitId: "M001/S01/T01" });
-  assert.match(readFileSync(rendered.roadmapPath, "utf-8"), /S01: Slice/);
+  const currentRoadmapPath = resolveMilestoneFile(f.base, "M001", "ROADMAP");
+  assert.ok(currentRoadmapPath);
+  assert.match(readFileSync(currentRoadmapPath, "utf-8"), /S01: Slice/);
   const quarantineRoot = join(f.base, ".gsd", "quarantine", "projections");
   const preservedPath = readdirSync(quarantineRoot, { recursive: true })
     .map(String)
@@ -616,16 +629,6 @@ test("advance() merges a completed milestone worktree before all-complete stop",
   const f = makeFixture({ complete: true, noTask: true });
   t.after(() => f.cleanup());
 
-  insertSlice({
-    id: "S01",
-    milestoneId: "M001",
-    title: "Slice",
-    status: "complete",
-    risk: "low",
-    depends: [],
-    demo: "",
-    sequence: 1,
-  });
   insertAssessment({
     path: "milestones/M001/M001-VALIDATION.md",
     milestoneId: "M001",

@@ -185,6 +185,8 @@ test('launchWebMode refuses --no-auth on non-loopback host without override', as
   assert.equal(status.ok, false)
   if (status.ok) throw new Error('expected failure')
   assert.match(status.failureReason, /refusing to disable auth/)
+  assert.match(status.failureReason, /GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1/)
+  assert.match(status.failureReason, /docs\/user-docs\/web-interface\.md/)
 })
 
 test('launchWebMode allows --no-auth on non-loopback host with explicit override', async (t) => {

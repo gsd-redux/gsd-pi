@@ -67,6 +67,7 @@ import {
   escalationArtifactPath,
   writeEscalationArtifact,
 } from "../escalation.js";
+import { extractBlockerCategory } from "../out-of-surface-blocker.js";
 
 export interface CompleteTaskResult {
   taskId: string;
@@ -373,7 +374,9 @@ function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskR
     observability_impact: "",
     full_plan_md: "",
     sequence: 0,
-    blocker_source: "",
+    blocker_source: params.blockerDiscovered
+      ? extractBlockerCategory(params.narrative, params.knownIssues, params.oneLiner) ?? ""
+      : "",
     escalation_pending: 0,
     escalation_awaiting_review: 0,
     escalation_artifact_path: null,

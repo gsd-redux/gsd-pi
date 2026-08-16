@@ -17,6 +17,8 @@ export interface FileLockOptions {
   retries?: number;
   /** proper-lockfile stale threshold in ms (default 10000). */
   stale?: number;
+  /** Resolve the target before locking (default true); false keeps the lock beside the lexical path. */
+  realpath?: boolean;
 }
 
 const DEFAULT_RETRIES = 5;
@@ -35,11 +37,12 @@ function acquireLockSyncWithRetry(
   filePath: string,
   retries: number,
   stale: number,
+  realpath: boolean,
 ): () => void {
   let lastErr: any;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return lockfile.lockSync(filePath, { stale });
+      return lockfile.lockSync(filePath, { realpath, stale });
     } catch (err: any) {
       lastErr = err;
       if (err?.code !== "ELOCKED") throw err;
@@ -57,11 +60,12 @@ export function withFileLockSync<T>(
   if (!existsSync(filePath)) return fn();
 
   const stale = opts.stale ?? DEFAULT_STALE_MS;
+  const realpath = opts.realpath ?? true;
   const onLocked: OnLocked = opts.onLocked ?? "fail";
   const retries = onLocked === "skip" ? 0 : (opts.retries ?? DEFAULT_RETRIES);
 
   try {
-    const release = acquireLockSyncWithRetry(filePath, retries, stale);
+    const release = acquireLockSyncWithRetry(filePath, retries, stale, realpath);
     try {
       return fn();
     } finally {
@@ -84,10 +88,11 @@ export async function withFileLock<T>(
 
   const retries = opts.retries ?? DEFAULT_RETRIES;
   const stale = opts.stale ?? DEFAULT_STALE_MS;
+  const realpath = opts.realpath ?? true;
   const onLocked: OnLocked = opts.onLocked ?? "fail";
 
   try {
-    const release = await lockfile.lock(filePath, { retries, stale });
+    const release = await lockfile.lock(filePath, { realpath, retries, stale });
     try {
       return await fn();
     } finally {

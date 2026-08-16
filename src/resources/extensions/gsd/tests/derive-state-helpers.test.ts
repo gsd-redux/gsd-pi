@@ -20,6 +20,7 @@ import {
   insertRequirement,
   insertSlice,
   insertTask,
+  setTaskBlockerSource,
   getAllMilestones,
   setMilestoneQueueOrder,
   transaction,
@@ -294,6 +295,33 @@ describe('derive-state-helpers', () => {
 
       assert.equal(state.phase, 'replanning-slice', 'blocker: phase is replanning-slice');
       assert.ok(state.blockers.some(b => b.includes('T02')), 'blocker: blockers mention T02');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('out-of-surface-tool blocker routes to escalating-task, not a burned replan (#1693)', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
+      writeFile(base, 'milestones/M001/slices/S01/S01-PLAN.md', PLAN_CONTENT);
+      writeFile(base, 'milestones/M001/slices/S01/tasks/.gitkeep', '');
+      writeFile(base, 'milestones/M001/slices/S01/tasks/T01-PLAN.md', '# T01 Plan');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'First', status: 'active', risk: 'low', depends: [] });
+      insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'First Task', status: 'pending' });
+      insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', title: 'Blocked Task', status: 'complete', blockerDiscovered: true });
+      setTaskBlockerSource('M001', 'S01', 'T02', 'out-of-surface-tool');
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      assert.equal(state.phase, 'escalating-task');
+      assert.match(state.blockers.join(' '), /out-of-surface-tool/);
+      assert.match(state.blockers.join(' '), /Do not retry the same unit/);
     } finally {
       closeDatabase();
       cleanup(base);

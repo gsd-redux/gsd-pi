@@ -8,6 +8,7 @@ import {
 } from "../state.js";
 import { clearParseCache as defaultClearParseCache } from "../files.js";
 import { clearPathCache } from "../paths.js";
+import { resolveWorktreeOwningProjectRoot } from "../worktree-root.js";
 import { logWarning } from "../workflow-logger.js";
 import type { GSDState } from "../types.js";
 
@@ -64,8 +65,12 @@ function stateBlockerDetails(state: GSDState): ReconciliationBlockerDetail[] {
 /**
  * Drift-driven pre-dispatch reconciliation per ADR-017.
  *
- * Lifecycle: derive → detect drift → apply repairs → re-derive. Capped at
- * MAX_PASSES (=2) cycles. The loop runs only when the prior pass fully
+ * Before non-dry-run detection, settles a pending flat-phase migration when
+ * the workflow DB is available and clears layout caches after a migration.
+ * Dry-run leaves migration state untouched.
+ *
+ * Repair lifecycle: derive → detect drift → apply repairs → re-derive.
+ * Capped at MAX_PASSES (=2) cycles. The loop runs only when the prior pass fully
  * succeeded but re-derive surfaces NEW drift (cascading repairs — e.g.
  * fixing milestone registration uncovers a downstream completion-timestamp
  * drift).
@@ -86,6 +91,30 @@ export async function reconcileBeforeDispatch(
   const repaired: DriftRecord[] = [];
 
   if (!deps.dryRun) {
+    // Startup race (#1774): session_start's flat-phase migration (legacy
+    // .gsd/milestones/ → .gsd/phases/) may still be pending or in flight — in
+    // this process or a sibling headless process — when the first dispatch
+    // reconciles. Detectors then see the transient mid-move gap (projection in
+    // neither layout → phantom roadmap-missing drift), and a repair write into
+    // the legacy tree dies with ENOENT when the migration renames it
+    // mid-write, permanently wedging auto-mode. migrateToFlatPhase is
+    // idempotent and serialized by a cross-process lock, so awaiting it here
+    // settles the layout exactly once; afterwards this is a cheap readdir.
+    // Gated on !dryRun to keep detection read-only and on isDbAvailable
+    // because the migration renders from DB rows.
+    const { isDbAvailable } = await import("../gsd-db.js");
+    if (isDbAvailable()) {
+      const { needsFlatPhaseMigration, migrateToFlatPhase } = await import("../flat-phase-migration.js");
+      const migrationBasePath = resolveWorktreeOwningProjectRoot(basePath);
+      if (needsFlatPhaseMigration(migrationBasePath)) {
+        await migrateToFlatPhase(migrationBasePath);
+        // The tree layout just changed (possibly by the lock holder we waited
+        // on) — drop cached listings so detection sees the settled layout.
+        clearParseCache();
+        clearPathCache();
+      }
+    }
+
     // Self-heal phantom projection entries (#1257): a renamed/removed phase
     // directory leaves stale `.compat.json` projection paths that no detector
     // ever prunes (they all skip missing files), so the marker drifts from disk

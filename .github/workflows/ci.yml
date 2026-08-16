@@ -16,6 +16,10 @@ on:
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
       - 'LICENSE'
+  # Merge queue entries report ci-gate from this event. merge_group does not
+  # support path filters, so it is declared bare rather than mirroring the
+  # paths-ignore lists above.
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -169,7 +173,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Cache Rust build (native addon)
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           shared-key: native-linux-x64-gnu
           workspaces: native -> target
@@ -326,7 +330,7 @@ jobs:
 
       - name: Cache Rust build (native addon)
         if: needs.fast-gates.outputs.portability-changed == 'true'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
         with:
           shared-key: native-win32-x64-msvc
           workspaces: native -> target

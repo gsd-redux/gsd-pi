@@ -18,6 +18,11 @@ import {
 	validateToolArguments,
 } from "@gsd/pi-ai";
 import { resolveAgentTool } from "./resolve-agent-tool.js";
+import {
+	collectValidationErrorFields,
+	decideSchemaOverloadBreaker,
+	narrowedSchemaRetryInstruction,
+} from "./schema-overload-convergence.js";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -185,6 +190,8 @@ async function runLoop(
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 	let consecutiveAllToolErrorTurns = 0;
+	let previousValidationFields: string[] = [];
+	let narrowedSchemaRetryGranted = false;
 
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
@@ -242,9 +249,37 @@ async function runLoop(
 					consecutiveAllToolErrorTurns++;
 				} else if (!hasPreparationErrors) {
 					consecutiveAllToolErrorTurns = 0;
+					previousValidationFields = [];
+					narrowedSchemaRetryGranted = false;
 				}
 
-				if (consecutiveAllToolErrorTurns >= MAX_CONSECUTIVE_VALIDATION_FAILURES) {
+				const currentValidationFields = collectValidationErrorFields(
+					toolResults.map(toolResultText),
+				);
+				const overload = decideSchemaOverloadBreaker({
+					consecutive: consecutiveAllToolErrorTurns,
+					cap: MAX_CONSECUTIVE_VALIDATION_FAILURES,
+					previousFields: previousValidationFields,
+					currentFields: currentValidationFields,
+					narrowedRetryGranted: narrowedSchemaRetryGranted,
+				});
+				if (allToolsFailedPreparation) {
+					previousValidationFields = currentValidationFields;
+				}
+
+				if (overload.grantNarrowedRetry) {
+					narrowedSchemaRetryGranted = true;
+					consecutiveAllToolErrorTurns = MAX_CONSECUTIVE_VALIDATION_FAILURES - 1;
+					const retryMessage: AgentMessage = {
+						role: "user",
+						content: [{ type: "text", text: narrowedSchemaRetryInstruction(currentValidationFields) }],
+						timestamp: Date.now(),
+					};
+					currentContext.messages.push(retryMessage);
+					newMessages.push(retryMessage);
+					await emit({ type: "message_start", message: retryMessage });
+					await emit({ type: "message_end", message: retryMessage });
+				} else if (overload.trip) {
 					const stopMessage: AssistantMessage = {
 						role: "assistant",
 						content: [
@@ -912,6 +947,13 @@ async function finalizeExecutedToolCall(
 		result,
 		isError,
 	};
+}
+
+function toolResultText(result: ToolResultMessage): string {
+	return result.content
+		.filter((block): block is { type: "text"; text: string } => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
 }
 
 function createErrorToolResult(message: string, displayReason?: string): AgentToolResult<any> {

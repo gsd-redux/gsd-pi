@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -50,6 +50,29 @@ test("withFileLock: executes callback when file does not exist", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("withFileLock: realpath=false keeps the lock beside a symlink", async (t) => {
+  if (!hasProperLockfile() || process.platform === "win32") {
+    t.skip("requires proper-lockfile and POSIX directory symlinks");
+    return;
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), "gsd-file-lock-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const external = join(dir, "external");
+  const linked = join(dir, "linked");
+  mkdirSync(external);
+  symlinkSync(external, linked, "dir");
+
+  await withFileLock(
+    linked,
+    async () => {
+      assert.equal(existsSync(`${linked}.lock`), true, "lock stays beside the lexical target");
+      assert.equal(existsSync(`${external}.lock`), false, "lock does not follow the target symlink");
+    },
+    { realpath: false },
+  );
 });
 
 test("withFileLockSync: throws ELOCKED by default (no silent fallback)", () => {
