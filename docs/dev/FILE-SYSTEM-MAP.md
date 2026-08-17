@@ -555,7 +555,6 @@
 | gsd/guided-flow.ts | GSD Workflow | User-guided workflow orchestration |
 | gsd/env-utils.ts | GSD Workflow | Environment variable utilities |
 | gsd/git-constants.ts | GSD Workflow | Git-related constants and paths |
-| gsd/milestone-id-utils.ts | GSD Workflow | Milestone ID generation and parsing |
 | gsd/resource-version.ts | GSD Workflow | Resource versioning helpers |
 | gsd/atomic-write.ts | GSD Workflow | Atomic file write operations |
 | gsd/captures.ts | GSD Workflow | Artifact capture and storage |
