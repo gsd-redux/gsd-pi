@@ -11,7 +11,7 @@
 // the only network call it ever makes is one the user asked for, at the
 // moment they asked for it.
 //
-// Invariants (see .plans/github-copilot-model-catalog-sync-execution.md):
+// Invariants:
 //   - Zero network traffic and zero notifications for sessions without a
 //     configured GitHub Copilot credential — the check below reuses
 //     ctx.modelRegistry.getAvailable(), which already filters providers by
@@ -42,10 +42,16 @@ import {
   type CopilotModelSnapshot,
 } from "../../copilot-model-catalog.js";
 // Read-only cross-reference against the existing static capability-tier
-// table. This never assigns/mutates a tier — a newly discovered model with
-// no entry here is reported as "no GSD capability profile yet" rather than
-// defaulting to any assumed tier, so it stays manually selectable without
-// becoming eligible for automatic routing (see PLAN Phase D/J boundary).
+// table (MODEL_CAPABILITY_TIER, defined in model-router.ts and consumed by
+// the dynamic-routing decisions in that same file). This never assigns or
+// mutates a tier here — a newly discovered model with no entry in that table
+// is reported as "no GSD capability profile yet" rather than defaulting to
+// any assumed tier. Such a model is not eligible for automatic capability
+// routing, but it remains genuinely selectable the same way any other model
+// is: a user can add it to their own models.json (ModelRegistry's documented
+// custom-model merge behavior). See
+// tests/copilot-catalog-manual-selection.test.ts for a behavioral proof of
+// that path, independent of this file's own (mocked) handler tests.
 import { MODEL_CAPABILITY_TIER } from "../../model-router.js";
 
 // Session-scoped only — reset on process restart, never written to disk.
@@ -62,7 +68,8 @@ export function _resetCopilotModelsSessionStateForTests(): void {
  * Read-only annotation for a newly discovered model's known GSD capability
  * tier, if any. Never guesses a tier for an unprofiled model — an absent
  * entry is reported explicitly so the model stays visible for manual
- * selection without implying automatic-routing eligibility.
+ * selection (via models.json, see tests/copilot-catalog-manual-selection.test.ts)
+ * without implying automatic-routing eligibility.
  */
 function describeCapabilityTier(bareModelId: string): string {
   const tier = MODEL_CAPABILITY_TIER[bareModelId];
