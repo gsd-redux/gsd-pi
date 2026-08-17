@@ -67,6 +67,21 @@ test("fetchGitHubCopilotModels fetches GET /models and sanitizes data", async ()
   assert.equal(result.models[1]?.name, "Claude Sonnet 5");
 });
 
+test("fetchGitHubCopilotModels computes a provider-qualified registryId for each sanitized model", async () => {
+  const result = await fetchGitHubCopilotModels({
+    provider: "github-copilot",
+    authToken: "abc123",
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true }],
+      }),
+    }) as Response,
+  });
+
+  assert.equal(result.models[0]?.registryId, "github-copilot/mai-code-1.1-flash");
+});
+
 test("sanitizeGitHubCopilotModels drops invalid, duplicate, and non-tool-capable rows", () => {
   const sanitized = sanitizeGitHubCopilotModels({
     data: [

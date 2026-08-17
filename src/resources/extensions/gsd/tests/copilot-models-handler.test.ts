@@ -195,3 +195,50 @@ test("handleCopilotModels: failure with no cached catalog yet reports clearly", 
   assert.equal(notifications[0].level, "warning");
   assert.match(notifications[0].message, /no cached catalog yet/);
 });
+
+test("handleCopilotModels: newly added model with a known GSD capability tier is annotated", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+
+  // claude-sonnet-5 has a real, existing "standard" entry in MODEL_CAPABILITY_TIER.
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  assert.match(notifications[1].message, /\+ claude-sonnet-5 added.*\(known capability tier: standard\)/);
+});
+
+test("handleCopilotModels: newly added model without a GSD capability profile is flagged as manual-only", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+
+  // "brand-new-unreleased-model" has no entry in MODEL_CAPABILITY_TIER.
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-unreleased-model", name: "Brand New Unreleased Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  assert.match(
+    notifications[1].message,
+    /\+ brand-new-unreleased-model added.*\(no GSD capability profile yet — manual selection only, not auto-routed\)/,
+  );
+});

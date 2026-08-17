@@ -41,6 +41,12 @@ import {
   fetchGitHubCopilotModels,
   type CopilotModelSnapshot,
 } from "../../copilot-model-catalog.js";
+// Read-only cross-reference against the existing static capability-tier
+// table. This never assigns/mutates a tier — a newly discovered model with
+// no entry here is reported as "no GSD capability profile yet" rather than
+// defaulting to any assumed tier, so it stays manually selectable without
+// becoming eligible for automatic routing (see PLAN Phase D/J boundary).
+import { MODEL_CAPABILITY_TIER } from "../../model-router.js";
 
 // Session-scoped only — reset on process restart, never written to disk.
 let lastKnownGoodSnapshot: CopilotModelSnapshot | null = null;
@@ -50,6 +56,19 @@ let notifiedMessages = new Set<string>();
 export function _resetCopilotModelsSessionStateForTests(): void {
   lastKnownGoodSnapshot = null;
   notifiedMessages = new Set<string>();
+}
+
+/**
+ * Read-only annotation for a newly discovered model's known GSD capability
+ * tier, if any. Never guesses a tier for an unprofiled model — an absent
+ * entry is reported explicitly so the model stays visible for manual
+ * selection without implying automatic-routing eligibility.
+ */
+function describeCapabilityTier(bareModelId: string): string {
+  const tier = MODEL_CAPABILITY_TIER[bareModelId];
+  return tier
+    ? ` (known capability tier: ${tier})`
+    : " (no GSD capability profile yet — manual selection only, not auto-routed)";
 }
 
 export interface HandleCopilotModelsOptions {
@@ -133,7 +152,7 @@ export async function handleCopilotModels(
 
   const diff = diffCatalogSnapshots(previousSnapshot, nextSnapshot);
   const messages: string[] = [
-    ...diff.added.map((model) => `+ ${model.id} added to the GitHub Copilot catalog`),
+    ...diff.added.map((model) => `+ ${model.id} added to the GitHub Copilot catalog${describeCapabilityTier(model.id)}`),
     ...diff.removed.map((model) => `- ${model.id} removed from the GitHub Copilot catalog`),
     ...diff.changed.map((model) => `~ ${model.id} changed in the GitHub Copilot catalog`),
   ];

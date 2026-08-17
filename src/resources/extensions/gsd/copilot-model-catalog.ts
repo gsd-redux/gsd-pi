@@ -16,6 +16,12 @@ export interface CopilotModelRecord {
   id: string;
   name: string;
   tool_call?: boolean;
+  /**
+   * Provider-qualified registry ID (`<provider>/<id>`), matching the
+   * `provider/modelId` identity convention used by the GSD model router
+   * (see `model-router.ts`) — computed from bare `id`, never fetched.
+   */
+  registryId?: string;
 }
 
 export interface CopilotModelSnapshot {
@@ -85,7 +91,10 @@ export async function fetchGitHubCopilotModels(options: FetchCopilotModelsOption
   }
 
   const payload = await response.json();
-  const models = sanitizeGitHubCopilotModels(payload);
+  const models = sanitizeGitHubCopilotModels(payload).map((model) => ({
+    ...model,
+    registryId: `${options.provider}/${model.id}`,
+  }));
   const snapshot: CopilotModelSnapshot = {
     generatedAt: new Date().toISOString(),
     models,
