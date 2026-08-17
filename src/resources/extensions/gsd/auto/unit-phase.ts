@@ -42,6 +42,7 @@ import { classifyError, isTransient } from "../error-classifier.js";
 import { setCurrentPhase, clearCurrentPhase } from "../../shared/gsd-phase-state.js";
 import { setAutoActiveStatus } from "../auto-dashboard.js";
 import { runUnit } from "./run-unit.js";
+import { verificationRetryKey } from "./verification-retry-policy.js";
 import { validateSourceWriteWorktreeSafety } from "./worktree-safety-phase.js";
 import { isTaskExecutionReadyForHostVerification } from "./task-execution-cutover.js";
 import {
@@ -977,6 +978,64 @@ export async function runUnitPhase(
       debugLog("runUnitPhase", { phase: "checkpoint-cleaned", unitId });
     }
     s.checkpointSha = null;
+  }
+
+  if (unitEndStatus === "no-artifact" && unitType === "complete-slice") {
+    let failedToolResult: { toolName?: unknown; content?: unknown } | undefined;
+    const messages = s.lastUnitAgentEndMessages;
+    if (Array.isArray(messages)) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (!message || typeof message !== "object") continue;
+        const result = message as { role?: unknown; toolName?: unknown; isError?: unknown; content?: unknown };
+        const toolName = typeof result.toolName === "string" ? result.toolName : "";
+        if (
+          result.role === "toolResult" &&
+          result.isError === true &&
+          (toolName.endsWith("gsd_slice_complete") || toolName.endsWith("gsd_complete_slice"))
+        ) {
+          failedToolResult = result;
+          break;
+        }
+      }
+    }
+    const toolResultContent = failedToolResult?.content;
+    const extractedToolError = typeof toolResultContent === "string"
+      ? toolResultContent.trim()
+      : Array.isArray(toolResultContent)
+        ? toolResultContent
+            .filter((part): part is { text: string } =>
+              Boolean(part) && typeof part === "object" && typeof (part as { text?: unknown }).text === "string")
+            .map(part => part.text)
+            .join("\n")
+            .trim()
+        : null;
+    const toolError = extractedToolError || (failedToolResult
+      ? `${String(failedToolResult.toolName)} returned an error`
+      : null);
+    if (toolError) {
+      const retryKey = verificationRetryKey(unitType, unitId);
+      const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
+      s.verificationRetryCount.set(retryKey, attempt);
+      s.pendingVerificationRetry = {
+        unitId,
+        failureContext: `gsd_slice_complete failed without writing the slice completion artifacts:\n\n${toolError}`,
+        attempt,
+      };
+      rememberRetryDispatch(s, { type: unitType, id: unitId }, iterData);
+      ctx.ui.notify(
+        `complete-slice ${unitId} returned a tool error without writing its artifacts. Retrying with the tool error context.`,
+        "warning",
+      );
+      return {
+        action: "retry",
+        reason: "complete-slice-tool-error",
+        data: {
+          unitStartedAt: _resolveCurrentUnitStartedAtForTest(s.currentUnit),
+          requestDispatchedAt: unitResult.requestDispatchedAt,
+        },
+      };
+    }
   }
 
   return { action: "next", data: { unitStartedAt: _resolveCurrentUnitStartedAtForTest(s.currentUnit), requestDispatchedAt: unitResult.requestDispatchedAt } };
