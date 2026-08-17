@@ -230,6 +230,15 @@ function currentRunningAttempt(lifecycleId: string): RunningAttempt | null {
            attempt.coordination_dispatch_id, attempt.worker_id,
            attempt.milestone_lease_token
     FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    JOIN milestone_leases lease
+      ON lease.milestone_id = lifecycle.milestone_id
+     AND lease.worker_id = attempt.worker_id
+     AND lease.fencing_token = attempt.milestone_lease_token
+     AND lease.status = 'held'
+     AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     JOIN workflow_kernel_checkpoints checkpoint
       ON checkpoint.lifecycle_id = attempt.lifecycle_id
      AND checkpoint.attempt_id = attempt.attempt_id
