@@ -6,11 +6,15 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   _resetCopilotModelsSessionStateForTests,
   handleCopilotModels,
 } from "../commands/handlers/copilot-models.js";
+import { readModelsCatalogOverlay } from "../copilot-overlay-writer.js";
 
 interface FakeModel {
   id: string;
@@ -241,4 +245,77 @@ test("handleCopilotModels: newly added model without a GSD capability profile is
     notifications[1].message,
     /\+ brand-new-unreleased-model added.*\(no GSD capability profile yet — manual selection only, not auto-routed\)/,
   );
+});
+
+test("handleCopilotModels: without --register, newly added models are never written to the overlay", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-handler-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "no --register flag means no overlay file is ever written");
+});
+
+test("handleCopilotModels: --register writes newly added models into the overlay and reports it", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-handler-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  const onDisk = readModelsCatalogOverlay(overlayPath);
+  assert.ok(onDisk?.models["github-copilot"]["brand-new-model"], "newly added model must be written to the overlay");
+  assert.match(notifications[1].message, /\+ brand-new-model registered into/);
+});
+
+test("handleCopilotModels: --register on a no-diff run makes no overlay writes", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-handler-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  // First call establishes the cached snapshot (no diff computed yet).
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "first-run report has no diff.added, so nothing to register yet");
 });

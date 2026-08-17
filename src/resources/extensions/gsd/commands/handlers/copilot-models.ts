@@ -1,6 +1,6 @@
 // Project/App: gsd-pi
-// File Purpose: /gsd copilot-models — explicit, read-only GitHub Copilot
-// model catalog drift check.
+// File Purpose: /gsd copilot-models — explicit GitHub Copilot model catalog
+// drift check, with an opt-in `--register` registration path (Phase H).
 //
 // This is the production wiring for the read-only fetch/sanitize/diff
 // pipeline in `../../copilot-model-catalog.js`. It is intentionally NOT part
@@ -16,14 +16,21 @@
 //     configured GitHub Copilot credential — the check below reuses
 //     ctx.modelRegistry.getAvailable(), which already filters providers by
 //     isProviderRequestReady(), so no new auth-detection logic is introduced.
-//   - Read-only: never writes to models.json, the model registry, or any
-//     provider catalog. Only ever produces a notification.
+//   - Read-only by default: without `--register`, never writes to
+//     models.json, models-catalog.json, the model registry, or any provider
+//     catalog — only ever produces a notification. With the explicit,
+//     opt-in `--register` flag, newly-discovered (`diff.added`) models are
+//     additionally merged into the local `models-catalog.json` overlay via
+//     `registerCopilotModelsInOverlay()` (`../../copilot-overlay-writer.js`)
+//     — the same overlay format/location `gsd update --models` writes.
+//     This never mutates `models.json` itself, never touches unrelated
+//     providers, and never downgrades an existing overlay entry.
 //   - Never overwrites a known-good in-memory snapshot with an empty or
 //     partial response (transient API/auth hiccups keep the last good state).
 //   - The in-memory "last known good" snapshot and notified-message set are
 //     session-scoped only (module-level state) — nothing is persisted to
-//     disk, and neither ever stores the access token, account identity, or
-//     request headers.
+//     disk (aside from the explicit `--register` overlay write), and neither
+//     ever stores the access token, account identity, or request headers.
 //
 // ADR-012 note: the `.provider === "github-copilot"` check below is a
 // legitimate transport-identity check (we need to know specifically whether
@@ -41,6 +48,7 @@ import {
   fetchGitHubCopilotModels,
   type CopilotModelSnapshot,
 } from "../../copilot-model-catalog.js";
+import { registerCopilotModelsInOverlay, resolveGsdModelsCatalogPath } from "../../copilot-overlay-writer.js";
 // Read-only cross-reference against the existing static capability-tier
 // table (MODEL_CAPABILITY_TIER, defined in model-router.ts and consumed by
 // the dynamic-routing decisions in that same file). This never assigns or
@@ -80,6 +88,20 @@ function describeCapabilityTier(bareModelId: string): string {
 
 export interface HandleCopilotModelsOptions {
   fetchImpl?: typeof fetch;
+  /** Test-only override for the models-catalog.json overlay path used by `--register`. */
+  overlayPath?: string;
+}
+
+/**
+ * `--register` is an explicit, opt-in flag (never automatic on every check).
+ * When present, newly-discovered models (`diff.added`) are additionally
+ * written into the local `models-catalog.json` overlay via
+ * `registerCopilotModelsInOverlay()` (Phase H's first vertical slice) — see
+ * `../../copilot-overlay-writer.js`. Without the flag, behavior is unchanged:
+ * informational notification only, never a write.
+ */
+function hasRegisterFlag(args: string): boolean {
+  return args.split(/\s+/).includes("--register");
 }
 
 export async function handleCopilotModels(
@@ -163,6 +185,16 @@ export async function handleCopilotModels(
     ...diff.removed.map((model) => `- ${model.id} removed from the GitHub Copilot catalog`),
     ...diff.changed.map((model) => `~ ${model.id} changed in the GitHub Copilot catalog`),
   ];
+
+  if (hasRegisterFlag(_args) && diff.added.length > 0) {
+    const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
+    const { registeredIds } = registerCopilotModelsInOverlay(overlayPath, diff.added);
+    for (const id of registeredIds) {
+      messages.push(
+        `+ ${id} registered into ${overlayPath} — selectable now, capability/pricing fields are placeholders pending a packages/pi-ai generator refresh`,
+      );
+    }
+  }
 
   const deduped = dedupeShellNotifications(messages);
   const unseen = deduped.filter((message) => !notifiedMessages.has(message));
