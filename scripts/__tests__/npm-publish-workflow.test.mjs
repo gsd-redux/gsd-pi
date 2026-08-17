@@ -238,7 +238,8 @@ test("production release publishes workspace packages and verifies ALL packages 
   const workspacePublish = idx("Publish workspace packages to npm");
   const mainPublish = idx("Publish release to npm @latest");
   const verifyAll = idx("Verify all required packages are published on npm");
-  const pushTag = idx("Push release commit and tag");
+  const pushTag = idx("Push release tag");
+  const pushMain = idx("Push release commit to main");
   const ghRelease = idx("Create GitHub Release");
 
   // Workspace packages publish before the main package.
@@ -253,6 +254,15 @@ test("production release publishes workspace packages and verifies ALL packages 
   assert.ok(verifyAll > mainPublish, "verify must run after the main package is published");
   assert.ok(verifyAll < pushTag, "verify must run before the release tag is pushed");
   assert.ok(verifyAll < ghRelease, "verify must run before the GitHub release is created");
+
+  // The tag is pushed on its own and first. Branch rulesets do not apply to
+  // tags but do apply to main, so chaining both pushes in one step lets a
+  // rejected main push take the tag down with it - which is how v1.16.0
+  // reached npm with no tag and no GitHub release.
+  assert.ok(pushTag > -1, "prod-release must push the release tag");
+  assert.ok(pushMain > -1, "prod-release must push the release commit to main");
+  assert.ok(pushTag < pushMain, "the release tag must be pushed before the main branch push");
+  assert.doesNotMatch(steps[pushTag].run, /push origin main/, "the tag push must not also push main");
 });
 
 test("production release updates README highlights in the release commit", () => {
