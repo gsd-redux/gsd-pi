@@ -52,7 +52,7 @@ const PHASE_PROMPT_TOOL_CALLS: Record<string, readonly string[]> = {
     "gsd_decision_save",
   ],
   "research-slice": ["gsd_summary_save"],
-  "plan-slice": ["gsd_reassess_roadmap", "gsd_plan_slice", "gsd_decision_save"],
+  "plan-slice": ["gsd_reassess_roadmap", "gsd_plan_slice", "gsd_decision_save", "capture_thought"],
   "refine-slice": ["gsd_plan_slice", "gsd_decision_save"],
   "replan-slice": ["gsd_replan_slice"],
   "execute-task": [
