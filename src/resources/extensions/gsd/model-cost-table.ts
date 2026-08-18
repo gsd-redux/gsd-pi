@@ -22,6 +22,107 @@ export interface ModelCostEntry {
   updatedAt: string;
 }
 
+export type RuntimeEconomicsSource =
+  | "user"
+  | "provider-live"
+  | "provider-static"
+  | "bundled-fallback"
+  | "unknown";
+
+export interface TokenPriceTier {
+  inputPer1k: number;
+  outputPer1k: number;
+  cachedInputPer1k?: number;
+  cachedOutputPer1k?: number;
+}
+
+export interface RuntimeModelEconomics {
+  provider: string;
+  modelId: string;
+  source: RuntimeEconomicsSource;
+  fetchedAt?: number;
+  stale: boolean;
+  billingUnit: "tokens" | "request" | "unknown";
+  tokenPrices?: {
+    default: TokenPriceTier;
+    longContext?: TokenPriceTier;
+  };
+  requestMultiplier?: number;
+  promotion?: {
+    discountPercent?: number;
+    endsAt?: string;
+    message?: string;
+  };
+}
+
+export interface ResolveModelEconomicsInput {
+  provider: string;
+  modelId: string;
+  userOverride?: Partial<RuntimeModelEconomics>;
+  liveEconomics?: Partial<RuntimeModelEconomics>;
+  staticEconomics?: Partial<RuntimeModelEconomics>;
+  fallbackEconomics?: Partial<RuntimeModelEconomics>;
+}
+
+function stripProviderPrefix(modelId: string): string {
+  if (!modelId.includes("/")) return modelId;
+  return modelId.split("/").pop() ?? modelId;
+}
+
+function hasMeaningfulEconomics(value: Partial<RuntimeModelEconomics> | undefined): value is Partial<RuntimeModelEconomics> {
+  return !!value && Object.keys(value).length > 0;
+}
+
+function buildDefaultTokenPricesFromBundle(modelId: string): RuntimeModelEconomics["tokenPrices"] | undefined {
+  const bareId = stripProviderPrefix(modelId);
+  const costEntry = lookupModelCost(bareId);
+  if (!costEntry) return undefined;
+
+  return {
+    default: {
+      inputPer1k: costEntry.inputPer1k,
+      outputPer1k: costEntry.outputPer1k,
+    },
+  };
+}
+
+function resolveEconomicsSource(input: ResolveModelEconomicsInput): RuntimeEconomicsSource {
+  if (hasMeaningfulEconomics(input.userOverride)) return "user";
+  if (hasMeaningfulEconomics(input.liveEconomics)) return "provider-live";
+  if (hasMeaningfulEconomics(input.staticEconomics)) return "provider-static";
+  if (hasMeaningfulEconomics(input.fallbackEconomics)) return "bundled-fallback";
+  return "unknown";
+}
+
+export function resolveModelEconomics(input: ResolveModelEconomicsInput): RuntimeModelEconomics {
+  const chosen = hasMeaningfulEconomics(input.userOverride)
+    ? input.userOverride!
+    : hasMeaningfulEconomics(input.liveEconomics)
+      ? input.liveEconomics!
+      : hasMeaningfulEconomics(input.staticEconomics)
+        ? input.staticEconomics!
+        : hasMeaningfulEconomics(input.fallbackEconomics)
+          ? input.fallbackEconomics!
+          : {};
+
+  const provider = input.provider || chosen.provider || "unknown";
+  const modelId = stripProviderPrefix(input.modelId || chosen.modelId || "unknown");
+  const bundle = lookupModelCost(modelId);
+  const tokenPrices = chosen.tokenPrices ?? (bundle ? buildDefaultTokenPricesFromBundle(modelId) : undefined);
+
+  return {
+    provider,
+    modelId,
+    source: resolveEconomicsSource(input),
+    fetchedAt: chosen.fetchedAt,
+    stale: chosen.stale ?? true,
+    billingUnit: chosen.billingUnit ?? (tokenPrices ? "tokens" : "unknown"),
+    tokenPrices,
+    requestMultiplier: chosen.requestMultiplier,
+    promotion: chosen.promotion,
+  };
+}
+
 /**
  * Bundled cost table for known models.
  * Updated periodically with GSD releases.

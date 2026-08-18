@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { lookupModelCost, compareModelCost, BUNDLED_COST_TABLE } from "../model-cost-table.js";
+import {
+  lookupModelCost,
+  compareModelCost,
+  BUNDLED_COST_TABLE,
+  resolveModelEconomics,
+} from "../model-cost-table.js";
 
 // ─── lookupModelCost ─────────────────────────────────────────────────────────
 
@@ -35,6 +40,57 @@ test("lookupModelCost finds MAI Code 1.1 Flash pricing", () => {
   assert.ok(entry);
   assert.equal(entry.inputPer1k, 0.0002);
   assert.equal(entry.outputPer1k, 0.0012);
+});
+
+test("resolveModelEconomics keeps provider-qualified identities separate from same bare model IDs", () => {
+  const openai = resolveModelEconomics({
+    provider: "openai",
+    modelId: "openai/gpt-5.5",
+    liveEconomics: {
+      provider: "openai",
+      modelId: "gpt-5.5",
+      billingUnit: "tokens",
+      tokenPrices: {
+        default: { inputPer1k: 0.006, outputPer1k: 0.035 },
+      },
+      stale: false,
+    },
+  });
+
+  const copilot = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "github-copilot/gpt-5.5",
+    liveEconomics: {
+      provider: "github-copilot",
+      modelId: "gpt-5.5",
+      billingUnit: "tokens",
+      tokenPrices: {
+        default: { inputPer1k: 0.0005, outputPer1k: 0.0025 },
+      },
+      stale: false,
+    },
+  });
+
+  assert.equal(openai.modelId, "gpt-5.5");
+  assert.equal(copilot.modelId, "gpt-5.5");
+  assert.equal(openai.provider, "openai");
+  assert.equal(copilot.provider, "github-copilot");
+  assert.notEqual(openai.tokenPrices?.default.inputPer1k, copilot.tokenPrices?.default.inputPer1k);
+  assert.equal(openai.source, "provider-live");
+  assert.equal(copilot.source, "provider-live");
+});
+
+test("resolveModelEconomics treats unknown costs as unknown rather than zero", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "github-copilot/brand-new-unreleased-model",
+  });
+
+  assert.equal(resolved.provider, "github-copilot");
+  assert.equal(resolved.modelId, "brand-new-unreleased-model");
+  assert.equal(resolved.source, "unknown");
+  assert.equal(resolved.billingUnit, "unknown");
+  assert.equal(resolved.tokenPrices, undefined);
 });
 
 // ─── compareModelCost ────────────────────────────────────────────────────────
