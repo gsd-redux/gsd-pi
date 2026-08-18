@@ -7,8 +7,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { stripProjectionStamp } from "./markdown-renderer.js";
 import { gsdProjectionRoot, gsdRoot, targetTaskFile } from "./paths.js";
 import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "./worktree-root.js";
-import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
-import { readTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
+import { isCanonicalStagedTaskSummaryState } from "./task-summary-projection-policy.js";
 
 interface TaskSummaryProjectionArtifact {
   path: string;
@@ -117,19 +116,11 @@ export function isCanonicalStagedTaskSummaryProjection(
       return false;
     }
 
-    const attempt = readLatestTaskAttempt({
+    return isCanonicalStagedTaskSummaryState({
       milestoneId: task.milestoneId,
       sliceId: task.sliceId,
       taskId: task.taskId,
     });
-    if (attempt?.state !== "settled" || attempt.outcome !== "succeeded") {
-      return false;
-    }
-    if (attempt.nextStage === "verify") return true;
-    if (attempt.nextStage !== "route") return false;
-
-    const verdict = readTaskTechnicalVerdict(attempt.attemptId);
-    return verdict !== null && verdict.verdict !== "pass";
   } catch {
     return false;
   }

@@ -110,6 +110,17 @@ function preserveOne(
   });
 }
 
+/** Move one known-stale managed projection into the standard quarantine. */
+export function quarantineProjectionEvidence(
+  basePath: string,
+  absPath: string,
+): PreservedProjectionEvidence | null {
+  const observedBytes = readProjectionBytes(absPath);
+  if (!observedBytes) return null;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return preserveOne(basePath, absPath, stamp, observedBytes);
+}
+
 /**
  * Preserve every modeled projection whose current bytes differ from its
  * writer-owned baseline, plus any caller-supplied legacy drift paths.
