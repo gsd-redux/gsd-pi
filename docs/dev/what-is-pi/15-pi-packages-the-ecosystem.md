@@ -38,6 +38,6 @@ Or just use conventional directory names (`extensions/`, `skills/`, `prompts/`, 
 
 - [Package gallery](https://shittycodingagent.ai/packages)
 - [npm search](https://www.npmjs.com/search?q=keywords%3Api-package)
-- [Discord community](https://discord.gg/8NnkKuepmQ)
+- [Discord community](https://discord.gg/vY2bv3FrzX)
 
 ---
