@@ -32,14 +32,20 @@ import { checkpointDatabase } from "./gsd-db.js";
 export interface PreMergeStash {
   stash(): void;
   reopenDbAfterMerge(): void;
+  restoreBeforeAutoCommit(): void;
   restoreForMergeFailure(): void;
   restoreAfterCommit(): void;
+}
+
+export interface PreMergeStashOptions {
+  excludeGsdState?: boolean;
 }
 
 export function createPreMergeStash(
   basePath: string,
   milestoneId: string,
   cycleDbHandles: boolean,
+  options: PreMergeStashOptions = {},
 ): PreMergeStash {
   let stashed = false;
   let marker: string | null = null;
@@ -57,7 +63,7 @@ export function createPreMergeStash(
         if (!status) return;
 
         marker = createStashMarker(milestoneId);
-        execFileSync(
+        const stashOutput = execFileSync(
           "git",
           [
             "stash",
@@ -69,10 +75,13 @@ export function createPreMergeStash(
             ".",
             ":(exclude).gsd/.milestone-shelter",
             ":(exclude,glob).gsd/.milestone-shelter/**",
+            ...(options.excludeGsdState
+              ? [":(exclude).gsd", ":(exclude,glob).gsd/**"]
+              : []),
           ],
           { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
         );
-        stashed = true;
+        stashed = stashOutput.includes(marker);
       } catch (err) {
         // Stash failure is non-fatal — proceed without stash and let the merge
         // report the dirty tree if it fails.
@@ -89,10 +98,20 @@ export function createPreMergeStash(
       }
     },
 
+    restoreBeforeAutoCommit(): void {
+      if (!stashed) return;
+      const restoredRef = popStashByRef(basePath, marker);
+      if (!restoredRef) {
+        throw new Error("pre-merge authorization stash could not be restored");
+      }
+      stashed = false;
+    },
+
     restoreForMergeFailure(): void {
       if (!stashed) return;
       try {
         popStashByRef(basePath, marker);
+        stashed = false;
       } catch (err) {
         logWarning("worktree", `git stash pop failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -101,6 +120,7 @@ export function createPreMergeStash(
     restoreAfterCommit(): void {
       if (!stashed) return;
       restoreStashAfterCommit(basePath, marker);
+      stashed = false;
     },
   };
 }

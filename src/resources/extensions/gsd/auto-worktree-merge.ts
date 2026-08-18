@@ -83,7 +83,7 @@ function autoCommitDirtyState(cwd: string): boolean {
  * listing all completed slices, then tear down the worktree.
  *
  * Sequence:
- *  1. Auto-commit dirty worktree state
+ *  1. Stash dirty state, prove closeout, then restore and auto-commit
  *  2. chdir to originalBasePath
  *  3. git checkout main
  *  4. git merge --squash milestone/<MID>
@@ -112,7 +112,10 @@ export function mergeMilestoneToMain(
   const worktreeCwd = process.cwd();
   const milestoneBranch = autoWorktreeBranch(milestoneId);
 
-  // 1. Auto-commit dirty state before leaving.
+  // 1. Protect dirty state while proving closeout, then auto-commit it before
+  //    leaving. Verification revisions include untracked paths, so committing
+  //    before this proof changes the source revision the proof is checking and
+  //    permanently wedges retries (#1793).
   //    Guard: when we entered through an auto-worktree (originalBase is set),
   //    only auto-commit when cwd is on the milestone branch. In parallel mode,
   //    cwd may be on the integration branch after a prior merge's
@@ -122,28 +125,42 @@ export function mergeMilestoneToMain(
   //
   //    When activeWorkspace is null (branch mode, no worktree), autoCommitDirtyState
   //    runs unconditionally — the caller is responsible for cwd placement.
-  {
-    let shouldAutoCommit = true;
-    if (getActiveWorkspace() !== null) {
-      try {
-        const currentBranch = nativeGetCurrentBranch(worktreeCwd);
-        shouldAutoCommit = currentBranch === milestoneBranch;
-      } catch {
-        // If we can't determine the branch, skip the auto-commit to be safe
-        shouldAutoCommit = false;
-      }
-    }
-    if (shouldAutoCommit) {
-      autoCommitDirtyState(worktreeCwd);
+  let shouldAutoCommit = true;
+  if (getActiveWorkspace() !== null) {
+    try {
+      const currentBranch = nativeGetCurrentBranch(worktreeCwd);
+      shouldAutoCommit = currentBranch === milestoneBranch;
+    } catch {
+      // If we can't determine the branch, skip the auto-commit to be safe
+      shouldAutoCommit = false;
     }
   }
 
-  // Reconcile DB state and prove closeout before leaving worktree context.
-  assertMilestoneDbReadyForMerge({
-    milestoneId,
-    projectRoot: originalBasePath_,
-    worktreeCwd,
-  });
+  const authorizationStash = shouldAutoCommit
+    ? createPreMergeStash(
+        worktreeCwd,
+        milestoneId,
+        process.platform === "win32" && isDbAvailable(),
+        { excludeGsdState: true },
+      )
+    : null;
+  authorizationStash?.stash();
+  try {
+    // Reconcile DB state and prove closeout against the validated tree before
+    // GSD mutates it with its own pre-merge commit.
+    assertMilestoneDbReadyForMerge({
+      milestoneId,
+      projectRoot: originalBasePath_,
+      worktreeCwd,
+    });
+    // This is a success-path invariant: if protected files cannot be restored,
+    // abort before committing or tearing down the milestone branch.
+    authorizationStash?.restoreBeforeAutoCommit();
+  } catch (error) {
+    authorizationStash?.restoreForMergeFailure();
+    throw error;
+  }
+  if (shouldAutoCommit) autoCommitDirtyState(worktreeCwd);
 
   // 2. Build completed-slice summaries and rich commit message.
   const { commitMessage, milestoneTitle, sliceSummaries } = buildMilestoneMergeMessage({

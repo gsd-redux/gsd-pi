@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -67,4 +67,34 @@ test("post-commit stash restore brings local work back after merge commit", (t) 
   assert.equal(readFileSync(join(root, "tracked.txt"), "utf8"), "local edit\n");
   assert.equal(readFileSync(join(root, "untracked.txt"), "utf8"), "local untracked\n");
   assert.equal(git(root, ["stash", "list"]).trim(), "", "post-commit restore consumes the pre-merge stash");
+});
+
+test("authorization stash leaves canonical GSD state available to the closeout proof", (t) => {
+  const root = createRepo(t);
+  mkdirSync(join(root, ".gsd"));
+  writeFileSync(join(root, ".gsd", "gsd.db"), "canonical state\n");
+  writeFileSync(join(root, "ad-hoc-helper.ps1"), "Write-Output helper\n");
+
+  const stash = createPreMergeStash(root, "M003", false, { excludeGsdState: true });
+  stash.stash();
+
+  assert.equal(readFileSync(join(root, ".gsd", "gsd.db"), "utf8"), "canonical state\n");
+  assert.equal(existsSync(join(root, "ad-hoc-helper.ps1")), false);
+
+  stash.restoreBeforeAutoCommit();
+  assert.equal(readFileSync(join(root, "ad-hoc-helper.ps1"), "utf8"), "Write-Output helper\n");
+});
+
+test("authorization stash restore fails closed when protected files cannot be restored", (t) => {
+  const root = createRepo(t);
+  writeFileSync(join(root, "ad-hoc-helper.ps1"), "stashed helper\n");
+  const stash = createPreMergeStash(root, "M004", false, { excludeGsdState: true });
+  stash.stash();
+  writeFileSync(join(root, "ad-hoc-helper.ps1"), "conflicting helper\n");
+
+  assert.throws(
+    () => stash.restoreBeforeAutoCommit(),
+    /already exists|restore untracked|would be overwritten/i,
+  );
+  assert.match(git(root, ["stash", "list"]), /gsd: pre-merge stash for M004/);
 });
