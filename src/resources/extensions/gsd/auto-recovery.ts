@@ -477,9 +477,14 @@ export function writeBlockerPlaceholder(
   reason: string,
 ): string | null {
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
-  if (!absPath) return null;
-  const dir = dirname(absPath);
+  const canonicalArtifactPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  if (!canonicalArtifactPath) return null;
+  const blockerArtifactPath = unitType === "execute-task"
+    ? canonicalArtifactPath.replace(/-SUMMARY\.md$/u, "-RECOVERY-BLOCKER.md")
+    : canonicalArtifactPath;
+  // A Task blocker must never occupy its canonical completion projection.
+  if (unitType === "execute-task" && blockerArtifactPath === canonicalArtifactPath) return null;
+  const dir = dirname(blockerArtifactPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const recoveryLine = unitType === "research-project"
     ? "This placeholder was written by auto-mode so the project research gate can stop fail-closed."
@@ -494,7 +499,7 @@ export function writeBlockerPlaceholder(
     recoveryLine,
     `Review and replace this file before relying on downstream artifacts.`,
   ].join("\n");
-  atomicWriteSync(absPath, content, "utf-8");
+  atomicWriteSync(blockerArtifactPath, content, "utf-8");
 
   // #4414: Clear caches so subsequent dispatch guards (e.g.
   // resolveMilestoneFile) see the placeholder file. Without this, the
