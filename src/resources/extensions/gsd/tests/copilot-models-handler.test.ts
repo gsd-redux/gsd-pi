@@ -201,6 +201,34 @@ test("handleCopilotModels: failure with no cached catalog yet reports clearly", 
   assert.match(notifications[0].message, /no cached catalog yet/);
 });
 
+test("handleCopilotModels: why <model> explains profile confidence and pricing", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  const message = notifications[notifications.length - 1]?.message ?? "";
+  assert.match(message, /gpt-5\.4/i);
+  assert.match(message, /heavy|standard/i);
+  assert.match(message, /pricing/i);
+  assert.match(message, /automatic routing|manual selection only|eligible/i);
+});
+
 test("handleCopilotModels: newly added model with a known GSD capability tier is annotated", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
