@@ -48,7 +48,11 @@ import {
   fetchGitHubCopilotModels,
   type CopilotModelSnapshot,
 } from "../../copilot-model-catalog.js";
-import { registerCopilotModelsInOverlay, resolveGsdModelsCatalogPath } from "../../copilot-overlay-writer.js";
+import {
+  computeCatalogRegistrationCandidates,
+  registerCopilotModelsInOverlay,
+  resolveGsdModelsCatalogPath,
+} from "../../copilot-overlay-writer.js";
 // Read-only cross-reference against the existing static capability-tier
 // table (MODEL_CAPABILITY_TIER, defined in model-router.ts and consumed by
 // the dynamic-routing decisions in that same file). This never assigns or
@@ -188,10 +192,22 @@ export async function handleCopilotModels(
 
   if (hasRegisterFlag(_args) && diff.added.length > 0) {
     const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
-    const { registeredIds } = registerCopilotModelsInOverlay(overlayPath, diff.added);
-    for (const id of registeredIds) {
+    const effectiveLocalModels = ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
+    const candidates = computeCatalogRegistrationCandidates(diff.added, effectiveLocalModels);
+
+    if (candidates.length === 0) {
       messages.push(
-        `+ ${id} registered into ${overlayPath} — selectable now, capability/pricing fields are placeholders pending a packages/pi-ai generator refresh`,
+        "GitHub Copilot registration: no remote-only models were found; the effective local catalog already covers the live catalog.",
+      );
+    } else {
+      const { quarantined } = registerCopilotModelsInOverlay(overlayPath, diff.added, effectiveLocalModels);
+      for (const model of quarantined) {
+        messages.push(
+          `+ ${model.id} quarantined in ${overlayPath} — remote-only live catalog entry kept out of the effective local catalog because its metadata is incomplete and not persisted as concrete truth.`,
+        );
+      }
+      messages.push(
+        "Remote-only live catalog entries were kept quarantined because the effective local catalog is authoritative and unknown metadata must never be materialized as concrete truth.",
       );
     }
   }

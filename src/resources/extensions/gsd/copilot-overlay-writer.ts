@@ -24,6 +24,15 @@ import { dirname, join } from "node:path";
 
 import { isModelsCatalogOverlay, type Model, type ModelsCatalogOverlay } from "@gsd/pi-ai";
 
+export {
+  applyLastKnownGood,
+  dedupeShellNotifications,
+  diffCatalogSnapshots,
+  fetchGitHubCopilotModels,
+  sanitizeGitHubCopilotModels,
+} from "./copilot-model-catalog.js";
+export type { CopilotModelRecord, CopilotModelSnapshot } from "./copilot-model-catalog.js";
+
 import type { CopilotModelRecord } from "./copilot-model-catalog.js";
 
 // Inline agentDir computation (mirrors `src/app-paths.ts`'s `agentDir`) —
@@ -147,27 +156,71 @@ export function writeModelsCatalogOverlay(path: string, overlay: ModelsCatalogOv
   }
 }
 
+export interface CatalogRegistrationCandidate extends CopilotModelRecord {
+  reason: string;
+}
+
 export interface RegisterCopilotModelsResult {
   registeredIds: string[];
+  quarantined: CatalogRegistrationCandidate[];
   overlayPath: string;
 }
 
 /**
- * Read-modify-write entry point: given newly-discovered Copilot models,
- * merge synthesized entries into the on-disk overlay and report which model
- * ids were actually newly written (as opposed to already present).
+ * Compute remote-only Copilot candidates as the set difference:
+ * live remote catalog - effective local catalog.
+ *
+ * The effective local catalog is the authoritative runtime truth. Remote-only
+ * entries are never materialized into the overlay as fabricated metadata; they
+ * stay quarantined until a real generator or user-authored custom model entry
+ * exists for them.
+ */
+export function computeCatalogRegistrationCandidates(
+  remoteModels: CopilotModelRecord[],
+  localModels: Array<{ id: string; provider?: string }>,
+): CatalogRegistrationCandidate[] {
+  const localIds = new Set(
+    localModels
+      .filter((model) => !model.provider || model.provider === "github-copilot")
+      .map((model) => model.id),
+  );
+
+  return remoteModels
+    .filter((model) => !localIds.has(model.id))
+    .map((model) => ({
+      ...model,
+      reason:
+        "remote-only GitHub Copilot model detected; kept quarantined because the effective local catalog is authoritative and unknown metadata must not be persisted as concrete truth.",
+    }));
+}
+
+/**
+ * Safe registration path: keep remote-only models quarantined instead of writing
+ * placeholder metadata into `models-catalog.json`.
  */
 export function registerCopilotModelsInOverlay(
   overlayPath: string,
   discovered: CopilotModelRecord[],
+  localModels: Array<{ id: string; provider?: string }> = [],
 ): RegisterCopilotModelsResult {
-  const existing = readModelsCatalogOverlay(overlayPath);
-  const existingIds = new Set(Object.keys(existing?.models?.["github-copilot"] ?? {}));
+  const existingOverlay = readModelsCatalogOverlay(overlayPath);
+  const overlayLocalModels = existingOverlay
+    ? Object.entries(existingOverlay.models).flatMap(([provider, entries]) =>
+        provider === "github-copilot"
+          ? Object.keys(entries).map((id) => ({ id, provider: "github-copilot" }))
+          : [],
+      )
+    : [];
 
-  const synthesized = discovered.map(synthesizeCopilotOverlayEntry);
-  const merged = mergeIntoModelsCatalogOverlay(existing, synthesized);
-  writeModelsCatalogOverlay(overlayPath, merged);
+  const effectiveLocalModels = [...localModels, ...overlayLocalModels];
+  const quarantined = computeCatalogRegistrationCandidates(discovered, effectiveLocalModels);
 
-  const registeredIds = discovered.map((m) => m.id).filter((id) => !existingIds.has(id));
-  return { registeredIds, overlayPath };
+  // The safe registration policy is intentionally no-op for remote-only entries:
+  // they are kept quarantined and never persisted as concrete catalog truth
+  // without known metadata from the authoritative local catalog or generator.
+  return {
+    registeredIds: [],
+    quarantined,
+    overlayPath,
+  };
 }

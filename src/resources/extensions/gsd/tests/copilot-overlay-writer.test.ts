@@ -129,29 +129,21 @@ test("readModelsCatalogOverlay returns null for a malformed/invalid file", (t) =
   assert.equal(readModelsCatalogOverlay(path), null, "empty catalog must fail isModelsCatalog validation");
 });
 
-test("registerCopilotModelsInOverlay: end-to-end, reports only newly-written ids", (t) => {
+test("registerCopilotModelsInOverlay: safe containment quarantines remote-only models instead of persisting placeholders", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const overlayPath = join(tmp, "models-catalog.json");
 
-  // First registration: everything is new.
   const first = registerCopilotModelsInOverlay(overlayPath, [record("model-a"), record("model-b")]);
-  assert.deepEqual(first.registeredIds.sort(), ["model-a", "model-b"]);
+  assert.deepEqual(first.registeredIds, [], "remote-only entries are quarantined, never registered as concrete metadata");
+  assert.deepEqual(first.quarantined.map((model) => model.id).sort(), ["model-a", "model-b"]);
   assert.equal(first.overlayPath, overlayPath);
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "no placeholder metadata may be written to the on-disk overlay");
 
-  const onDisk = readModelsCatalogOverlay(overlayPath);
-  assert.ok(onDisk?.models["github-copilot"]["model-a"]);
-  assert.ok(onDisk?.models["github-copilot"]["model-b"]);
-
-  // Second registration: model-a already present, model-c is new.
   const second = registerCopilotModelsInOverlay(overlayPath, [record("model-a"), record("model-c")]);
-  assert.deepEqual(second.registeredIds, ["model-c"]);
-
-  const finalOnDisk = readModelsCatalogOverlay(overlayPath);
-  assert.deepEqual(
-    Object.keys(finalOnDisk?.models["github-copilot"] ?? {}).sort(),
-    ["model-a", "model-b", "model-c"],
-  );
+  assert.deepEqual(second.registeredIds, [], "the safe path never materializes remote-only models as registered");
+  assert.deepEqual(second.quarantined.map((model) => model.id).sort(), ["model-a", "model-c"]);
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "repeated quarantine checks must not write any placeholder overlay");
 });
 
 test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay written by gsd update --models", (t) => {
@@ -172,10 +164,12 @@ test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay wri
   writeFileSync(overlayPath, JSON.stringify(preexisting, null, 2));
 
   const result = registerCopilotModelsInOverlay(overlayPath, [record("gpt-5.4"), record("brand-new")]);
-  assert.deepEqual(result.registeredIds, ["brand-new"]);
+  assert.deepEqual(result.registeredIds, [], "existing authoritative entries and remote-only candidates are not written to disk");
+  assert.deepEqual(result.quarantined.map((model) => model.id).sort(), ["brand-new"]);
 
   const onDisk = readModelsCatalogOverlay(overlayPath);
+  assert.deepEqual(onDisk, preexisting, "pre-existing overlay must be left intact and never overwritten with placeholders");
   assert.ok(onDisk?.models.anthropic["claude-opus-4-6"], "unrelated provider from gsd update --models survives");
   assert.ok(onDisk?.models["github-copilot"]["gpt-5.4"], "existing copilot entry survives");
-  assert.ok(onDisk?.models["github-copilot"]["brand-new"], "new copilot entry added");
+  assert.equal(onDisk?.models["github-copilot"]["brand-new"], undefined, "remote-only model stays quarantined and is never materialized");
 });

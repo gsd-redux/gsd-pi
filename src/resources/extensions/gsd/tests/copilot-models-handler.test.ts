@@ -29,6 +29,7 @@ function createFakeCtx(options: {
   const models = options.models ?? [];
   const ctx = {
     modelRegistry: {
+      getAll: () => models.map((model) => ({ ...model, api: "openai-completions", name: model.id, baseUrl: "https://example.test", provider: model.provider, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096, compat: {} })),
       getAvailable: () => models,
       getApiKey: async (_model: FakeModel) => options.apiKey,
     },
@@ -273,7 +274,7 @@ test("handleCopilotModels: without --register, newly added models are never writ
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "no --register flag means no overlay file is ever written");
 });
 
-test("handleCopilotModels: --register writes newly added models into the overlay and reports it", async (t) => {
+test("handleCopilotModels: --register quarantines remote-only models instead of persisting placeholders", async (t) => {
   _resetCopilotModelsSessionStateForTests();
   const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-handler-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -297,8 +298,8 @@ test("handleCopilotModels: --register writes newly added models into the overlay
   });
 
   const onDisk = readModelsCatalogOverlay(overlayPath);
-  assert.ok(onDisk?.models["github-copilot"]["brand-new-model"], "newly added model must be written to the overlay");
-  assert.match(notifications[1].message, /\+ brand-new-model registered into/);
+  assert.equal(onDisk, null, "remote-only models are quarantined instead of persisting placeholder metadata");
+  assert.match(notifications[1].message, /quarantined|remote-only|not persisted/i);
 });
 
 test("handleCopilotModels: --register on a no-diff run makes no overlay writes", async (t) => {
@@ -318,4 +319,32 @@ test("handleCopilotModels: --register on a no-diff run makes no overlay writes",
     overlayPath,
   });
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "first-run report has no diff.added, so nothing to register yet");
+});
+
+test("handleCopilotModels: --register keeps remote-only models quarantined and never persists placeholders", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-register-quarantine-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "no placeholder metadata may be persisted for remote-only models");
+  assert.match(notifications[1].message, /quarantined.*brand-new-model|remote-only.*quarantined|not persisted/i);
 });

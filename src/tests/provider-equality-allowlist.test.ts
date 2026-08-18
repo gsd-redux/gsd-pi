@@ -101,6 +101,8 @@ const ALLOWED_FILES: Record<string, string> = {
     "github-copilot-specific live model catalog check — needs transport identity, not API shape",
   "src/resources/extensions/gsd/copilot-model-catalog.ts":
     "github-copilot-only fetch gate — the whole module exists to talk to the Copilot /models endpoint",
+  "src/resources/extensions/gsd/copilot-overlay-writer.ts":
+    "remote-only GitHub Copilot candidate subtraction is a transport-specific quarantine check and must not fabricate metadata",
 };
 
 function shouldScan(path: string): boolean {

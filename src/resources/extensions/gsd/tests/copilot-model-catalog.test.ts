@@ -3,10 +3,20 @@ import assert from "node:assert/strict";
 
 import {
   applyLastKnownGood,
+  computeCatalogRegistrationCandidates,
   dedupeShellNotifications,
   diffCatalogSnapshots,
   fetchGitHubCopilotModels,
+  registerCopilotModelsInOverlay,
   sanitizeGitHubCopilotModels,
+} from "../copilot-overlay-writer.js";
+
+import {
+  applyLastKnownGood as applyLastKnownGoodSnapshot,
+  dedupeShellNotifications as dedupeShellNotificationsSnapshot,
+  diffCatalogSnapshots as diffCatalogSnapshotsSnapshot,
+  fetchGitHubCopilotModels as fetchGitHubCopilotModelsSnapshot,
+  sanitizeGitHubCopilotModels as sanitizeGitHubCopilotModelsSnapshot,
 } from "../copilot-model-catalog.js";
 
 test("fetchGitHubCopilotModels skips non-Copilot providers", async () => {
@@ -150,4 +160,32 @@ test("dedupeShellNotifications collapses repeated alerts for the same model snap
     "copilot catalog updated",
     "copilot catalog changed",
   ]);
+});
+
+test("computeCatalogRegistrationCandidates subtracts the effective local catalog", () => {
+  const candidates = computeCatalogRegistrationCandidates(
+    [
+      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+    ],
+    [
+      { id: "mai-code-1.1-flash", provider: "github-copilot" },
+      { id: "gpt-5.4", provider: "github-copilot" },
+    ],
+  );
+
+  assert.deepEqual(candidates.map((model) => model.id), ["brand-new-model"]);
+});
+
+test("registerCopilotModelsInOverlay quarantines remote-only candidates instead of writing fabricated metadata", () => {
+  const plan = registerCopilotModelsInOverlay(
+    "/tmp/gsd-copilot-should-stay-quarantined.json",
+    [{ id: "brand-new-model", name: "Brand New Model", tool_call: true }],
+    [{ id: "gpt-5.4", provider: "github-copilot" }],
+  );
+
+  assert.deepEqual(plan.registeredIds, []);
+  assert.deepEqual(plan.quarantined.map((model) => model.id), ["brand-new-model"]);
+  assert.equal(plan.overlayPath, "/tmp/gsd-copilot-should-stay-quarantined.json");
 });
