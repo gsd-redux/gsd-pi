@@ -181,6 +181,9 @@ test("#4551: dispatch rule injects failure context and clears session field", as
     blockingFindings: ["[file] src/missing.ts: file not found"],
     verdictExcerpt: "status=fail; 1 blocking issue detected",
   };
+  // A pause occurs at the retry cap. On resume this restored count must not
+  // prevent the restored failure context from reaching the planner.
+  session.preExecRetryCount.set("M001/S01", 2);
 
   const ctx: DispatchContext = {
     basePath: base,
