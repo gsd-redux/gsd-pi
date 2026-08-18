@@ -241,11 +241,9 @@ function taskSummaryForSlicePlan(description: string): string {
   const meaningful = meaningfulSection(description);
   if (!meaningful) return "";
 
-  // Strip XML tags (flat-phase <tasks> format) so they don't leak into summaries
-  const cleaned = meaningful.replace(/<\/?tasks>/g, "").trim();
-  const beforeHeading = cleaned.split(/\n#{1,6}\s+/)[0]?.trim() ?? "";
-  const firstBlock = beforeHeading.split(/\n\s*\n/)[0]?.trim() ?? "";
-  return firstBlock || beforeHeading;
+  // The description is indented inside the flat-phase <tasks> block, so nested
+  // headings remain task detail instead of becoming slice-level sections.
+  return meaningful.replace(/<\/?tasks>/g, "").trim();
 }
 
 function normalizeRiskLevel(value: string | null | undefined): RiskLevel {
