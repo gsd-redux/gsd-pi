@@ -251,6 +251,16 @@ function isWorkerProcessAlive(candidate: Pick<AutoWorkerRow, "host" | "pid">): b
   }
 }
 
+/** True when a worker still owns a fresh heartbeat and a live local process. */
+export function isAutoWorkerLive(workerId: string): boolean {
+  const worker = getAutoWorker(workerId);
+  if (!worker || worker.status !== "active") return false;
+  const heartbeatAt = Date.parse(worker.last_heartbeat_at);
+  if (!Number.isFinite(heartbeatAt)) return false;
+  if (heartbeatAt < Date.now() - HEARTBEAT_TTL_SECONDS * 1000) return false;
+  return isWorkerProcessAlive(worker);
+}
+
 /**
  * Phase C pt 2 — find the most recently active worker for a project root
  * whose heartbeat has lapsed (the "previous crashed session" indicator).
