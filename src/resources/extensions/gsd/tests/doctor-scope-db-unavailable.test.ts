@@ -17,6 +17,7 @@ import { filterDoctorIssues } from "../doctor-format.ts";
 import { checkEngineHealth } from "../doctor-engine-checks.ts";
 import { runGSDDoctor } from "../doctor.ts";
 import { MEMORIES_FTS_REBUILT_KEY } from "../db-memory-fts-schema.ts";
+import { getProjectGSDPreferencesPath } from "../preferences.ts";
 import { appendEvent } from "../workflow-events.ts";
 import { renderPlanFromDb, renderRoadmapFromDb } from "../markdown-renderer.ts";
 
@@ -52,11 +53,18 @@ test("doctor preference diagnostics report diagnostic.scope (#1764)", async (t) 
   mkdirSync(join(base, ".gsd"), { recursive: true });
   process.env.GSD_HOME = home;
   writeFileSync(join(home, "PREFERENCES.md"), "---\nversion: 3\n---\n", "utf-8");
+  const projectPreferencesPath = getProjectGSDPreferencesPath(base);
+  mkdirSync(dirname(projectPreferencesPath), { recursive: true });
+  writeFileSync(projectPreferencesPath, "---\nversion: 3\n---\n", "utf-8");
 
   const report = await runGSDDoctor(base, { fix: false });
-  const issue = report.issues.find((item) => item.code === "invalid_preferences");
-  assert.ok(issue, "doctor should surface the global preferences diagnostic");
-  assert.equal(issue.scope, "global");
+  const issuesByFile = new Map(
+    report.issues
+      .filter((item) => item.code === "invalid_preferences")
+      .map((item) => [item.file, item]),
+  );
+  assert.equal(issuesByFile.get(join(home, "PREFERENCES.md"))?.scope, "global");
+  assert.equal(issuesByFile.get(projectPreferencesPath)?.scope, "project");
 });
 
 test("filterDoctorIssues keeps invalid_preferences issues regardless of preferences file scope", () => {
