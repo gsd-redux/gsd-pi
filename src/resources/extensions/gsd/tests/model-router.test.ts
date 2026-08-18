@@ -19,6 +19,7 @@ import {
   canonicalizeModelId,
   MODEL_CAPABILITY_PROFILES,
   MODEL_CAPABILITY_TIER,
+  getModelProfileConfidence,
 } from "../model-router.js";
 import type { DynamicRoutingConfig, RoutingDecision, ModelCapabilities } from "../model-router.js";
 import type { ClassificationResult } from "../complexity-classifier.js";
@@ -1641,5 +1642,44 @@ describe("model-router registry keys", () => {
       getEligibleModels("standard", ["claude-sonnet-5", "gemini-2.5-pro"], defaultRoutingConfig()),
       ["gemini-2.5-pro", "claude-sonnet-5"],
     );
+  });
+});
+
+describe("Phase J routing safety", () => {
+  test("getModelProfileConfidence classifies curated, provisional, and unknown", () => {
+    assert.equal(getModelProfileConfidence("gpt-4o"), "curated");
+    assert.equal(getModelProfileConfidence("openai/gpt-4o"), "curated");
+    assert.equal(getModelProfileConfidence("brand-new-unreleased-model"), "unknown");
+    assert.equal(
+      getModelProfileConfidence("brand-new-unreleased-model", {
+        "brand-new-unreleased-model": { coding: 72, reasoning: 68, speed: 74, debugging: 60, research: 50, longContext: 55, instruction: 70 },
+      }),
+      "provisional",
+    );
+  });
+
+  test("auto-routing excludes unknown-confidence models when a profiled alternative exists", () => {
+    const config = { ...defaultRoutingConfig(), enabled: true };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-model", "claude-sonnet-4-6"],
+      "execute-task",
+    );
+
+    assert.equal(result.modelId, "claude-sonnet-4-6");
+    assert.equal(result.profileConfidence, "curated");
+    assert.match(result.reason, /curated|capability/i);
+  });
+
+  test("scoreEligibleModels prefers curated confidence over cheaper unknowns", () => {
+    const results = scoreEligibleModels(
+      ["brand-new-unreleased-model", "claude-sonnet-4-6"],
+      { reasoning: 1.0 },
+    );
+
+    assert.equal(results[0].modelId, "claude-sonnet-4-6");
+    assert.equal(results[0].score >= results[1].score, true);
   });
 });

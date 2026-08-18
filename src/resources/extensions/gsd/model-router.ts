@@ -47,6 +47,8 @@ export interface RoutingDecision {
   selectionMethod: "tier-only" | "capability-scored";
   /** Capability scores per eligible model (capability-scored path only) */
   capabilityScores?: Record<string, number>;
+  /** Profile-confidence class for the chosen model */
+  profileConfidence?: CapabilityProfileConfidence;
   /** Tools filtered out due to provider incompatibility (ADR-005) */
   filteredTools?: string[];
   /** Task requirement vector used for scoring */
@@ -109,6 +111,14 @@ function warnUnknownRoutingModel(modelId: string): void {
       "(standard tier, neutral capabilities, and expensive cost).",
   );
 }
+
+export type CapabilityProfileConfidence = "curated" | "provisional" | "unknown";
+
+export const PROFILE_CONFIDENCE_ORDINAL: Record<CapabilityProfileConfidence, number> = {
+  curated: 3,
+  provisional: 2,
+  unknown: 1,
+};
 
 // ─── Known Model Tiers ───────────────────────────────────────────────────────
 // Maps known model IDs to their capability tier. Used when tier_models is not
@@ -345,6 +355,23 @@ function findCapabilityOverride(
     ?? Object.entries(capabilityOverrides).find(([id]) => canonicalizeModelId(id) === canonicalId)?.[1];
 }
 
+export function getModelProfileConfidence(
+  modelId: string,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+): CapabilityProfileConfidence {
+  const bareId = bareModelId(modelId);
+  if (MODEL_CAPABILITY_PROFILES[bareId] !== undefined) {
+    return "curated";
+  }
+
+  const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
+  if (override && Object.keys(override).length > 0) {
+    return "provisional";
+  }
+
+  return "unknown";
+}
+
 /**
  * Compute dynamic task requirements from unit type and optional task metadata.
  * Returns a requirement vector refined by task-specific signals.
@@ -380,7 +407,7 @@ export function scoreEligibleModels(
   eligibleModelIds: string[],
   requirements: Partial<Record<keyof ModelCapabilities, number>>,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
-): Array<{ modelId: string; score: number }> {
+): Array<{ modelId: string; score: number; confidence: CapabilityProfileConfidence }> {
   const scored = eligibleModelIds.map(modelId => {
     const canonicalId = canonicalizeModelId(modelId);
     const builtin = MODEL_CAPABILITY_PROFILES[canonicalId];
@@ -389,14 +416,24 @@ export function scoreEligibleModels(
     const profile: ModelCapabilities = builtin
       ? override ? { ...builtin, ...override } : builtin
       : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
-    return { modelId, score: scoreModel(profile, requirements) };
+    return {
+      modelId,
+      score: scoreModel(profile, requirements),
+      confidence: getModelProfileConfidence(modelId, capabilityOverrides),
+    };
   });
+
   scored.sort((a, b) => {
+    const confidenceDiff = PROFILE_CONFIDENCE_ORDINAL[b.confidence] - PROFILE_CONFIDENCE_ORDINAL[a.confidence];
+    if (confidenceDiff !== 0) return confidenceDiff;
+
     const scoreDiff = b.score - a.score;
     if (Math.abs(scoreDiff) > 2) return scoreDiff;
+
     const costA = getModelCost(a.modelId);
     const costB = getModelCost(b.modelId);
     if (costA !== costB) return costA - costB;
+
     return a.modelId.localeCompare(b.modelId);
   });
   return scored;
@@ -605,7 +642,9 @@ export function resolveModelForComplexity(
   if (routingConfig.capability_routing !== false && eligible.length > 1 && unitType) {
     const requirements = computeTaskRequirements(unitType, taskMetadata);
     const scored = scoreEligibleModels(eligible, requirements, capabilityOverrides);
-    const winner = scored[0];
+    const profiled = scored.filter((candidate) => candidate.confidence !== "unknown");
+    const ranked = profiled.length > 0 ? profiled : scored;
+    const winner = ranked[0];
     if (winner) {
       const capScores: Record<string, number> = {};
       for (const s of scored) capScores[s.modelId] = s.score;
@@ -615,8 +654,9 @@ export function resolveModelForComplexity(
         fallbacks,
         tier: requestedTier,
         wasDowngraded: true,
-        reason: `capability-scored: ${winner.modelId} (${winner.score.toFixed(1)}) for ${unitType}`,
+        reason: `capability-scored: ${winner.modelId} (${winner.score.toFixed(1)}, ${winner.confidence} confidence) for ${unitType}`,
         capabilityScores: capScores,
+        profileConfidence: winner.confidence,
         taskRequirements: requirements,
         selectionMethod: "capability-scored",
       };
