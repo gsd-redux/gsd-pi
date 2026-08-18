@@ -2380,6 +2380,60 @@ test("#1769: unit recovery retry releases the active orchestration marker", asyn
   assert.equal(wedgeResult.ok ? wedgeResult.wedge : null, null);
 });
 
+test("autoLoop stops at the retry closeout when orchestration reports a liveness trip", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.notify = () => {};
+  const pi = makeMockPi();
+  const unit = { unitType: "plan-slice", unitId: "M001/S01" };
+  let advanceCalls = 0;
+  let orchestrationPhase: AutoStatus["phase"] = "running";
+  const stopReasons: Array<string | undefined> = [];
+  const s = makeLoopSession({ currentMilestoneId: "M001" });
+  s.orchestration = {
+    start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    advance: async () => {
+      advanceCalls++;
+      if (advanceCalls > 1) {
+        s.active = false;
+        return { kind: "stopped" as const, reason: "unexpected redispatch after retry trip" };
+      }
+      return {
+        kind: "advanced" as const,
+        unit,
+        stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+        dispatchId: 1,
+      };
+    },
+    settle: async () => {},
+    completeActiveUnit: async () => {},
+    retryActiveUnit: async () => {
+      orchestrationPhase = "stopped";
+    },
+    abandonActiveUnit: async () => {},
+    resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+    getStatus: () => ({ phase: orchestrationPhase, transitionCount: advanceCalls }),
+  } satisfies AutoOrchestrationModule;
+  openLoopDatabase(t, s);
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
+    taskExecutionBoundary: async () => ({ action: "retry" as const, reason: "finalize-retry" }),
+    stopAuto: async (_ctx, _pi, reason) => {
+      stopReasons.push(reason);
+      s.active = false;
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(advanceCalls, 1, "the loop must not redispatch after the retry trip");
+  assert.equal(stopReasons.length, 1);
+  assert.match(stopReasons[0] ?? "", /liveness backstop tripped during retry closeout/);
+});
+
 test("custom-engine recovery fails loudly when dispatch terminalization cannot be confirmed", async (t) => {
   t.mock.method(CustomWorkflowEngine.prototype, "deriveState", async () => ({
     phase: "executing",

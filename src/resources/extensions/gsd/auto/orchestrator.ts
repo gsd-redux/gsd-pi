@@ -1650,7 +1650,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           (ledgerError ? `: ${ledgerError.slice(0, 300)}` : "") +
           ` — fix the underlying failure before re-running.`,
       });
-      if ('error' in outcome) this.pendingBackstopFailure = outcome.error;
+      if ('error' in outcome) {
+        this.pendingBackstopFailure = outcome.error;
+      } else if (outcome.tripped) {
+        const reason = formatWedgeTripNotice(outcome.wedge);
+        this.status.phase = "stopped";
+        this.ctx.ui.notify(reason, "error");
+        this.notifyLifecycle({ name: "stopped", detail: reason });
+      }
     }
 
     this.status.activeUnit = undefined;
