@@ -201,32 +201,52 @@ test("handleCopilotModels: failure with no cached catalog yet reports clearly", 
   assert.match(notifications[0].message, /no cached catalog yet/);
 });
 
-test("handleCopilotModels: why <model> explains profile confidence and pricing", async () => {
+test("handleCopilotModels: why <model> is local-first and never touches auth or network", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [],
+    apiKey: undefined,
+  });
+
+  let fetchCalled = false;
+  let apiKeyCalled = false;
+  ctx.modelRegistry.getApiKey = async () => {
+    apiKeyCalled = true;
+    return "token-abc";
+  };
+
+  await handleCopilotModels("why gpt-5.4", ctx, {
+    fetchImpl: (async () => {
+      fetchCalled = true;
+      return jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }])() as unknown as Response;
+    }) as unknown as typeof fetch,
+  });
+
+  assert.equal(fetchCalled, false, "why must never call the network");
+  assert.equal(apiKeyCalled, false, "why must never resolve a Copilot token");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /gpt-5\.4/i);
+  assert.match(notifications[0].message, /pricing|tier|profile|manual selection|automatic routing/i);
+});
+
+test("handleCopilotModels: why rejects non-GitHub-Copilot provider-qualified model IDs", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [{ id: "gpt-5.4", provider: "github-copilot" }],
     apiKey: "token-abc",
   });
 
-  await handleCopilotModels("sync", ctx, {
-    fetchImpl: jsonResponse([
-      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
-      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
-    ]) as unknown as typeof fetch,
+  let fetchCalled = false;
+  await handleCopilotModels("why anthropic/claude-sonnet-5", ctx, {
+    fetchImpl: (async () => {
+      fetchCalled = true;
+      return jsonResponse([{ id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true }])() as unknown as Response;
+    }) as unknown as typeof fetch,
   });
 
-  await handleCopilotModels("why gpt-5.4", ctx, {
-    fetchImpl: jsonResponse([
-      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
-      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
-    ]) as unknown as typeof fetch,
-  });
-
-  const message = notifications[notifications.length - 1]?.message ?? "";
-  assert.match(message, /gpt-5\.4/i);
-  assert.match(message, /heavy|standard/i);
-  assert.match(message, /pricing/i);
-  assert.match(message, /automatic routing|manual selection only|eligible/i);
+  assert.equal(fetchCalled, false, "wrong-provider why requests must not trigger fetches");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /github copilot.*anthropic|only accepts github-copilot|wrong provider/i);
 });
 
 test("handleCopilotModels: newly added model with a known GSD capability tier is annotated", async () => {

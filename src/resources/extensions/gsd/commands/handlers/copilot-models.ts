@@ -112,65 +112,62 @@ function hasRegisterFlag(args: string): boolean {
 function normalizeCommandArgs(args: string): string {
   const trimmed = (args ?? "").trim();
   if (!trimmed || trimmed === "sync" || trimmed === "changes") return "sync";
-  if (trimmed === "pricing") return "pricing";
-  if (trimmed === "promos") return "promos";
-  if (trimmed === "doctor") return "doctor";
-  if (trimmed.startsWith("why ")) return "why";
   if (trimmed.startsWith("why")) return "why";
   return "sync";
 }
 
-function formatModelPrice(modelIdLike: string | { id: string }): string {
-  const modelId = typeof modelIdLike === "string" ? modelIdLike : modelIdLike.id;
-  const bareId = modelId.includes("/") ? modelId.split("/").pop() ?? modelId : modelId;
-  const economics = resolveModelEconomics({
-    provider: "github-copilot",
-    modelId: bareId,
-    fallbackEconomics: {
-      source: "bundled-fallback",
-      stale: false,
-      billingUnit: "tokens",
-    },
-  });
-  const prices = economics.tokenPrices?.default ?? { inputPer1k: 0, outputPer1k: 0 };
-  const input = Number.isFinite(prices.inputPer1k) ? prices.inputPer1k : 0;
-  const output = Number.isFinite(prices.outputPer1k) ? prices.outputPer1k : 0;
+function normalizeBareModelId(modelId: string): string {
+  const trimmed = (modelId ?? "").trim();
+  if (!trimmed) return "";
+  return trimmed.includes("/") ? trimmed.split("/").pop() ?? trimmed : trimmed;
+}
 
-  if (input === 0 && output === 0 && !MODEL_CAPABILITY_TIER[bareId]) {
-    return `- ${modelId}: pricing unavailable (manual override required)`;
+function parseWhyArgument(args: string): { target: string; valid: boolean; error?: string } {
+  const trimmed = (args ?? "").trim();
+  const rawTarget = trimmed.replace(/^why\s+/i, "").trim();
+  if (!rawTarget) {
+    return { target: "", valid: false, error: "No model ID was provided for /gsd copilot-models why." };
   }
 
-  return `- ${modelId}: $${input.toFixed(4)} per 1K input / $${output.toFixed(4)} per 1K output (${economics.source})`;
+  const provider = rawTarget.includes("/") ? rawTarget.split("/")[0]?.toLowerCase() : "";
+  if (provider && provider !== "github-copilot") {
+    return {
+      target: rawTarget,
+      valid: false,
+      error: `GitHub Copilot only accepts GitHub Copilot model IDs for why; '${rawTarget}' is not a GitHub Copilot model.`,
+    };
+  }
+
+  return { target: normalizeBareModelId(rawTarget), valid: true };
 }
 
 function formatModelWhy(modelId: string, snapshot: CopilotModelSnapshot | null): string {
-  const bareId = modelId.includes("/") ? modelId.split("/").pop() ?? modelId : modelId;
-  const tier = MODEL_CAPABILITY_TIER[bareId] ?? "standard";
+  const bareId = normalizeBareModelId(modelId);
+  const tier = MODEL_CAPABILITY_TIER[bareId] ?? "unknown";
   const confidence = getModelProfileConfidence(bareId);
   const economics = resolveModelEconomics({
     provider: "github-copilot",
     modelId: bareId,
-    fallbackEconomics: {
-      source: "bundled-fallback",
-      stale: false,
-      billingUnit: "tokens",
-    },
   });
-  const prices = economics.tokenPrices?.default ?? { inputPer1k: 0, outputPer1k: 0 };
-  const catalogStatus = snapshot?.models.some((candidate) => candidate.id === modelId || candidate.id === bareId)
-    ? "available in the live catalog"
+  const prices = economics.tokenPrices?.default;
+  const pricing = prices
+    ? `$${Number(prices.inputPer1k).toFixed(4)} per 1K input / $${Number(prices.outputPer1k).toFixed(4)} per 1K output`
+    : "pricing unavailable";
+  const catalogStatus = snapshot?.models.some((candidate) => normalizeBareModelId(candidate.id) === bareId)
+    ? "available in the last live catalog snapshot"
     : "not currently in the last live catalog snapshot";
-  const manualHint = confidence === "unknown"
-    ? "manual selection only; not auto-routed when a profiled model is eligible."
+  const routingNote = confidence === "unknown"
+    ? "manual selection only; no curated auto-routing profile is known."
     : "profile-backed and eligible for automatic routing when the tier remains suitable.";
 
   return [
     `GitHub Copilot: why ${modelId}`,
+    `- model: ${bareId}`,
     `- tier: ${tier}`,
     `- capability profile: ${confidence}`,
-    `- pricing: $${prices.inputPer1k.toFixed(4)} per 1K input / $${prices.outputPer1k.toFixed(4)} per 1K output`,
+    `- pricing: ${pricing}`,
     `- status: ${catalogStatus}`,
-    `- routing note: ${manualHint}`,
+    `- routing note: ${routingNote}`,
   ].join("\n");
 }
 
@@ -180,6 +177,19 @@ export async function handleCopilotModels(
   options: HandleCopilotModelsOptions = {},
 ): Promise<void> {
   const command = normalizeCommandArgs(_args);
+
+  if (command === "why") {
+    const parsed = parseWhyArgument(_args);
+    if (!parsed.valid) {
+      ctx.ui.notify(`GitHub Copilot: why request rejected — ${parsed.error ?? "unknown error"}`, "warning");
+      return;
+    }
+
+    const targetModel = parsed.target || lastKnownGoodSnapshot?.models[0]?.id || "gpt-5.4";
+    ctx.ui.notify(formatModelWhy(targetModel, lastKnownGoodSnapshot), "info");
+    return;
+  }
+
   const available = ctx.modelRegistry.getAvailable();
   const copilotModel = available.find((model) => model.provider === "github-copilot");
 
@@ -228,7 +238,7 @@ export async function handleCopilotModels(
     return;
   }
 
-  if (!fetchOutcome.ok && command !== "pricing" && command !== "doctor" && command !== "why" && command !== "promos") {
+  if (!fetchOutcome.ok) {
     ctx.ui.notify(
       `GitHub Copilot model catalog refresh failed (${fetchOutcome.error ?? "empty response"}) — showing the last known catalog, nothing was changed.`,
       "warning",
@@ -236,143 +246,57 @@ export async function handleCopilotModels(
     return;
   }
 
-  if (fetchOutcome.ok) {
-    const previousSnapshot = lastKnownGoodSnapshot;
-    const nextSnapshot = previousSnapshot
-      ? applyLastKnownGood(previousSnapshot, fetchOutcome)
-      : fetchOutcome.snapshot!;
-    lastKnownGoodSnapshot = nextSnapshot;
+  const previousSnapshot = lastKnownGoodSnapshot;
+  const nextSnapshot = previousSnapshot
+    ? applyLastKnownGood(previousSnapshot, fetchOutcome)
+    : fetchOutcome.snapshot!;
+  lastKnownGoodSnapshot = nextSnapshot;
 
-    if (command === "pricing") {
-      const lines = nextSnapshot.models.map(formatModelPrice);
-      ctx.ui.notify(["GitHub Copilot pricing snapshot:", ...lines].join("\n"), "info");
-      return;
-    }
-
-    if (command === "promos") {
-      ctx.ui.notify(
-        "GitHub Copilot promos: no active promo feed is tracked in the bundled GSD catalog. Price changes are surfaced through the live catalog and term-aware economics layer instead.",
-        "info",
-      );
-      return;
-    }
-
-    if (command === "doctor") {
-      const stale = previousSnapshot !== null && nextSnapshot.generatedAt !== previousSnapshot.generatedAt;
-      const lines = [
-        "GitHub Copilot doctor:",
-        "- configured: yes",
-        `- live models: ${nextSnapshot.models.length}`,
-        `- last contact: ${nextSnapshot.generatedAt}`,
-        `- catalog stale: ${stale ? "yes" : "no"}`,
-        `- tracked snapshot: ${lastKnownGoodSnapshot ? "cached" : "none"}`,
-      ];
-      ctx.ui.notify(lines.join("\n"), "info");
-      return;
-    }
-
-    if (command === "why") {
-      const rawModel = (_args ?? "").trim().replace(/^why\s+/i, "").trim();
-      const targetModel = rawModel || nextSnapshot.models[0]?.id || "gpt-5.4";
-      ctx.ui.notify(formatModelWhy(targetModel, nextSnapshot), "info");
-      return;
-    }
-
-    if (!previousSnapshot) {
-      ctx.ui.notify(
-        `GitHub Copilot model catalog: ${nextSnapshot.models.length} model(s) available.`,
-        "info",
-      );
-      return;
-    }
-
-    const diff = diffCatalogSnapshots(previousSnapshot, nextSnapshot);
-    const messages: string[] = [
-      ...diff.added.map((model) => `+ ${model.id} added to the GitHub Copilot catalog${describeCapabilityTier(model.id)}`),
-      ...diff.removed.map((model) => `- ${model.id} removed from the GitHub Copilot catalog`),
-      ...diff.changed.map((model) => `~ ${model.id} changed in the GitHub Copilot catalog`),
-    ];
-
-    if (hasRegisterFlag(_args) && diff.added.length > 0) {
-      const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
-      const effectiveLocalModels = ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
-      const candidates = computeCatalogRegistrationCandidates(diff.added, effectiveLocalModels);
-
-      if (candidates.length === 0) {
-        messages.push(
-          "GitHub Copilot registration: no remote-only models were found; the effective local catalog already covers the live catalog.",
-        );
-      } else {
-        const { quarantined } = registerCopilotModelsInOverlay(overlayPath, diff.added, effectiveLocalModels);
-        for (const model of quarantined) {
-          messages.push(
-            `+ ${model.id} quarantined in ${overlayPath} — remote-only live catalog entry kept out of the effective local catalog because its metadata is incomplete and not persisted as concrete truth.`,
-          );
-        }
-        messages.push(
-          "Remote-only live catalog entries were kept quarantined because the effective local catalog is authoritative and unknown metadata must never be materialized as concrete truth.",
-        );
-      }
-    }
-
-    const deduped = dedupeShellNotifications(messages);
-    const unseen = deduped.filter((message) => !notifiedMessages.has(message));
-    for (const message of deduped) notifiedMessages.add(message);
-
-    if (unseen.length === 0) {
-      ctx.ui.notify("GitHub Copilot model catalog: no new changes since the last check.", "info");
-      return;
-    }
-
-    ctx.ui.notify(["GitHub Copilot model catalog changes:", ...unseen].join("\n"), "info");
-    return;
-  }
-
-  if (!lastKnownGoodSnapshot) {
+  if (!previousSnapshot) {
     ctx.ui.notify(
-      `GitHub Copilot model catalog unavailable (${fetchOutcome.error ?? "empty response"}) — no cached catalog yet, nothing was changed.`,
-      "warning",
-    );
-    return;
-  }
-
-  if (command === "pricing") {
-    const lines = lastKnownGoodSnapshot.models.map(formatModelPrice);
-    ctx.ui.notify(["GitHub Copilot pricing snapshot:", ...lines].join("\n"), "info");
-    return;
-  }
-
-  if (command === "promos") {
-    ctx.ui.notify(
-      "GitHub Copilot promos: no active promo feed is tracked in the bundled GSD catalog. Price changes are surfaced through the live catalog and term-aware economics layer instead.",
+      `GitHub Copilot model catalog: ${nextSnapshot.models.length} model(s) available.`,
       "info",
     );
     return;
   }
 
-  if (command === "doctor") {
-    const stale = lastKnownGoodSnapshot.generatedAt !== lastKnownGoodSnapshot.generatedAt;
-    const lines = [
-      "GitHub Copilot doctor:",
-      "- configured: yes",
-      `- live models: ${lastKnownGoodSnapshot.models.length}`,
-      `- last contact: ${lastKnownGoodSnapshot.generatedAt}`,
-      `- catalog stale: ${stale ? "yes" : "no"}`,
-      `- tracked snapshot: ${lastKnownGoodSnapshot ? "cached" : "none"}`,
-    ];
-    ctx.ui.notify(lines.join("\n"), "info");
+  const diff = diffCatalogSnapshots(previousSnapshot, nextSnapshot);
+  const messages: string[] = [
+    ...diff.added.map((model) => `+ ${model.id} added to the GitHub Copilot catalog${describeCapabilityTier(model.id)}`),
+    ...diff.removed.map((model) => `- ${model.id} removed from the GitHub Copilot catalog`),
+    ...diff.changed.map((model) => `~ ${model.id} changed in the GitHub Copilot catalog`),
+  ];
+
+  if (hasRegisterFlag(_args) && diff.added.length > 0) {
+    const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
+    const effectiveLocalModels = ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
+    const candidates = computeCatalogRegistrationCandidates(diff.added, effectiveLocalModels);
+
+    if (candidates.length === 0) {
+      messages.push(
+        "GitHub Copilot registration: no remote-only models were found; the effective local catalog already covers the live catalog.",
+      );
+    } else {
+      const { quarantined } = registerCopilotModelsInOverlay(overlayPath, diff.added, effectiveLocalModels);
+      for (const model of quarantined) {
+        messages.push(
+          `+ ${model.id} quarantined in ${overlayPath} — remote-only live catalog entry kept out of the effective local catalog because its metadata is incomplete and not persisted as concrete truth.`,
+        );
+      }
+      messages.push(
+        "Remote-only live catalog entries were kept quarantined because the effective local catalog is authoritative and unknown metadata must never be materialized as concrete truth.",
+      );
+    }
+  }
+
+  const deduped = dedupeShellNotifications(messages);
+  const unseen = deduped.filter((message) => !notifiedMessages.has(message));
+  for (const message of deduped) notifiedMessages.add(message);
+
+  if (unseen.length === 0) {
+    ctx.ui.notify("GitHub Copilot model catalog: no new changes since the last check.", "info");
     return;
   }
 
-  if (command === "why") {
-    const rawModel = (_args ?? "").trim().replace(/^why\s+/i, "").trim();
-    const targetModel = rawModel || lastKnownGoodSnapshot.models[0]?.id || "gpt-5.4";
-    ctx.ui.notify(formatModelWhy(targetModel, lastKnownGoodSnapshot), "info");
-    return;
-  }
-
-  ctx.ui.notify(
-    `GitHub Copilot model catalog refresh failed (${fetchOutcome.error ?? "empty response"}) — showing the last known catalog, nothing was changed.`,
-    "warning",
-  );
+  ctx.ui.notify(["GitHub Copilot model catalog changes:", ...unseen].join("\n"), "info");
 }
