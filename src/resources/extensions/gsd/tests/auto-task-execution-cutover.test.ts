@@ -37,6 +37,7 @@ import {
 } from "../task-verification-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
+import { readTerminalTaskRecoveryAbort } from "../artifact-verification.js";
 
 // The stuck-state resume key must ride along with every terminal abort break so an
 // operator can call gsd_task_recovery_resume without querying the database by hand.
@@ -82,6 +83,7 @@ interface CutoverInput {
 
 interface CutoverDeps {
   readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
+  readTerminalTaskRecoveryAbort(task: TaskIdentity): { recoveryActionId: string } | null;
   readTaskAttempt(attemptId: string): AttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): {
     recoveryActionId: string;
@@ -259,6 +261,9 @@ function fakeDomain() {
       // later settlements must not mutate what a caller already saw.
       return attempt ? { ...attempt } : null;
     },
+    readTerminalTaskRecoveryAbort() {
+      return null;
+    },
     readTaskAttempt(attemptId) {
       calls.push({ name: "read-attempt", value: attemptId });
       const attempt = attempts.find((candidate) => candidate.attemptId === attemptId);
@@ -432,6 +437,9 @@ function insertClaimedDispatch(attemptNumber: number): number {
 function canonicalDeps(): CutoverDeps {
   return {
     readLatestTaskAttempt,
+    readTerminalTaskRecoveryAbort(task) {
+      return readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId);
+    },
     readTaskAttempt,
     readTaskRecoveryRoute,
     readTaskTechnicalVerdict,
@@ -927,6 +935,54 @@ test("a durable abort overrides an executor retry", async () => {
     reason: TASK_RECOVERY_ABORT_REASON,
   });
   assert.equal(domain.routes.length, 1);
+});
+
+test("a superseded terminal abort stops before a succeeded head can redispatch", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push(
+    {
+      attemptId: "attempt-aborted",
+      resultId: "result-aborted",
+      attemptNumber: 1,
+      state: "settled",
+      outcome: "failed",
+      nextStage: "route",
+      coordinationDispatchId: 40,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    },
+    {
+      attemptId: "attempt-superseding",
+      resultId: "result-superseding",
+      attemptNumber: 2,
+      retryOfAttemptId: "attempt-aborted",
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "verify",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    },
+  );
+  let runs = 0;
+
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    runs += 1;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTerminalTaskRecoveryAbort() {
+      return { recoveryActionId: "recovery-action-aborted" };
+    },
+  });
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-aborted; resume with gsd_task_recovery_resume)",
+  });
+  assert.equal(runs, 0);
+  assert.equal(domain.claims.length, 0);
 });
 
 test("an explicitly resumed durable abort claims one later Attempt", async () => {

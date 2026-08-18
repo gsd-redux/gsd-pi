@@ -2276,9 +2276,10 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
       s.orchestration = {
         settle: async () => { releaseCalls++; },
         retryActiveUnit: async () => { releaseCalls++; },
-        abandonActiveUnit: async () => {},
+        abandonActiveUnit: async () => { releaseCalls++; },
       };
       let dispatchStatusAtPause: string | undefined;
+      let releaseCallsAtPause: number | undefined;
       const deps = makeMockDeps({
         isDbAvailable: () => true,
         taskExecutionBoundary: async () => {
@@ -2287,6 +2288,7 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         },
         pauseAuto: async () => {
           dispatchStatusAtPause = getLatestForUnit("M001/S01/T01")?.status;
+          releaseCallsAtPause = releaseCalls;
         },
       });
 
@@ -2302,7 +2304,12 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         action === "break" ? "failed" : undefined,
         "a terminal recovery abort must settle its dispatch before pausing",
       );
-      assert.equal(releaseCalls, action === "retry" ? 1 : 0);
+      assert.equal(
+        releaseCallsAtPause,
+        action === "break" ? 1 : undefined,
+        "a terminal recovery abort must release its active unit before pausing",
+      );
+      assert.equal(releaseCalls, 1);
       assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
     } finally {
       closeDatabase();
@@ -4326,7 +4333,7 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
   const pi = makeMockPi();
   const s = makeLoopSession();
   let pauseReason: string | undefined;
-  let recoveryReads = 0;
+  let terminalAbortReads = 0;
   const abortReason =
     "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
 
@@ -4352,14 +4359,12 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
             milestoneLeaseToken: 7,
           };
         },
+        readTerminalTaskRecoveryAbort() {
+          terminalAbortReads += 1;
+          return { recoveryActionId: "recovery-action-1" };
+        },
         readTaskRecoveryRoute() {
-          recoveryReads += 1;
-          return {
-            recoveryActionId: "recovery-action-1",
-            recoveryOwner: "agent",
-            action: "abort",
-            resumeAuthorized: false,
-          };
+          throw new Error("all-attempt terminal abort guard must run before the latest-route fallback");
         },
       }),
     pauseAuto: async (_ctx, _pi, errorContext) => {
@@ -4371,7 +4376,7 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
   await autoLoop(ctx, pi, s, deps);
 
   assert.equal(pi.calls.length, 0, "the predecessor abort must stop before an agent turn");
-  assert.equal(recoveryReads, 1, "the durable predecessor abort must be read exactly once");
+  assert.equal(terminalAbortReads, 1, "the durable predecessor abort must be read exactly once");
   assert.equal(pauseReason, abortReason);
   assert.match(notifications.join("\n"), /recoveryActionId: recovery-action-1/);
   assert.match(notifications.join("\n"), /gsd_task_recovery_resume/);
