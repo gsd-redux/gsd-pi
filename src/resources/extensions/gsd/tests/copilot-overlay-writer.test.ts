@@ -46,11 +46,12 @@ test("synthesizeCopilotOverlayEntry falls back to id when name is blank", () => 
 
 test("mergeIntoModelsCatalogOverlay: starting from nothing produces a valid overlay with only github-copilot", () => {
   const merged = mergeIntoModelsCatalogOverlay(null, [synthesizeCopilotOverlayEntry(record("new-model"))]);
+  const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.equal(merged.version, 1);
   assert.ok(typeof merged.fetchedAt === "string" && !Number.isNaN(Date.parse(merged.fetchedAt)));
   assert.deepEqual(Object.keys(merged.models), ["github-copilot"]);
-  assert.deepEqual(Object.keys(merged.models["github-copilot"]), ["new-model"]);
+  assert.deepEqual(Object.keys(githubCopilotModels), ["new-model"]);
 });
 
 test("mergeIntoModelsCatalogOverlay never touches unrelated providers", () => {
@@ -69,10 +70,11 @@ test("mergeIntoModelsCatalogOverlay never touches unrelated providers", () => {
   };
 
   const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(record("new-model"))]);
+  const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.ok(merged.models.anthropic["claude-opus-4-6"], "unrelated provider entry must survive untouched");
-  assert.ok(merged.models["github-copilot"]["existing-model"], "existing copilot entry must survive");
-  assert.ok(merged.models["github-copilot"]["new-model"], "new copilot entry must be added");
+  assert.ok(githubCopilotModels["existing-model"], "existing copilot entry must survive");
+  assert.ok(githubCopilotModels["new-model"], "new copilot entry must be added");
 });
 
 test("mergeIntoModelsCatalogOverlay never downgrades an existing entry (e.g. a richer models.dev-sourced one)", () => {
@@ -88,9 +90,10 @@ test("mergeIntoModelsCatalogOverlay never downgrades an existing entry (e.g. a r
   };
 
   const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(record("gpt-5.4"))]);
+  const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.deepEqual(
-    merged.models["github-copilot"]["gpt-5.4"],
+    githubCopilotModels["gpt-5.4"],
     richEntry,
     "a placeholder synth must never overwrite a richer existing entry for the same model id",
   );
@@ -168,8 +171,9 @@ test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay wri
   assert.deepEqual(result.quarantined.map((model) => model.id).sort(), ["brand-new"]);
 
   const onDisk = readModelsCatalogOverlay(overlayPath);
+  const onDiskGitHubCopilotModels = (onDisk?.models["github-copilot"] ?? {}) as Record<string, unknown>;
   assert.deepEqual(onDisk, preexisting, "pre-existing overlay must be left intact and never overwritten with placeholders");
   assert.ok(onDisk?.models.anthropic["claude-opus-4-6"], "unrelated provider from gsd update --models survives");
-  assert.ok(onDisk?.models["github-copilot"]["gpt-5.4"], "existing copilot entry survives");
-  assert.equal(onDisk?.models["github-copilot"]["brand-new"], undefined, "remote-only model stays quarantined and is never materialized");
+  assert.ok(onDiskGitHubCopilotModels["gpt-5.4"], "existing copilot entry survives");
+  assert.equal(onDiskGitHubCopilotModels["brand-new"], undefined, "remote-only model stays quarantined and is never materialized");
 });
