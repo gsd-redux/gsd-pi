@@ -130,6 +130,7 @@ function sqliteProviderHint(status: WorkflowDatabaseStatus, nodeVersion: string)
 }
 
 function dbOpenPhaseHint(status: WorkflowDatabaseStatus): string {
+  if (status.lastPhase === "locked") return "The database is locked by another process";
   if (status.lastPhase === "open") return "The database file could not be opened";
   if (status.lastPhase === "initSchema") return "The database schema could not be initialized";
   if (status.lastPhase === "vacuum-recovery") return "Corruption recovery (VACUUM) failed";

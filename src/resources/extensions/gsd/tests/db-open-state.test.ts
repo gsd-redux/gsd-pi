@@ -40,6 +40,14 @@ describe("db-open-state", () => {
     assert.equal(state.snapshot().lastPhase, null);
   });
 
+  test("tracks SQLite lock failures distinctly", () => {
+    const state = createDbOpenState();
+    state.markAttempted();
+    state.recordError("locked", Object.assign(new Error("database is locked"), { errcode: 5 }));
+
+    assert.equal(state.snapshot().lastPhase, "locked");
+  });
+
   test("reset clears attempt and error state", () => {
     const state = createDbOpenState();
 

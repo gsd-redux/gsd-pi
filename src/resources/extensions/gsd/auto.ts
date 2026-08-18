@@ -232,7 +232,12 @@ import {
   getSlice,
   getTask,
 } from "./gsd-db.js";
-import { checkpointWorkflowDatabase, closeWorkflowDatabase } from "./db-workspace.js";
+import {
+  checkpointWorkflowDatabase,
+  closeWorkflowDatabase,
+  getWorkflowDatabaseStatus,
+  resolveProjectRootDbPath,
+} from "./db-workspace.js";
 import { markActiveForWorkerCanceled } from "./db/unit-dispatches.js";
 import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
@@ -242,6 +247,10 @@ import { formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
 import { clearSessionModelOverride } from "./session-model-override.js";
+import {
+  formatLockedWorkflowDatabaseNotice,
+  listWorkflowDbLockHolderPids,
+} from "./workflow-db-locks.js";
 
 function makeCmuxEmitters(pi: ExtensionAPI) {
   return {
@@ -2645,6 +2654,15 @@ export async function startAuto(
   // longer a silent counter reset. `/gsd auto --resume-wedge <id>` is the one
   // sanctioned re-entry.
   if (!(await ensureDbOpen(base))) {
+    const dbStatus = getWorkflowDatabaseStatus();
+    if (dbStatus.lastPhase === "locked") {
+      const holderPids = listWorkflowDbLockHolderPids(resolveProjectRootDbPath(base));
+      ctx.ui.notify(
+        formatLockedWorkflowDatabaseNotice(holderPids),
+        "error",
+      );
+      return;
+    }
     ctx.ui.notify(
       "Auto-mode blocked — liveness backstop unavailable: workflow database could not be opened. Run `/gsd doctor --fix` before retrying.",
       "error",
