@@ -14,6 +14,7 @@ It checks:
 - Completion state consistency
 - Database artifact rows whose rendered files are missing on disk, including warning-only diagnostics for missing user-authored context and research files
 - Git worktree health (worktree and branch modes only — skipped in none mode)
+- Workflow database availability and lock-holder diagnosis
 - Stale DB-backed runtime records and orphaned runtime files
 - Disk-only orphan milestone stub directories
 - Preference parse and validation diagnostics (malformed `PREFERENCES.md` frontmatter or invalid settings)
@@ -104,6 +105,28 @@ Replace the path with the exact global bin directory from your pnpm error messag
 - The LLM didn't produce the expected artifact file
 
 **Fix:** Run `/gsd doctor` to repair state, then resume with `/gsd auto`. If the issue persists, check that the expected artifact file exists on disk.
+
+### Auto mode reports that `gsd.db` is locked
+
+**Symptoms:** Auto mode stops before dispatch with a message that the workflow database is locked by another GSD process, possibly including one or more PIDs. `/gsd doctor` reports the `db_locked` error instead of the general `db_unavailable` warning.
+
+**Cause:** Another process still holds `.gsd/gsd.db`, its write-ahead log, or its shared-memory file. This is commonly an orphaned GSD process left behind after a crash. GSD blocks auto mode because the database-backed liveness checks are unavailable while the lock remains.
+
+**Automatic recovery on macOS and Linux:** Run `/gsd doctor --fix` from the project root. Doctor sends `SIGTERM` only when it can prove that a holder is safe to terminate: the process belongs to the current user, is a recognized GSD process, has been sleeping or idle for at least five minutes, matches a stale local worker record whose heartbeat is at least five minutes old, and still has the same process-start identity immediately before signaling. Doctor must also be able to open the database read-only. It then retries the database open and reports the PIDs it released.
+
+If any of those checks fail, doctor leaves the process running and continues to report `db_locked`. This protects active GSD sessions, processes owned by other users, and unrelated processes from automatic termination.
+
+**Manual PID recovery on macOS and Linux:** Inspect every PID printed by auto mode or doctor before stopping it:
+
+```bash
+ps -p <PID> -o pid,etime,state,command
+kill <PID>
+/gsd doctor
+```
+
+Stop the process through its terminal or service manager when possible. Use `kill <PID>` only after confirming it is the stale holder, then rerun `/gsd doctor` and `/gsd auto`. If doctor cannot discover a PID, use `lsof` (macOS/Linux) or `fuser` (Linux) against `.gsd/gsd.db`, `.gsd/gsd.db-wal`, and `.gsd/gsd.db-shm`. Do not delete these database files to clear the lock.
+
+**Windows limitation:** Automatic holder discovery and termination are unavailable, so `/gsd doctor --fix` cannot release `db_locked`. Open Resource Monitor, search **Associated Handles** for `gsd.db`, confirm the owning process is a stale GSD instance, and stop that process manually. Then rerun `/gsd doctor` and `/gsd auto`.
 
 ### Reactive execute writes `S##-REACTIVE-BLOCKER.md`
 
