@@ -314,6 +314,12 @@ export function registerAssertionTools(pi: ExtensionAPI, deps: ToolDeps): void {
 				deps.finishTrackedAction(actionId!, {
 					status: run.ok ? "success" : "error",
 					afterUrl: afterState.url,
+					batchSteps: run.stepResults.map((result) => {
+						const step = result && typeof result === "object"
+							? result as Record<string, unknown>
+							: {};
+						return { action: String(step.action ?? ""), ok: step.ok === true };
+					}),
 					diffSummary: diff.summary,
 					changed: diff.changed,
 					error: run.ok ? undefined : run.summary,
