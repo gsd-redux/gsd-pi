@@ -440,6 +440,55 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   assert.equal(endEvents[0].causedBy!.seq, startEvents[0].seq, "unit-end causedBy.seq must match unit-start.seq");
 });
 
+test("runUnitPhase retries complete-slice tool errors with their failure context", async () => {
+  const capture = createEventCapture();
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.js");
+  _resetPendingResolve();
+
+  const deps = makeMockDeps(capture);
+  const ic = makeIC(deps);
+  const iterData: IterationData = {
+    unitType: "complete-slice",
+    unitId: "M001/S01",
+    prompt: "complete the slice",
+    finalPrompt: "complete the slice",
+    pauseAfterUatDispatch: false,
+    state: { phase: "summarizing", activeMilestone: { id: "M001" }, activeSlice: { id: "S01" }, registry: [], blockers: [] } as any,
+    mid: "M001",
+    midTitle: "Test",
+    isRetry: false,
+    previousTier: undefined,
+  };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
+  const toolError = "UAT requires browser verification. Re-author the UAT Type section and complete the slice again.";
+
+  const unitPromise = runUnitPhase(ic, iterData, loopState);
+  await new Promise(r => setTimeout(r, 50));
+  resolveAgentEnd({
+    messages: [{
+      role: "toolResult",
+      toolName: "gsd_slice_complete",
+      isError: true,
+      content: [{ type: "text", text: toolError }],
+    }],
+  });
+
+  const result = await unitPromise;
+  assert.equal(result.action, "retry");
+  assert.equal((result as { reason?: string }).reason, "complete-slice-tool-error");
+  assert.equal(
+    ic.s.pendingVerificationRetry?.failureContext,
+    `gsd_slice_complete failed without writing the slice completion artifacts:\n\n${toolError}`,
+  );
+  assert.equal(ic.s.pendingVerificationRetryDispatch?.unitType, "complete-slice");
+  assert.equal(ic.s.pendingVerificationRetryDispatch?.unitId, "M001/S01");
+
+  const endEvents = capture.events.filter(e => e.eventType === "unit-end");
+  assert.equal(endEvents.length, 1);
+  assert.equal((endEvents[0].data as any).status, "no-artifact");
+  assert.equal((endEvents[0].data as any).artifactVerified, false);
+});
+
 test("runUnitPhase increments unitDispatchCount for repeated artifact-missing retries", async () => {
   const capture = createEventCapture();
   const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.js");

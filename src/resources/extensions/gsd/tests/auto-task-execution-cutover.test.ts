@@ -1445,7 +1445,7 @@ test("a replacement lease routes a stale running Attempt and redispatches before
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
 });
 
-test("a same-lease running Attempt is settled interrupted before the guard rejects the re-dispatch (#1740)", async () => {
+test("a same-lease running Attempt is interrupted through the same-session recovery path (#1740)", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   domain.attempts.push({
@@ -1461,27 +1461,29 @@ test("a same-lease running Attempt is settled interrupted before the guard rejec
 
   const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
     ran = true;
+    domain.completeSucceeded("attempt-2");
     return { action: "next", data: {} };
   }, domain.deps);
 
-  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
-  assert.equal(ran, false);
-  assert.equal(domain.claims.length, 0);
-  assert.equal(domain.settlements.length, 1, "the guard must settle before any throw");
+  assert.deepEqual(result, { action: "next", data: {} });
+  assert.equal(ran, true);
+  assert.equal(domain.claims.length, 1);
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+  assert.equal(domain.settlements.length, 1, "same-session authority must settle the predecessor");
   assert.equal(domain.settlements[0].attemptId, "attempt-1");
   assert.equal(domain.settlements[0].outcome, "interrupted");
   assert.equal(domain.settlements[0].failureClass, "stale-worker");
   assert.equal(
     domain.settlements[0].recovery,
     undefined,
-    "an equal-or-older lease cannot use the fenced interrupt path",
+    "an equal lease settles through the owning worker's lease rather than replacement fencing",
   );
   assert.match(
     domain.settlements[0].summary,
-    /cannot replace an active running Attempt without a newer milestone lease/,
+    /same-session re-dispatch/,
   );
-  assert.equal(domain.attempts[0].state, "settled", "no Attempt may stay running when the guard trips");
-  assert.equal(domain.routes.length, 1, "the catch routes the interrupted Result through durable recovery");
+  assert.equal(domain.attempts[0].state, "settled", "same-session re-dispatch must not strand the prior Attempt");
+  assert.equal(domain.routes.length, 1, "the interrupted Result must route through durable recovery");
 });
 
 test("a same-session re-dispatch with an equal lease token leaves no running Attempt behind (#1740)", async () => {
@@ -1532,8 +1534,8 @@ test("a same-session re-dispatch with an equal lease token leaves no running Att
   `).get() as { summary: string; failure_kind: string };
   assert.match(
     observation.summary,
-    /cannot replace an active running Attempt without a newer milestone lease/,
-    "the guard error must surface through the durable failure route",
+    /same-session re-dispatch/,
+    "the same-session interruption must surface through the durable failure route",
   );
   assert.equal(observation.failure_kind, "stale-worker");
 });

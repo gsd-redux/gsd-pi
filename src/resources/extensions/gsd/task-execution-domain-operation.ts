@@ -26,6 +26,7 @@ import {
 import {
   claimMilestoneLease,
   getMilestoneLease,
+  refreshMilestoneLease,
 } from "./db/milestone-leases.js";
 import { autoWorkerHeartbeatTtlSeconds } from "./db/auto-workers.js";
 import {
@@ -543,6 +544,55 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
     resultId: result.result_id,
     nextStage: nextStage(result.outcome),
   };
+}
+
+export function settleRunningAttemptsForWorker(workerId: string): string[] {
+  if (!isDbAvailable()) return [];
+  const attempts = getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.milestone_lease_token,
+           lifecycle.milestone_id
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    WHERE attempt.worker_id = :worker_id
+      AND attempt.attempt_state = 'running'
+      AND lifecycle.item_kind = 'task'
+    ORDER BY attempt.started_at, attempt.attempt_id
+  `).all({ ":worker_id": workerId }) as Array<{
+    attempt_id: string;
+    milestone_lease_token: number;
+    milestone_id: string;
+  }>;
+  const settledAttemptIds: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      // A stale heartbeat and its lease normally expire together. Renew only
+      // the dead worker's still-owned lease long enough to authorize its own
+      // settlement; a lease already taken over by another worker cannot renew.
+      if (!refreshMilestoneLease(
+        workerId,
+        attempt.milestone_id,
+        attempt.milestone_lease_token,
+      )) continue;
+      settleTaskAttempt({
+        invocation: internalExecutionInvocation(
+          `internal:crash-recovery:attempt.settle:${attempt.attempt_id}`,
+          { actorId: workerId },
+        ),
+        attemptId: attempt.attempt_id,
+        outcome: "interrupted",
+        failureClass: "stale-worker",
+        summary: "Interrupted running Task Attempt during stale worker cleanup",
+        output: { staleWorkerId: workerId },
+      });
+      settledAttemptIds.push(attempt.attempt_id);
+    } catch {
+      // Best-effort: lease-aware readers ignore any Attempt whose lease was
+      // concurrently taken over before settlement could commit.
+    }
+  }
+  return settledAttemptIds;
 }
 
 /**
