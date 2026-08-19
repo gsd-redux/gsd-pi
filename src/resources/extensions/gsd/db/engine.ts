@@ -123,6 +123,7 @@ import {
   type SqliteFileIdentity,
 } from "../sqlite-readonly.js";
 import { processStartIdentity } from "../process-start-identity.js";
+import { isSqliteBusyError } from "../sqlite-errors.js";
 import {
   createSqliteProviderLoader,
   suppressSqliteWarning,
@@ -807,6 +808,8 @@ let pendingStartupCleanup: StartupCleanupState | undefined;
 let pendingDatabaseMaintenanceCleanup: DatabaseMaintenanceCleanupState | undefined;
 let _exitHandlerRegistered = false;
 const _dbOpenState = createDbOpenState();
+const DB_OPEN_BUSY_BACKOFF_MS = [100, 200] as const;
+const DB_OPEN_BUSY_SLEEP = new Int32Array(new SharedArrayBuffer(4));
 let _databaseOpenAfterIntentCheckForTest: ((path: string) => void) | null = null;
 let _startupInitializationBoundaryForTest: ((path: string) => void) | null = null;
 type StartupRepairBoundaryPoint = "before-journal" | "after-journal" | "after-backup" | "before-vacuum";
@@ -2319,14 +2322,14 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
       _databaseAdapterFileIdentities.set(adapter, strictFileIdentity(path, "canonical database"));
       _replacementObservationDatabases.add(adapter);
     } catch (error) {
-      _dbOpenState.recordError("open", error);
+      _dbOpenState.recordError(isSqliteBusyError(error) ? "locked" : "open", error);
       throw error;
     }
   } else {
     try {
       ({ raw: rawDb, identity: openedIdentity } = openCorrelatedRawDatabase(path, () => providerLoader.openRaw(path)));
     } catch (error) {
-      _dbOpenState.recordError("open", error);
+      _dbOpenState.recordError(isSqliteBusyError(error) ? "locked" : "open", error);
       throw error;
     }
     if (!rawDb) return false;
@@ -2356,7 +2359,7 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
       }
     }
   } catch (err) {
-    _dbOpenState.recordError("initSchema", err);
+    _dbOpenState.recordError(isSqliteBusyError(err) ? "locked" : "initSchema", err);
     if (pendingStartupCleanup?.adapter !== adapter) {
       retainOrCloseFailedOpen(adapter, startupMaintenance, startupExclusiveOwnershipHeld);
     }
@@ -2370,7 +2373,7 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
       _startupReopenCloseForTest?.(adapter);
       adapter.close();
     } catch (error) {
-      _dbOpenState.recordError("open", error);
+      _dbOpenState.recordError(isSqliteBusyError(error) ? "locked" : "open", error);
       quarantineStartupCleanup({
         adapter,
         claim: startupMaintenance.claim,
@@ -2396,7 +2399,7 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
       completeDatabaseMaintenanceCleanup(startupMaintenance);
       startupMaintenance = undefined;
     } catch (error) {
-      _dbOpenState.recordError("open", error);
+      _dbOpenState.recordError(isSqliteBusyError(error) ? "locked" : "open", error);
       retainOrCloseFailedOpen(adapter, startupMaintenance, false, !runtimeAdapterOpened);
       throw error;
     }
@@ -2412,7 +2415,15 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
 }
 
 export function openDatabase(path: string): boolean {
-  return openDatabaseInternal(path, false);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return openDatabaseInternal(path, false);
+    } catch (error) {
+      const backoffMs = DB_OPEN_BUSY_BACKOFF_MS[attempt];
+      if (!isSqliteBusyError(error) || backoffMs === undefined) throw error;
+      Atomics.wait(DB_OPEN_BUSY_SLEEP, 0, 0, backoffMs);
+    }
+  }
 }
 
 export function promoteDatabaseForReplacementRecovery(): void {

@@ -425,7 +425,11 @@ export function readPendingTaskRecoveryContext(
   };
 }
 
-function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAttemptScope {
+function loadRoutedFailureScope(
+  attemptId: string,
+  resultId: string,
+  requireCurrentHead = true,
+): FailedAttemptScope {
   const scope = getDb().prepare(`
     SELECT lifecycle.lifecycle_id, lifecycle.milestone_id, lifecycle.slice_id,
            lifecycle.task_id, attempt.attempt_id, result.result_id,
@@ -450,10 +454,10 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
         (result.outcome = 'succeeded' AND ${CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL})
       )
       AND checkpoint.next_stage = 'route'
-      AND NOT EXISTS (
+      ${requireCurrentHead ? `AND NOT EXISTS (
         SELECT 1 FROM workflow_kernel_checkpoints successor
         WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
-      )
+      )` : ""}
   `).get({ ":attempt_id": attemptId, ":result_id": resultId }) as Record<string, unknown> | undefined;
   if (!scope) throw new Error("Task recovery requires a current execute or verification failure route head");
   return {
@@ -640,7 +644,11 @@ function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScop
       )
   `).get({ ":recovery_action_id": recoveryActionId }) as Record<string, unknown> | undefined;
   if (!stored) throw new Error("Task recovery resume requires the current agent-owned abort");
-  return loadRoutedFailureScope(String(stored["attempt_id"]), String(stored["result_id"]));
+  return loadRoutedFailureScope(
+    String(stored["attempt_id"]),
+    String(stored["result_id"]),
+    false,
+  );
 }
 
 function loadTaskRecoveryResumeReceipt(

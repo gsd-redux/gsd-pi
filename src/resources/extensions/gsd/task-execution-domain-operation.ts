@@ -33,7 +33,7 @@ import {
   internalExecutionInvocation,
   type ExecutionInvocation,
 } from "./execution-invocation.js";
-import { isDbAvailable, setTaskSummaryMd } from "./gsd-db.js";
+import { clearTaskSummaryProjectionState, isDbAvailable } from "./gsd-db.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
 import type { RecoveryAction } from "./recovery-classification.js";
 import type { TaskFailureKind } from "./recovery-policy.js";
@@ -484,16 +484,10 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
         taskId: attempt.task_id,
       }, input.stagedTaskCompletion);
     }
-    // Interrupted Attempts clear their staged SUMMARY at settle time; a
-    // blockerDiscovered failure gets the same treatment (#1726) — otherwise
-    // the staged projection is re-rendered forever for a task that was
-    // never completed. Cleared after any staged write so it always wins.
-    const blockerDiscovered =
-      input.outcome === "failed" &&
-      typeof input.output === "object" && input.output !== null &&
-      (input.output as Record<string, unknown>)["blockerDiscovered"] === true;
-    if (input.outcome === "interrupted" || blockerDiscovered) {
-      setTaskSummaryMd(attempt.milestone_id, attempt.slice_id, attempt.task_id, "");
+    // A non-success Result cannot own a staged completion projection. Clear
+    // both DB sources after any staged write so cancellation always wins.
+    if (input.outcome !== "succeeded") {
+      clearTaskSummaryProjectionState(attempt.milestone_id, attempt.slice_id, attempt.task_id);
     }
     const settled = settleAttemptWithResult(context, input);
     terminalizeTaskExecutionDispatch(context, {

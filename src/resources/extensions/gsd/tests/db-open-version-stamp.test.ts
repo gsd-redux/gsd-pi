@@ -23,6 +23,8 @@ import {
   SchemaTooNewError,
   SCHEMA_VERSION,
   _getAdapter,
+  _setStartupSchemaDetectionForTest,
+  getDbStatus,
 } from "../gsd-db.ts";
 import { openWorkflowDatabase } from "../db-workspace.ts";
 import { recordSchemaVersion } from "../db-schema-metadata.ts";
@@ -36,6 +38,7 @@ function makeTempDir(): string {
 }
 
 afterEach(() => {
+  _setStartupSchemaDetectionForTest(null);
   closeDatabase();
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.clear();
@@ -150,4 +153,42 @@ test("non-version open failures keep the open-failed reason", () => {
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.equal(result.reason, "open-failed");
+});
+
+test("SQLite busy failures surface a locked reason and open phase", () => {
+  const dir = makeTempDir();
+  const gsdDir = join(dir, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+  const dbPath = join(gsdDir, "gsd.db");
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+
+  _setStartupSchemaDetectionForTest(() => {
+    throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY", errcode: 5 });
+  });
+  const result = openWorkflowDatabase(dir);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.reason, "locked");
+  assert.equal(getDbStatus().lastPhase, "locked");
+});
+
+test("openDatabase retries transient SQLite busy failures", () => {
+  const dir = makeTempDir();
+  const dbPath = join(dir, "gsd.db");
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+
+  let attempts = 0;
+  _setStartupSchemaDetectionForTest(() => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY", errcode: 5 });
+    }
+  });
+
+  assert.equal(openDatabase(dbPath), true);
+  assert.equal(attempts, 2);
+  assert.equal(getDbStatus().lastPhase, null);
 });

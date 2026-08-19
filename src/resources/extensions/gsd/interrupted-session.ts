@@ -16,6 +16,7 @@ import {
 } from "./session-forensics.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
+import type { PreExecFailure } from "./auto/session.js";
 import { getRuntimeKv, deleteRuntimeKv } from "./db/runtime-kv.js";
 
 export type InterruptedSessionClassification =
@@ -38,6 +39,8 @@ export interface PausedSessionMetadata {
   autoStartTime?: number;
   milestoneLock?: string | null;
   pauseReason?: string;
+  lastPreExecFailure?: PreExecFailure | null;
+  preExecRetryCount?: Record<string, number>;
 }
 
 export interface InterruptedSessionAssessment {

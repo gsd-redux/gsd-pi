@@ -13,7 +13,7 @@ import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { createProjectionDirectorySync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus, isHiddenFromRoadmap, toStatus } from "./status-guards.js";
-import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+import { isCanonicalStagedTaskSummaryState } from "./task-summary-projection-policy.js";
 import { dirname, join } from "node:path";
 import {
   getAllMilestones,
@@ -241,11 +241,9 @@ function taskSummaryForSlicePlan(description: string): string {
   const meaningful = meaningfulSection(description);
   if (!meaningful) return "";
 
-  // Strip XML tags (flat-phase <tasks> format) so they don't leak into summaries
-  const cleaned = meaningful.replace(/<\/?tasks>/g, "").trim();
-  const beforeHeading = cleaned.split(/\n#{1,6}\s+/)[0]?.trim() ?? "";
-  const firstBlock = beforeHeading.split(/\n\s*\n/)[0]?.trim() ?? "";
-  return firstBlock || beforeHeading;
+  // The description is indented inside the flat-phase <tasks> block, so nested
+  // headings remain task detail instead of becoming slice-level sections.
+  return meaningful.replace(/<\/?tasks>/g, "").trim();
 }
 
 function normalizeRiskLevel(value: string | null | undefined): RiskLevel {
@@ -913,17 +911,10 @@ export async function renderTaskSummary(
   }
   if (status === "complete") {
     // Published completions keep projecting.
-  } else if (status === "in_progress") {
-    const attempt = readLatestTaskAttempt({ milestoneId, sliceId, taskId });
-    if (!attempt || attempt.outcome === "interrupted") {
-      return false;
-    }
-    // A blockerDiscovered failure clears its staged SUMMARY at settle time;
-    // never re-project it (#1726).
-    if (attempt.outcome === "failed" && attempt.resultFailureClass === "blocker-discovered") {
-      return false;
-    }
-  } else {
+  } else if (
+    status !== "in_progress" ||
+    !isCanonicalStagedTaskSummaryState({ milestoneId, sliceId, taskId })
+  ) {
     return false;
   }
 
@@ -1332,7 +1323,16 @@ function projectionRenderIntents(basePath: string): ProjectionRenderIntent[] {
 
       for (const task of getSliceTasks(milestone.id, slice.id)) {
         const taskStatus = toStatus(task.status);
-        if ((taskStatus !== "in_progress" && taskStatus !== "complete") || !task.full_summary_md) continue;
+        const stagedSummaryIsCanonical = taskStatus === "in_progress" &&
+          isCanonicalStagedTaskSummaryState({
+            milestoneId: milestone.id,
+            sliceId: slice.id,
+            taskId: task.id,
+          });
+        if (
+          (taskStatus !== "complete" && !stagedSummaryIsCanonical) ||
+          !task.full_summary_md
+        ) continue;
         record(
           targetTaskFile(basePath, milestone.id, slice.id, task.id, "SUMMARY", milestone.title),
           task.full_summary_md,
