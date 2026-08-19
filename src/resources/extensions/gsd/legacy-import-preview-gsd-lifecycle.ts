@@ -998,6 +998,7 @@ function artifactFor(file: SourceFile, state?: ManifestState): LifecycleArtifact
   match = /^\.gsd\/phases\/(\d+)(?:-([^/]+))?\/(T\d+)-SUMMARY\.md$/u.exec(path);
   if (match !== null) {
     const milestoneId = flatMilestoneId(match[1], match[2], state);
+    const taskId = match[3];
     let sliceId: string | undefined;
     for (const line of file.lines) {
       const parent = /^(?:parent|slice):\s*["']?(S\d+)["']?\s*$/u.exec(line.text);
@@ -1009,7 +1010,7 @@ function artifactFor(file: SourceFile, state?: ManifestState): LifecycleArtifact
     if (sliceId === undefined) {
       const matchingSlices = new Set((state?.tasks ?? []).flatMap((record) => (
         textField(record.value, "milestone_id") === milestoneId
-          && textField(record.value, "id") === match[3]
+          && textField(record.value, "id") === taskId
           ? textField(record.value, "slice_id") ?? []
           : []
       )));
@@ -1020,7 +1021,7 @@ function artifactFor(file: SourceFile, state?: ManifestState): LifecycleArtifact
       role: "nested-task-summary",
       milestoneId,
       sliceId,
-      taskId: match[3],
+      taskId,
     };
   }
   match = new RegExp(`^\\.gsd/milestones/(${MILESTONE_ID})/\\1-(ROADMAP|SUMMARY|PARKED)\\.md$`, "u").exec(path);
