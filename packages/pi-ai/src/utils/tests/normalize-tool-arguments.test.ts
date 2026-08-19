@@ -166,6 +166,31 @@ describe("validateToolArguments integration", () => {
 		assert.equal(validated.path, "README.md");
 	});
 
+	test("accepts gsd_task_complete calls with JSON-stringified verificationEvidence", () => {
+		const evidence = [{ command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 }];
+		const tool = {
+			name: "gsd_task_complete",
+			description: "complete task",
+			parameters: Type.Object({
+				verificationEvidence: Type.Array(
+					Type.Object({
+						command: Type.String(),
+						exitCode: Type.Number(),
+						verdict: Type.String(),
+						durationMs: Type.Number(),
+					}),
+				),
+			}),
+		};
+		const validated = validateToolArguments(tool, {
+			type: "toolCall",
+			id: "complete-task-1",
+			name: "gsd_task_complete",
+			arguments: { verificationEvidence: JSON.stringify(evidence) },
+		});
+		assert.deepEqual(validated.verificationEvidence, evidence);
+	});
+
 	test("accepts Edit calls that use Cursor-style old_string/new_string", () => {
 		const tool = {
 			name: "edit",

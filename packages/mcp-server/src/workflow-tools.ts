@@ -1883,6 +1883,18 @@ const verificationEvidenceItemSchema = z.preprocess(
   }),
 );
 
+const verificationEvidenceSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  },
+  z.array(verificationEvidenceItemSchema),
+);
+
 const nonEmptyString = (field: string) =>
   z.string().trim().min(1, `${field} must be a non-empty string`);
 
@@ -2405,7 +2417,7 @@ const taskCompleteParams = {
       "When true, the recommendation is recorded as the default, but auto-mode still pauses until the user resolves via /gsd escalate resolve.",
     ),
   }).optional().describe("ADR-011 Phase 2: optional escalation payload. Only honored when phases.mid_execution_escalation is true."),
-  verificationEvidence: z.array(verificationEvidenceItemSchema).optional().describe("Verification evidence entries"),
+  verificationEvidence: verificationEvidenceSchema.optional().describe("Verification evidence entries, or that array encoded as JSON"),
   reworkResolution: z.array(z.object({
     findingId: nonEmptyString("findingId"),
     status: z.enum(["resolved", "deferred-with-override"]),

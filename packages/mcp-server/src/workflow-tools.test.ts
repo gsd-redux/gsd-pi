@@ -1553,7 +1553,7 @@ describe("workflow MCP tools", () => {
     }
   });
 
-  it("gsd_task_complete accepts step-mode evidence when verification summary is omitted", async () => {
+  it("gsd_task_complete accepts JSON-stringified evidence when verification summary is omitted", async () => {
     const base = makeTmpBase();
     try {
       mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
@@ -1575,9 +1575,9 @@ describe("workflow MCP tools", () => {
         milestoneId: "M001",
         oneLiner: "Completed task",
         narrative: "Did the work",
-        verificationEvidence: [
+        verificationEvidence: JSON.stringify([
           { command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 },
-        ],
+        ]),
       }, {
         requestId: "rpc-task-complete",
         _meta: { "claudecode/toolUseId": "toolu_task_complete" },

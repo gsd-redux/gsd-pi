@@ -137,6 +137,10 @@ export function normalizeToolArguments(toolName: string, args: unknown): unknown
 		normalizeJsonStringCollections(args, ["tasks", "chain"]);
 	}
 
+	if (canonical === "gsd_task_complete" || canonical === "gsd_complete_task") {
+		normalizeJsonStringCollections(args, ["verificationEvidence"]);
+	}
+
 	return args;
 }
 
