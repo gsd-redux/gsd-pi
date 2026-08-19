@@ -1567,6 +1567,10 @@ export function resolveRoadmapAssessmentProjectionPath(
   basePath: string,
   milestoneId: string,
 ): string {
+  const legacyDir = join(legacyMilestonesDir(basePath), milestoneId);
+  if (existsSync(legacyDir)) {
+    return join(legacyDir, `${milestoneId}-ROADMAP-ASSESSMENT.md`);
+  }
   return targetMilestoneFile(
     basePath,
     milestoneId,
