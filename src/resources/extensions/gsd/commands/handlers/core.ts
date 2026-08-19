@@ -18,6 +18,7 @@ import { getVisualBriefOutputDir } from "../../../visual-brief/artifact-policy.j
 import { buildVisualBriefPrompt, parseVisualBriefArgs, VISUAL_BRIEF_USAGE } from "../../../visual-brief/prompts.js";
 import { GSD_CORE_IMPLEMENTED_CATALOG } from "../../commands-gsd-core.js";
 import { GSD_CORE_ALIAS_CATALOG } from "../gsd-core-aliases.js";
+import { readCurrentTaskRecoveryRoute } from "../../task-recovery-domain-operation.js";
 
 export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
   const summaryLines = [
@@ -642,6 +643,29 @@ export function formatTextStatus(state: GSDState, basePath?: string): string {
   }
   if (state.blockers.length > 0) {
     lines.push(`Blockers: ${state.blockers.join("; ")}`);
+  }
+  if (state.activeMilestone && state.activeSlice && state.activeTask) {
+    try {
+      const recovery = readCurrentTaskRecoveryRoute({
+        milestoneId: state.activeMilestone.id,
+        sliceId: state.activeSlice.id,
+        taskId: state.activeTask.id,
+      });
+      if (recovery?.action === "abort") {
+        const eligibility = recovery.resumeEligibility;
+        const recoveryStatus = recovery.resumeAuthorized
+          ? "successor Attempt authorized"
+          : eligibility?.eligible
+            ? "resume eligible"
+            : `resume unavailable (${eligibility?.failedGuard ?? "unknown"}: ${eligibility?.detail ?? "not eligible"})`;
+        lines.push(
+          `Task recovery: abort ${recovery.recoveryActionId} — ${recoveryStatus}`,
+        );
+      }
+    } catch {
+      // Status remains available for legacy/incomplete databases that do not
+      // yet have the canonical Task recovery tables.
+    }
   }
   if (state.registry.length > 0) {
     lines.push("");

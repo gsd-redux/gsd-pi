@@ -556,7 +556,9 @@ test("source changes after a waiver keep state validating and leave validation g
     artifactBasePath: basePath,
   });
   assert.equal(consistency.ok, false);
-  if (!consistency.ok) assert.equal(consistency.reason, "validation-not-pass");
+  if (!consistency.ok) {
+    assert.equal(consistency.reason, "validation-source-revision-mismatch");
+  }
   assert.deepEqual(
     row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`),
     { status: "pending", verdict: "" },

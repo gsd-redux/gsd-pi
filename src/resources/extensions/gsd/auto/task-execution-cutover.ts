@@ -37,12 +37,10 @@ export interface TaskExecutionCutoverInput {
 }
 
 export interface TaskExecutionCutoverDeps {
-  readTerminalTaskRecoveryAbort(
-    milestoneId: string,
-    sliceId: string,
-    taskId: string,
-  ): { recoveryActionId: string } | null;
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
+  readTerminalTaskRecoveryAbort(
+    task: ClaimTaskAttemptInput["task"],
+  ): { recoveryActionId: string } | null;
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): Pick<
     TaskRecoveryRouteSnapshot,
@@ -56,8 +54,22 @@ export interface TaskExecutionCutoverDeps {
 
 type TaskRecoveryDecision = Pick<
   TaskRecoveryReceipt,
-  "status" | "action" | "recoveryActionId" | "resumeAuthorized"
+  "status" | "recoveryActionId" | "action" | "resumeAuthorized"
 >;
+
+function readHistoricalTerminalAbortDecision(
+  input: TaskExecutionCutoverInput,
+  deps: TaskExecutionCutoverDeps,
+): TaskRecoveryDecision | null {
+  const terminal = deps.readTerminalTaskRecoveryAbort(parseTaskIdentity(input.unitId));
+  if (!terminal) return null;
+  return {
+    status: "replayed",
+    recoveryActionId: terminal.recoveryActionId,
+    action: "abort",
+    resumeAuthorized: false,
+  };
+}
 
 function routeStoredTechnicalFailure(
   input: TaskExecutionCutoverInput,
@@ -69,15 +81,8 @@ function routeStoredTechnicalFailure(
   if (verdict.verdict === "pass") {
     throw new Error("Task recovery cannot route a passing Technical Verdict");
   }
-  const task = parseTaskIdentity(input.unitId);
-  const terminalAbort = deps.readTerminalTaskRecoveryAbort(
-    task.milestoneId,
-    task.sliceId,
-    task.taskId,
-  );
-  if (terminalAbort) {
-    return { status: "replayed", action: "abort", ...terminalAbort };
-  }
+  const terminal = readHistoricalTerminalAbortDecision(input, deps);
+  if (terminal) return terminal;
   return deps.routeTaskFailure({
     invocation: internalExecutionInvocation(`internal:auto:attempt.route:${attempt.resultId}`),
     attemptId: attempt.attemptId,
@@ -351,15 +356,8 @@ function routeTaskFailure(
   recovery: TaskResultRecoveryClassification,
   deps: TaskExecutionCutoverDeps,
 ): TaskRecoveryDecision {
-  const task = parseTaskIdentity(input.unitId);
-  const terminalAbort = deps.readTerminalTaskRecoveryAbort(
-    task.milestoneId,
-    task.sliceId,
-    task.taskId,
-  );
-  if (terminalAbort) {
-    return { status: "replayed", action: "abort", ...terminalAbort };
-  }
+  const terminal = readHistoricalTerminalAbortDecision(input, deps);
+  if (terminal) return terminal;
   return deps.routeTaskFailure({
     invocation: internalExecutionInvocation(`internal:auto:attempt.route:${resultId}`),
     attemptId,
@@ -472,6 +470,8 @@ export async function runWithTaskExecutionAttempt(
   const task = parseTaskIdentity(input.unitId);
   const identity = requireTaskClaimIdentity(input);
   const predecessor = deps.readLatestTaskAttempt(task);
+  const terminalAbort = deps.readTerminalTaskRecoveryAbort(task);
+  if (terminalAbort) return taskRecoveryAbortResult(terminalAbort.recoveryActionId);
   let claim: ClaimTaskAttemptReceipt | undefined;
   let result: UnitPhaseResult;
   try {

@@ -251,6 +251,41 @@ function isWorkerProcessAlive(candidate: Pick<AutoWorkerRow, "host" | "pid">): b
   }
 }
 
+/** True when a worker still owns a fresh heartbeat and a live local process. */
+export function isAutoWorkerLive(workerId: string): boolean {
+  const worker = getAutoWorker(workerId);
+  if (!worker || worker.status !== "active") return false;
+  const heartbeatAt = Date.parse(worker.last_heartbeat_at);
+  if (!Number.isFinite(heartbeatAt)) return false;
+  if (heartbeatAt < Date.now() - HEARTBEAT_TTL_SECONDS * 1000) return false;
+  return isWorkerProcessAlive(worker);
+}
+
+/**
+ * Stale-worker detection scope (#1773): active workers, plus workers already
+ * marked `stopping` that still own an active dispatch — a stopping worker can
+ * strand pending, claimed, or running work just as permanently as an active one.
+ */
+const STALE_WORKER_STATUS_SCOPE_SQL = `(
+  status = 'active'
+  OR (
+    status = 'stopping'
+    AND EXISTS (
+      SELECT 1 FROM unit_dispatches dispatch
+      WHERE dispatch.worker_id = workers.worker_id
+        AND dispatch.status IN ('pending','claimed','running')
+    )
+  )
+)`;
+
+/** Return whether a known worker for this project is local and its process is dead. */
+export function isDeadLocalAutoWorker(workerId: string, projectRootRealpath: string): boolean {
+  const worker = getAutoWorker(workerId);
+  if (!worker || worker.host !== hostname()) return false;
+  if (normalizeRealPath(worker.project_root_realpath) !== normalizeRealPath(projectRootRealpath)) return false;
+  return !isWorkerProcessAlive(worker);
+}
+
 /**
  * Phase C pt 2 — find the most recently active worker for a project root
  * whose heartbeat has lapsed (the "previous crashed session" indicator).
@@ -262,23 +297,6 @@ function isWorkerProcessAlive(candidate: Pick<AutoWorkerRow, "host" | "pid">): b
  *
  * Returns null if no stale worker exists for this project root.
  */
-/**
- * Stale-worker detection scope (#1773): active workers, plus workers already
- * marked `stopping` that still own a running dispatch — a stopping worker can
- * strand its dispatches just as permanently as an active one.
- */
-const STALE_WORKER_STATUS_SCOPE_SQL = `(
-  status = 'active'
-  OR (
-    status = 'stopping'
-    AND EXISTS (
-      SELECT 1 FROM unit_dispatches dispatch
-      WHERE dispatch.worker_id = workers.worker_id
-        AND dispatch.status = 'running'
-    )
-  )
-)`;
-
 export function findStaleWorkerForProject(
   projectRootRealpath: string,
 ): AutoWorkerRow | null {

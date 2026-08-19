@@ -47,6 +47,11 @@ export interface VerificationSourceSnapshotOptions {
   excludePaths?: readonly string[];
 }
 
+export interface VerificationSourceDriftDiagnosis {
+  paths: string[];
+  autoCommitDetected: boolean;
+}
+
 const SOURCE_PATHSPEC = ["--", ".", ":(exclude).gsd/**"];
 
 /**
@@ -180,6 +185,66 @@ function sourcePaths(cwd: string, options: VerificationSourceSnapshotOptions): s
     .split("\0")
     .filter(Boolean);
   return [...new Set(paths)].sort();
+}
+
+function driftPathsForTarget(cwd: string): { paths: string[]; autoCommitDetected: boolean } {
+  const pathspec = [...SOURCE_PATHSPEC, ...gsdBookkeepingExclusions(cwd)];
+  const workingPaths = gitOutput(cwd, [
+    "ls-files",
+    "--modified",
+    "--deleted",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    ...pathspec,
+  ]).toString("utf8").split("\0").filter(Boolean);
+  const subject = gitOutput(cwd, ["log", "-1", "--format=%s", "HEAD"])
+    .toString("utf8")
+    .trim();
+  const autoCommitDetected = subject === "chore: auto-commit before milestone merge";
+  const autoCommitPaths = autoCommitDetected
+    ? gitOutput(cwd, [
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "-r",
+        "--name-only",
+        "-z",
+        "HEAD",
+        ...pathspec,
+      ]).toString("utf8").split("\0").filter(Boolean)
+    : [];
+  return {
+    paths: [...new Set([...workingPaths, ...autoCommitPaths])].sort(),
+    autoCommitDetected,
+  };
+}
+
+/**
+ * Best-effort diagnostics for a source-revision mismatch. Dirty source paths
+ * are reported directly; for the historical #1793 wedge, paths captured by
+ * GSD's immediately preceding pre-merge auto-commit are also reported.
+ */
+export function diagnoseMilestoneVerificationSourceDrift(
+  basePath: string,
+  preferences: GSDPreferences | undefined,
+): VerificationSourceDriftDiagnosis {
+  const targets = resolveVerificationRepositoryTargets(basePath, preferences, null, null);
+  const paths: string[] = [];
+  let autoCommitDetected = false;
+  try {
+    for (const repository of targets.repositories) {
+      const diagnosis = driftPathsForTarget(repository.root);
+      autoCommitDetected ||= diagnosis.autoCommitDetected;
+      for (const path of diagnosis.paths) {
+        paths.push(targets.repositories.length === 1 ? path : `${repository.id}:${path}`);
+      }
+    }
+  } catch {
+    // Diagnostics must never replace the authoritative mismatch with a git
+    // inspection failure.
+  }
+  return { paths: [...new Set(paths)].sort(), autoCommitDetected };
 }
 
 function trackedEntry(cwd: string, path: string): { mode: string; objectId: string } | null {

@@ -35,9 +35,9 @@ import {
   readTaskTechnicalVerdict,
   recordTaskTechnicalVerdict,
 } from "../task-verification-domain-operation.js";
+import { readTerminalTaskRecoveryAbort } from "../artifact-verification.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
-import { readTerminalTaskRecoveryAbort } from "../artifact-verification.js";
 
 // The stuck-state resume key must ride along with every terminal abort break so an
 // operator can call gsd_task_recovery_resume without querying the database by hand.
@@ -82,12 +82,8 @@ interface CutoverInput {
 }
 
 interface CutoverDeps {
-  readTerminalTaskRecoveryAbort(
-    milestoneId: string,
-    sliceId: string,
-    taskId: string,
-  ): { recoveryActionId: string } | null;
   readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
+  readTerminalTaskRecoveryAbort(task: TaskIdentity): { recoveryActionId: string } | null;
   readTaskAttempt(attemptId: string): AttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): {
     recoveryActionId: string;
@@ -258,15 +254,15 @@ function fakeDomain() {
   const routes: Array<Parameters<CutoverDeps["routeTaskFailure"]>[0]> = [];
 
   const deps: CutoverDeps = {
-    readTerminalTaskRecoveryAbort() {
-      return null;
-    },
     readLatestTaskAttempt(task) {
       calls.push({ name: "read-latest", value: task });
       const attempt = attempts.at(-1);
       // Reads return point-in-time snapshots, like the canonical DB readers —
       // later settlements must not mutate what a caller already saw.
       return attempt ? { ...attempt } : null;
+    },
+    readTerminalTaskRecoveryAbort() {
+      return null;
     },
     readTaskAttempt(attemptId) {
       calls.push({ name: "read-attempt", value: attemptId });
@@ -449,8 +445,10 @@ function insertClaimedDispatch(attemptNumber: number): number {
 
 function canonicalDeps(): CutoverDeps {
   return {
-    readTerminalTaskRecoveryAbort,
     readLatestTaskAttempt,
+    readTerminalTaskRecoveryAbort(task) {
+      return readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId);
+    },
     readTaskAttempt,
     readTaskRecoveryRoute,
     readTaskTechnicalVerdict,
@@ -1076,6 +1074,54 @@ test("a durable abort overrides an executor retry", async () => {
   assert.equal(domain.routes.length, 1);
 });
 
+test("a superseded terminal abort stops before a succeeded head can redispatch", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push(
+    {
+      attemptId: "attempt-aborted",
+      resultId: "result-aborted",
+      attemptNumber: 1,
+      state: "settled",
+      outcome: "failed",
+      nextStage: "route",
+      coordinationDispatchId: 40,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    },
+    {
+      attemptId: "attempt-superseding",
+      resultId: "result-superseding",
+      attemptNumber: 2,
+      retryOfAttemptId: "attempt-aborted",
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "verify",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    },
+  );
+  let runs = 0;
+
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    runs += 1;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTerminalTaskRecoveryAbort() {
+      return { recoveryActionId: "recovery-action-aborted" };
+    },
+  });
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-aborted; resume with gsd_task_recovery_resume)",
+  });
+  assert.equal(runs, 0);
+  assert.equal(domain.claims.length, 0);
+});
+
 test("an explicitly resumed durable abort claims one later Attempt", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
@@ -1302,6 +1348,39 @@ test("an unresumed abort on a failed predecessor stops before a replacement clai
   assert.equal(domain.claims.length, 0);
 });
 
+test("a historical terminal abort stops a failed predecessor before attempt.route", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-current",
+    resultId: "result-current",
+    attemptNumber: 2,
+    state: "settled",
+    outcome: "failed",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => ({ action: "next", data: {} }), {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return null;
+    },
+    readTerminalTaskRecoveryAbort() {
+      return { recoveryActionId: "recovery-action-historical" };
+    },
+  });
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with gsd_task_recovery_resume)",
+  });
+  assert.equal(domain.routes.length, 0, "a historical abort must short-circuit before attempt.route");
+  assert.equal(domain.claims.length, 0);
+});
+
 test("an unresumed verification abort stops before a replacement claim", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
@@ -1389,6 +1468,51 @@ test("a failed stored verdict with no route is routed before replacement executi
     evidenceId: "evidence-1",
     verdict: "fail",
   });
+});
+
+test("a historical terminal abort stops stored technical-failure routing before attempt.route", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-current",
+    resultId: "result-current",
+    attemptNumber: 2,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => ({ action: "next", data: {} }), {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return null;
+    },
+    readTerminalTaskRecoveryAbort() {
+      return { recoveryActionId: "recovery-action-historical" };
+    },
+    readTaskTechnicalVerdict(attemptId) {
+      return {
+        attemptId,
+        verdictId: "verdict-current",
+        evidenceId: "evidence-current",
+        verdict: "fail",
+        testedSourceRevision: "git:current",
+        nextStage: "route",
+        operationId: "verdict-operation-current",
+        resultingRevision: 4,
+      };
+    },
+  });
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with gsd_task_recovery_resume)",
+  });
+  assert.equal(domain.routes.length, 0, "a historical abort must short-circuit before attempt.route");
+  assert.equal(domain.claims.length, 0);
 });
 
 test("an explicitly resumed verification abort claims one lineage-linked Attempt", async () => {

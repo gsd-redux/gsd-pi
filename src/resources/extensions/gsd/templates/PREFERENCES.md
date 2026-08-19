@@ -84,11 +84,13 @@ cmux:
   sidebar:
   splits:
   browser:
-remote_questions:
-  channel:
-  channel_id:
-  timeout_minutes:
-  poll_interval_seconds:
+remote_questions: false
+# To enable remote questions, replace `false` with:
+# remote_questions:
+#   channel: telegram
+#   channel_id: "12345"
+#   timeout_minutes: 5
+#   poll_interval_seconds: 5
 uat_dispatch:
 post_unit_hooks: []
 pre_dispatch_hooks: []

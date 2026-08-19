@@ -11,6 +11,7 @@ import { afterEach, test } from "node:test";
 import {
   captureVerificationSourceSnapshot,
   confirmVerificationSourceSnapshot,
+  diagnoseMilestoneVerificationSourceDrift,
   resolveVerificationRepositoryTargets,
   verificationSourceChanged,
 } from "../verification-source-integrity.js";
@@ -99,6 +100,18 @@ test("source revision is stable when the verified working tree is committed unch
 
   assert.equal(staged.aggregateRevision, beforeCommit.aggregateRevision);
   assert.equal(afterCommit.aggregateRevision, beforeCommit.aggregateRevision);
+});
+
+test("source drift diagnostics identify paths captured by the pre-merge auto-commit", () => {
+  const cwd = createRepository("auto-commit-drift");
+  writeFileSync(join(cwd, "ad-hoc-helper.ps1"), "Write-Output helper\n");
+  git(cwd, ["add", "ad-hoc-helper.ps1"]);
+  git(cwd, ["commit", "-qm", "chore: auto-commit before milestone merge"]);
+
+  assert.deepEqual(diagnoseMilestoneVerificationSourceDrift(cwd, undefined), {
+    paths: ["ad-hoc-helper.ps1"],
+    autoCommitDetected: true,
+  });
 });
 
 test("candidate snapshots exclude only the generated dossier self-reference", () => {

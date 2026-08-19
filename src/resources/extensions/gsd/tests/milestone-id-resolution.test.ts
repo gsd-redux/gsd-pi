@@ -1,5 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: findMilestoneIds flat-phase directory normalization (#1773).
+// File Purpose: Canonical findMilestoneIds flat-phase directory normalization (#1773).
 
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -7,10 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { findMilestoneIds } from "../milestone-id-utils.ts";
+import { findMilestoneIds } from "../milestone-ids.ts";
 
 test("flat-phase NN-slug directories resolve to canonical M-form IDs (#1773)", () => {
-  const base = mkdtempSync(join(tmpdir(), "gsd-milestone-id-utils-"));
+  const base = mkdtempSync(join(tmpdir(), "gsd-milestone-id-resolution-"));
   try {
     const phases = join(base, ".gsd", "phases");
     mkdirSync(join(phases, "01-minimal-python-hello-world"), { recursive: true });
@@ -23,7 +23,7 @@ test("flat-phase NN-slug directories resolve to canonical M-form IDs (#1773)", (
 });
 
 test("legacy M-form and bare numeric directory names keep their exact behavior", () => {
-  const base = mkdtempSync(join(tmpdir(), "gsd-milestone-id-utils-"));
+  const base = mkdtempSync(join(tmpdir(), "gsd-milestone-id-resolution-"));
   try {
     const legacy = join(base, ".gsd", "milestones");
     mkdirSync(join(legacy, "M002"), { recursive: true });

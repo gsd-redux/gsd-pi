@@ -17,6 +17,7 @@ import {
   getActiveAutoWorkers,
   getAutoWorker,
   findStaleWorkerForProject,
+  isDeadLocalAutoWorker,
 } from "../db/auto-workers.ts";
 
 function makeBase(): string {
@@ -133,34 +134,37 @@ test("findStaleWorkerForProject returns dead PID immediately even before heartbe
   assert.equal(stale!.worker_id, id);
 });
 
-test("findStaleWorkerForProject detects a stopping worker that still holds a running dispatch (#1773)", (t) => {
-  const base = makeBase();
-  t.after(() => cleanup(base));
-  openDatabase(join(base, ".gsd", "gsd.db"));
+for (const status of ["pending", "claimed", "running"] as const) {
+  test(`findStaleWorkerForProject detects a stopping worker with a ${status} dispatch (#1773)`, (t) => {
+    const base = makeBase();
+    t.after(() => cleanup(base));
+    openDatabase(join(base, ".gsd", "gsd.db"));
 
-  const id = registerAutoWorker({ projectRootRealpath: base });
-  markWorkerStopping(id);
-  _getAdapter()!.prepare(
-    `UPDATE workers SET pid = -1 WHERE worker_id = :worker_id`,
-  ).run({ ":worker_id": id });
-  _getAdapter()!.prepare(
-    `INSERT INTO unit_dispatches (
-      trace_id, turn_id, worker_id, milestone_lease_token,
-      milestone_id, slice_id, task_id, unit_type, unit_id,
-      status, attempt_n, started_at
-    ) VALUES (
-      'trace-orphan', 'turn-orphan', :worker_id, 7,
-      'M001', 'S01', 'T01', 'validate-milestone', 'M001',
-      'running', 1, '2026-07-13T00:00:00.000Z'
-    )`,
-  ).run({ ":worker_id": id });
+    const id = registerAutoWorker({ projectRootRealpath: base });
+    markWorkerStopping(id);
+    _getAdapter()!.prepare(
+      `UPDATE workers SET pid = -1 WHERE worker_id = :worker_id`,
+    ).run({ ":worker_id": id });
+    _getAdapter()!.prepare(
+      `INSERT INTO unit_dispatches (
+        trace_id, turn_id, worker_id, milestone_lease_token,
+        milestone_id, slice_id, task_id, unit_type, unit_id,
+        status, attempt_n, started_at
+      ) VALUES (
+        'trace-orphan', 'turn-orphan', :worker_id, 7,
+        'M001', 'S01', 'T01', 'validate-milestone', 'M001',
+        :status, 1, '2026-07-13T00:00:00.000Z'
+      )`,
+    ).run({ ":worker_id": id, ":status": status });
 
-  const stale = findStaleWorkerForProject(base);
-  assert.ok(stale, "a stopping worker with a running dispatch must be sweepable");
-  assert.equal(stale!.worker_id, id);
-});
+    const stale = findStaleWorkerForProject(base);
+    assert.ok(stale, `a stopping worker with a ${status} dispatch must be sweepable`);
+    assert.equal(stale!.worker_id, id);
+    assert.equal(isDeadLocalAutoWorker(id, base), true);
+  });
+}
 
-test("findStaleWorkerForProject ignores a stopping worker with no running dispatch (#1773)", (t) => {
+test("findStaleWorkerForProject ignores a stopping worker with no active dispatch (#1773)", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, ".gsd", "gsd.db"));

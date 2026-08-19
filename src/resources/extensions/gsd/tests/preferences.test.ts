@@ -10,7 +10,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -165,6 +165,12 @@ test("remote_questions accepts object config and false disables without error", 
     const invalid = validatePreferences({ remote_questions: value } as any);
     assert.ok(invalid.errors.includes("remote_questions must be an object"));
   }
+});
+
+test("preferences template uses an explicit false remote_questions stub (#1764)", () => {
+  const template = readFileSync(new URL("../templates/PREFERENCES.md", import.meta.url), "utf-8");
+  assert.match(template, /^remote_questions: false$/m);
+  assert.doesNotMatch(template, /^remote_questions:\s*$/m);
 });
 
 test("flat_rate_providers: accepts string array", () => {

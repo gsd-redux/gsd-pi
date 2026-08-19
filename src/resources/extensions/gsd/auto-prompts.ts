@@ -37,6 +37,7 @@ import {
   getPendingGates,
   getPendingGatesForTurn,
   getSlice,
+  getTask,
   isDbAvailable,
 } from "./gsd-db.js";
 import {
@@ -2788,6 +2789,83 @@ export interface ExecuteTaskPromptOptions {
   contextModeRenderMode?: ContextModeRenderMode;
 }
 
+function extractInlineTaskPlan(slicePlan: string, taskId: string): string | null {
+  const escapedTaskId = taskId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const xmlTask = new RegExp(`<task\\b[^>]*\\bid=["']${escapedTaskId}["'][^>]*>([\\s\\S]*?)<\\/task>`, "i")
+    .exec(slicePlan);
+  if (xmlTask?.[0]) return xmlTask[0].trim();
+
+  const taskLines = slicePlan.split("\n");
+  const start = taskLines.findIndex((line) =>
+    new RegExp(`^\\s*-\\s*\\[[ xX]\\]\\s+\\*\\*${escapedTaskId}(?:\\*\\*|:)`, "i").test(line),
+  );
+  if (start >= 0) {
+    let end = start + 1;
+    while (end < taskLines.length && !/^\s*-\s*\[[ xX]\]\s+\*\*/.test(taskLines[end]!)) {
+      if (/^<\/tasks>\s*$/.test(taskLines[end]!.trim())) break;
+      end++;
+    }
+    return taskLines.slice(start, end).join("\n").trim();
+  }
+
+  const tasksBlock = /<tasks>([\s\S]*?)<\/tasks>/i.exec(slicePlan)?.[0];
+  return tasksBlock?.includes(taskId) ? tasksBlock.trim() : null;
+}
+
+async function resolveExecuteTaskPlan(input: {
+  basePath: string;
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  slicePlanContent: string | null;
+}): Promise<{ content: string | null; relativePath: string; source: string }> {
+  const relativePath = relTaskFile(
+    input.basePath,
+    input.milestoneId,
+    input.sliceId,
+    input.taskId,
+    "PLAN",
+  );
+  const standalonePath = resolveTaskFile(
+    input.basePath,
+    input.milestoneId,
+    input.sliceId,
+    input.taskId,
+    "PLAN",
+  );
+  if (standalonePath) {
+    return { content: await loadFile(standalonePath), relativePath, source: `\`${relativePath}\`` };
+  }
+
+  const durablePlan = isDbAvailable()
+    ? getTask(input.milestoneId, input.sliceId, input.taskId)?.full_plan_md.trim() || null
+    : null;
+  if (durablePlan) {
+    return {
+      content: durablePlan,
+      relativePath,
+      source: `durable task planning state for ${input.milestoneId}/${input.sliceId}/${input.taskId}`,
+    };
+  }
+
+  const inlinePlan = input.slicePlanContent
+    ? extractInlineTaskPlan(input.slicePlanContent, input.taskId)
+    : null;
+  const slicePlanRelativePath = relSliceFile(
+    input.basePath,
+    input.milestoneId,
+    input.sliceId,
+    "PLAN",
+  );
+  return {
+    content: inlinePlan,
+    relativePath: inlinePlan ? slicePlanRelativePath : relativePath,
+    source: inlinePlan
+      ? `\`${slicePlanRelativePath}\``
+      : `\`${relativePath}\``,
+  };
+}
+
 export async function buildTaskRecoveryReplanPrompt(
   mid: string,
   sid: string,
@@ -2841,24 +2919,30 @@ export async function buildExecuteTaskPrompt(
     ? priorSummaries.map(p => `- \`${p}\``).join("\n")
     : "- (no prior tasks)";
 
-  const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
-  const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
-  const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
+  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
+  const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
+  const taskPlan = await resolveExecuteTaskPlan({
+    basePath: base,
+    milestoneId: mid,
+    sliceId: sid,
+    taskId: tid,
+    slicePlanContent,
+  });
+  const taskPlanContent = taskPlan.content;
+  const taskPlanRelPath = taskPlan.relativePath;
   const taskPlanContext = taskPlanContent
     ? [
       "## Inlined Task Plan (authoritative local execution contract)",
-      `Source: \`${taskPlanRelPath}\``,
+      `Source: ${taskPlan.source}`,
       "",
       taskPlanContent.trim(),
     ].join("\n")
     : [
       "## Inlined Task Plan (authoritative local execution contract)",
-      `Task plan not found at dispatch time. Read \`${taskPlanRelPath}\` before executing.`,
+      `Task plan not found at dispatch time. Read ${taskPlan.source} before executing.`,
     ].join("\n");
   trackPromptContext(contextTelemetry, "task-plan", taskPlanContent ? "inline" : "on-demand", taskPlanContext, taskPlanContent ? undefined : "missing at dispatch");
 
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
   const slicePlanContext = extractSliceExecutionExcerpt(slicePlanContent, relSliceFile(base, mid, sid, "PLAN"));
   trackPromptContext(contextTelemetry, "slice-plan", slicePlanContext ? "excerpt" : "skipped", slicePlanContext, slicePlanContext ? undefined : "missing");
 
@@ -4165,6 +4249,8 @@ export async function buildReactiveExecutePrompt(
   );
   const contextTelemetry: PromptContextTelemetryEntry[] = [];
   trackPromptContext(contextTelemetry, "graph-context", "inline", graphContext);
+  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
+  const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
 
   for (const tid of readyTaskIds) {
     const node = graph.find((n) => n.id === tid);
@@ -4176,19 +4262,24 @@ export async function buildReactiveExecutePrompt(
       mid, sid, tid, node?.dependsOn ?? [], base,
     );
 
-    const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
-    const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
-    const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
+    const taskPlan = await resolveExecuteTaskPlan({
+      basePath: base,
+      milestoneId: mid,
+      sliceId: sid,
+      taskId: tid,
+      slicePlanContent,
+    });
+    const taskPlanContent = taskPlan.content;
     const taskPlanInline = taskPlanContent
       ? [
           "## Inlined Task Plan (authoritative local execution contract)",
-          `Source: \`${taskPlanRelPath}\``,
+          `Source: ${taskPlan.source}`,
           "",
           taskPlanContent.trim(),
         ].join("\n")
       : [
           "## Inlined Task Plan (authoritative local execution contract)",
-          `Task plan not found at dispatch time. Read \`${taskPlanRelPath}\` before executing.`,
+          `Task plan not found at dispatch time. Read ${taskPlan.source} before executing.`,
         ].join("\n");
     const carryForwardSection = await buildCarryForwardSection(depPaths, base);
     const finalCarryForwardSection = carryForwardSection.length > perSubagentCarryForwardBudget

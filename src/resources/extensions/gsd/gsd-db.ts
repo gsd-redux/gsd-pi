@@ -788,6 +788,20 @@ export function setTaskSummaryMd(milestoneId: string, sliceId: string, taskId: s
   ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId, ":md": md }));
 }
 
+export function clearTaskSummaryProjectionState(milestoneId: string, sliceId: string, taskId: string): void {
+  if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  transaction(() => {
+    getDbOrNull()!.prepare(
+      `UPDATE tasks SET full_summary_md = '' WHERE milestone_id = :mid AND slice_id = :sid AND id = :tid`,
+    ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+    getDbOrNull()!.prepare(
+      `DELETE FROM artifacts
+       WHERE artifact_type = 'SUMMARY'
+         AND milestone_id = :mid AND slice_id = :sid AND task_id = :tid`,
+    ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+  });
+}
+
 export function setSliceSummaryMd(milestoneId: string, sliceId: string, summaryMd: string, uatMd: string): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   transaction(() => getDbOrNull()!.prepare(

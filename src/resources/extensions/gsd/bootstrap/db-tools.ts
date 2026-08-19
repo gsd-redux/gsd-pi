@@ -2388,7 +2388,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		description:
 			"Reassess the milestone roadmap after a slice completes. Structurally enforces preservation of completed slices — " +
 			"mutations to completed slice IDs are rejected with actionable error payloads. Writes assessment to DB, " +
-			"applies slice mutations, re-renders ROADMAP.md, and renders ASSESSMENT.md.",
+			"applies slice mutations, re-renders ROADMAP.md, and renders ROADMAP-ASSESSMENT.md.",
 		promptSnippet:
 			"Reassess a GSD roadmap with structural enforcement of completed slices",
 		promptGuidelines: [

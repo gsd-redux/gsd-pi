@@ -124,6 +124,9 @@ export function proveMilestoneCloseout(
 
 export function formatCloseoutProofBlock(result: CloseoutProofResult): string {
   if (result.ok) return "";
+  if (result.reason === "validation-source-revision-mismatch") {
+    return `${result.message} Recovery reason: ${result.recoveryReason}. Restore or remove unintended working-tree drift, or re-run milestone validation against the intended current content, then run /gsd auto.`;
+  }
   if (result.reason.startsWith("summary-") || result.reason.startsWith("implementation-")) {
     return `${result.message} Recovery reason: ${result.recoveryReason}. Resolve the closeout evidence and run /gsd auto to retry.`;
   }

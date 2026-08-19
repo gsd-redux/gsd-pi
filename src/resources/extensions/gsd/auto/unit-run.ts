@@ -5,8 +5,11 @@ import { isDbAvailable, transaction } from "../gsd-db.js";
 import {
   getActiveForWorker,
   getDispatchById,
+  markActiveForWorkerCanceled,
   markCanceled,
 } from "../db/unit-dispatches.js";
+import { isDeadLocalAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
+import { forceReleaseLeasesForWorker } from "../db/milestone-leases.js";
 import { debugLog } from "../debug-logger.js";
 import { parseUnitId } from "../unit-id.js";
 import type { GSDState } from "../types.js";
@@ -97,6 +100,16 @@ export const UNIT_RUN_CLAIM_FAIL_LOG: OpenDispatchClaimDeps["logClaimFailed"] = 
   });
 };
 
+export const IS_DISPATCH_OWNER_DEAD: NonNullable<OpenDispatchClaimDeps["isDispatchOwnerDead"]> =
+  isDeadLocalAutoWorker;
+
+export const RECLAIM_DEAD_DISPATCH_OWNER: NonNullable<OpenDispatchClaimDeps["reclaimDeadDispatchOwner"]> =
+  (workerId) => {
+    markActiveForWorkerCanceled(workerId, "crash-recovered");
+    markWorkerCrashed(workerId);
+    forceReleaseLeasesForWorker(workerId);
+  };
+
 export type ClaimUnitRunResult =
   | { kind: "opened"; dispatchId: number }
   | { kind: "blocked"; reason: string }
@@ -130,7 +143,11 @@ export function claimUnitRun(input: {
       input.flowId,
       input.turnId,
       input.iterData,
-      input.claimDeps,
+      {
+        isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+        reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
+        ...input.claimDeps,
+      },
     );
     if (claim.kind === "opened") return claim;
     if (claim.kind === "skip") return { kind: "skip" as const, reason: claim.reason };

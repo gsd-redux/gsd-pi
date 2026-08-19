@@ -91,11 +91,13 @@ export type DoctorIssueCode =
   | "checkbox_db_status_divergence"
   | "completed_milestone_reopened"
   | "db_duplicate_id"
+  | "db_locked"
   | "db_unavailable"
   | "liveness_backstop_schema_missing"
   | "memories_fts_rebuild_missing"
   | "projection_drift"
   | "unresolved_projection_evidence"
+  | "validation_source_revision_mismatch"
   // Orphaned execution Attempts (#1749)
   | "orphaned_running_attempt"
   // Pre-#1659 legacy import remediation (#1661)
@@ -119,6 +121,7 @@ export type DoctorIssueCode =
  * fixed by an explicit manual doctor run (fixLevel="all").
  */
 export const GLOBAL_STATE_CODES = new Set<DoctorIssueCode>([
+  "db_locked",
   "orphaned_project_state",
   "orphaned_completed_units",
 ]);

@@ -30,9 +30,14 @@ import { invalidateAllCaches } from "./cache.js";
 import {
   isMilestoneLifecycleAdopted,
   readMilestoneCloseoutAuthorization,
+  type MilestoneCloseoutBlocker,
 } from "./db/milestone-closeout-readiness.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { captureMilestoneVerificationSourceRevision } from "./verification-source-integrity.js";
+import {
+  captureMilestoneVerificationSourceRevision,
+  diagnoseMilestoneVerificationSourceDrift,
+  type VerificationSourceDriftDiagnosis,
+} from "./verification-source-integrity.js";
 import { resolveRepositoryProjectRoot } from "./repository-registry.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
@@ -45,6 +50,7 @@ export type CloseoutConsistencyFailureReason =
   | "milestone-missing"
   | "milestone-open"
   | "validation-not-pass"
+  | "validation-source-revision-mismatch"
   | "slice-missing"
   | "slice-open"
   | "task-open"
@@ -73,6 +79,44 @@ function blocked(reason: CloseoutConsistencyFailureReason, message: string): Clo
     recoveryReason: CLOSEOUT_CONSISTENCY_BLOCKED_REASON,
     message,
   };
+}
+
+function formatAuthorizationBlocker(blocker: MilestoneCloseoutBlocker): string {
+  switch (blocker.kind) {
+    case "validation-missing":
+      return "validation is missing";
+    case "validation-receipt-invalid":
+      return `validation receipt is invalid (${blocker.fields.join(", ")})`;
+    case "validation-not-pass":
+      return `validation verdict is ${blocker.overallVerdict}`;
+    case "validation-source-revision-mismatch":
+      return `validation-source-revision-mismatch (expected source revision ${blocker.expectedSourceRevision}; tested source revision ${blocker.testedSourceRevision})`;
+    case "criterion-unsatisfied":
+      return `criterion ${blocker.criterionKey} (${blocker.criterionId}) is unsatisfied`;
+    case "source-revision-mismatch":
+      return `criterion ${blocker.criterionKey} source mismatch (expected ${blocker.expectedSourceRevision}; tested ${blocker.testedSourceRevision ?? "missing"})`;
+    case "validation-stale":
+      return `validation is stale (validation revision ${blocker.validationRevision}; descendant revision ${blocker.descendantRevision})`;
+    case "validation-attempt-newer":
+      return `newer validation attempt ${blocker.attemptId} is ${blocker.attemptState} at revision ${blocker.attemptRevision}`;
+  }
+}
+
+export function formatCloseoutAuthorizationBlockers(
+  blockers: MilestoneCloseoutBlocker[],
+  drift: VerificationSourceDriftDiagnosis = { paths: [], autoCommitDetected: false },
+): string {
+  const details = blockers.map(formatAuthorizationBlocker).join("; ");
+  if (!blockers.some((blocker) => blocker.kind === "validation-source-revision-mismatch")) {
+    return details;
+  }
+  const paths = drift.paths.length > 0
+    ? ` Offending source paths: ${drift.paths.join(", ")}.`
+    : " Inspect `git status` and the latest commit for the offending source paths.";
+  const autoCommit = drift.autoCommitDetected
+    ? " The current HEAD is GSD's pre-merge auto-commit."
+    : "";
+  return `${details}.${paths}${autoCommit}`;
 }
 
 function isFileBackedDbPath(path: string | null): boolean {
@@ -218,6 +262,10 @@ export function checkCloseoutConsistencyGate(
     validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
   }
   let canonicalAuthorization = null;
+  let authorizationDrift: VerificationSourceDriftDiagnosis = {
+    paths: [],
+    autoCommitDetected: false,
+  };
   if (adoptedMilestone) {
     // Resolve the tree the milestone actually executed in. Under worktree
     // isolation validation runs inside .gsd-worktrees/<id> and records that
@@ -235,9 +283,10 @@ export function checkCloseoutConsistencyGate(
         `Closeout consistency blocked for ${milestoneId}: canonical verification source root is unavailable.`,
       );
     }
+    const preferences = loadEffectiveGSDPreferences(artifactBasePath)?.preferences;
     const source = captureMilestoneVerificationSourceRevision(
       artifactBasePath,
-      loadEffectiveGSDPreferences(artifactBasePath)?.preferences,
+      preferences,
     );
     if (!source.ok) {
       return blocked(
@@ -249,13 +298,27 @@ export function checkCloseoutConsistencyGate(
       milestoneId,
       sourceRevision: source.sourceRevision,
     });
+    if (
+      !canonicalAuthorization.authorized &&
+      canonicalAuthorization.blockers.some(
+        (blocker) => blocker.kind === "validation-source-revision-mismatch",
+      )
+    ) {
+      authorizationDrift = diagnoseMilestoneVerificationSourceDrift(
+        artifactBasePath,
+        preferences,
+      );
+    }
   }
   if (validationRequired) {
     if (canonicalAuthorization) {
       if (!canonicalAuthorization.authorized) {
+        const sourceMismatch = canonicalAuthorization.blockers.some(
+          (blocker) => blocker.kind === "validation-source-revision-mismatch",
+        );
         return blocked(
-          "validation-not-pass",
-          `Closeout consistency blocked for ${milestoneId}: canonical milestone validation authorization is not current.`,
+          sourceMismatch ? "validation-source-revision-mismatch" : "validation-not-pass",
+          `Closeout consistency blocked for ${milestoneId}: ${formatCloseoutAuthorizationBlockers(canonicalAuthorization.blockers, authorizationDrift)}`,
         );
       }
     } else if (validation?.status !== "pass") {
@@ -292,6 +355,10 @@ export function checkCloseoutConsistencyGate(
     ? inspectQualityGatesFromEvidence(milestoneId, gateClosureOptions)
     : { repaired: [], unresolved: [] };
 
+  if (!adoptedMilestone && gateClosureOptions) {
+    closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
+  }
+
   for (const slice of slices) {
     if (isDeferredStatus(slice.status)) continue;
     if (!isClosedStatus(slice.status)) {
@@ -325,14 +392,13 @@ export function checkCloseoutConsistencyGate(
     }
   }
 
-  if (!adoptedMilestone && gateClosureOptions) {
-    closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
-  }
-
   return { ok: true };
 }
 
 export function formatCloseoutConsistencyBlock(result: CloseoutConsistencyResult): string {
   if (result.ok) return "";
+  if (result.reason === "validation-source-revision-mismatch") {
+    return `${result.message} Recovery reason: ${result.recoveryReason}. Restore or remove unintended working-tree drift, or re-run milestone validation against the intended current content, then run /gsd auto.`;
+  }
   return `${result.message} Recovery reason: ${result.recoveryReason}. Resolve the canonical DB state and run /gsd auto to retry.`;
 }

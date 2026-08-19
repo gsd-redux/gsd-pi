@@ -582,7 +582,7 @@ test('── markdown-renderer: renderPlanFromDb creates parse-compatible slice 
   }
 });
 
-test('── markdown-renderer: slice plan summarizes task descriptions without leaking nested headings ──', async () => {
+test('── markdown-renderer: slice plan preserves task descriptions without leaking nested headings ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
   openDatabase(dbPath);
@@ -641,7 +641,10 @@ test('── markdown-renderer: slice plan summarizes task descriptions without 
     assert.doesNotMatch(planContent, /Not provided/i, 'placeholder values should not render');
     assert.doesNotMatch(planContent, /^## Steps$/m, 'task detail headings must not escape into the slice plan');
     assert.strictEqual((planContent.match(/^## Must-Haves$/gm) ?? []).length, 1, 'slice plan has only its own Must-Haves heading');
-    assert.strictEqual(parsedPlan.tasks[0].description.trim(), 'Create the static app files.');
+    assert.match(parsedPlan.tasks[0].description, /Create the static app files\./);
+    assert.match(parsedPlan.tasks[0].description, /Create the HTML shell\./);
+    assert.match(parsedPlan.tasks[0].description, /Wire browser storage\./);
+    assert.match(parsedPlan.tasks[0].description, /Adding an item updates the list\./);
 
     // Flat-phase: no per-task plan files — tasks are inside the slice plan's
     // <tasks> block. Skip per-task plan assertions.

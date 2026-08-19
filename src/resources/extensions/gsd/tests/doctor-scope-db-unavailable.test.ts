@@ -8,7 +8,9 @@ import {
   insertSlice,
   insertTask,
   getTask,
+  isDbAvailable,
   openDatabase,
+  _setStartupSchemaDetectionForTest,
 } from "../gsd-db.ts";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -17,10 +19,13 @@ import { filterDoctorIssues } from "../doctor-format.ts";
 import { checkEngineHealth } from "../doctor-engine-checks.ts";
 import { runGSDDoctor } from "../doctor.ts";
 import { MEMORIES_FTS_REBUILT_KEY } from "../db-memory-fts-schema.ts";
+import { getProjectGSDPreferencesPath } from "../preferences.ts";
 import { appendEvent } from "../workflow-events.ts";
 import { renderPlanFromDb, renderRoadmapFromDb } from "../markdown-renderer.ts";
+import { openWorkflowDatabase } from "../db-workspace.ts";
 
 afterEach(() => {
+  _setStartupSchemaDetectionForTest(null);
   closeDatabase();
 });
 
@@ -52,11 +57,18 @@ test("doctor preference diagnostics report diagnostic.scope (#1764)", async (t) 
   mkdirSync(join(base, ".gsd"), { recursive: true });
   process.env.GSD_HOME = home;
   writeFileSync(join(home, "PREFERENCES.md"), "---\nversion: 3\n---\n", "utf-8");
+  const projectPreferencesPath = getProjectGSDPreferencesPath(base);
+  mkdirSync(dirname(projectPreferencesPath), { recursive: true });
+  writeFileSync(projectPreferencesPath, "---\nversion: 3\n---\n", "utf-8");
 
   const report = await runGSDDoctor(base, { fix: false });
-  const issue = report.issues.find((item) => item.code === "invalid_preferences");
-  assert.ok(issue, "doctor should surface the global preferences diagnostic");
-  assert.equal(issue.scope, "global");
+  const issuesByFile = new Map(
+    report.issues
+      .filter((item) => item.code === "invalid_preferences")
+      .map((item) => [item.file, item]),
+  );
+  assert.equal(issuesByFile.get(join(home, "PREFERENCES.md"))?.scope, "global");
+  assert.equal(issuesByFile.get(projectPreferencesPath)?.scope, "project");
 });
 
 test("filterDoctorIssues keeps invalid_preferences issues regardless of preferences file scope", () => {
@@ -92,6 +104,60 @@ test("checkEngineHealth reports db_unavailable when gsd.db exists but the DB is 
   assert.ok(dbIssue, "doctor should surface degraded DB mode when a DB file exists");
   assert.equal(dbIssue.unitId, "project");
   assert.equal(dbIssue.file, ".gsd/gsd.db");
+});
+
+test("checkEngineHealth reports a busy workflow DB as fixable db_locked", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-db-locked-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+  assert.equal(openDatabase(join(gsdDir, "gsd.db")), true);
+  closeDatabase();
+  _setStartupSchemaDetectionForTest(() => {
+    throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY", errcode: 5 });
+  });
+  assert.equal(openWorkflowDatabase(base).ok, false);
+  _setStartupSchemaDetectionForTest(null);
+
+  const issues: any[] = [];
+  await checkEngineHealth(base, issues, []);
+
+  const locked = issues.find((issue) => issue.code === "db_locked");
+  assert.ok(locked);
+  assert.equal(locked.severity, "error");
+  assert.equal(locked.fixable, process.platform !== "win32");
+  assert.equal(issues.some((issue) => issue.code === "db_unavailable"), false);
+});
+
+test("checkEngineHealth repair signals proven holders and reopens the database", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-db-lock-repair-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+  assert.equal(openDatabase(join(gsdDir, "gsd.db")), true);
+  closeDatabase();
+  _setStartupSchemaDetectionForTest(() => {
+    throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY", errcode: 5 });
+  });
+  assert.equal(openWorkflowDatabase(base).ok, false);
+  _setStartupSchemaDetectionForTest(null);
+
+  const issues: any[] = [];
+  const fixes: string[] = [];
+  await checkEngineHealth(base, issues, fixes, {
+    repairDbLock: true,
+    lockRecovery: {
+      inspectHolders: () => [],
+      terminateHolders: async () => ({ signaled: [777], terminated: [777], remaining: [] }),
+      reopen: (path) => openWorkflowDatabase(path),
+    },
+  });
+
+  assert.equal(isDbAvailable(), true);
+  assert.equal(issues.some((issue) => issue.code === "db_locked"), false);
+  assert.deepEqual(fixes, ["released workflow database lock held by dormant PID(s): 777"]);
 });
 
 test("checkEngineHealth reports memories_fts without the rebuild marker", async (t) => {

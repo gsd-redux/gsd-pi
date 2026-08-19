@@ -5,6 +5,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
 } from "node:fs";
@@ -12,6 +13,7 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 
 import {
   _getAdapter,
+  clearTaskSummaryProjectionState,
   getAllMilestones,
   getMilestoneSlices,
   getSliceTasks,
@@ -32,6 +34,10 @@ import { invalidateStateCache } from "../../state.js";
 import type { GSDState } from "../../types.js";
 import { isAfter, latestExplicitReopenAt } from "../../milestone-reopen-events.js";
 import { isCanonicalStagedTaskSummaryProjection } from "../../task-summary-projection-classification.js";
+import { readLatestTaskAttempt } from "../../task-execution-domain-operation.js";
+import { quarantineProjectionEvidence } from "../../projection-observation.js";
+import { computeProjectionSha, deriveCompatProjectionKey, readCompatMarker } from "../../compat/compat-marker.js";
+import { stripProjectionStamp } from "../../markdown-renderer.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";
 
 type DiskSliceIdDivergenceDrift = Extract<
@@ -159,6 +165,71 @@ function taskHasAttemptHistory(milestoneId: string, sliceId: string, taskId: str
     ":task_id": taskId,
   });
   return row !== undefined;
+}
+
+function isAbandonedStagedTaskSummary(
+  record: ArtifactDbStatusDivergenceDrift,
+  basePath: string,
+): boolean {
+  if (!record.sliceId || !record.taskId || record.artifactType !== "SUMMARY") return false;
+  const task = getSliceTasks(record.milestoneId, record.sliceId)
+    .find((candidate) => candidate.id === record.taskId);
+  if (task?.status !== "in_progress") return false;
+  const attempt = readLatestTaskAttempt({
+    milestoneId: record.milestoneId,
+    sliceId: record.sliceId,
+    taskId: record.taskId,
+  });
+  if (attempt?.state !== "settled" || attempt.outcome === "succeeded") return false;
+
+  const projectionPath = resolveTaskSummaryDriftPath(basePath, record);
+  const canonicalPath = resolveTaskFile(
+    basePath,
+    record.milestoneId,
+    record.sliceId,
+    record.taskId,
+    "SUMMARY",
+  );
+  if (!projectionPath || !canonicalPath || resolve(projectionPath) !== resolve(canonicalPath)) return false;
+  let content: string;
+  try {
+    content = readFileSync(projectionPath, "utf8");
+  } catch {
+    return false;
+  }
+  if (
+    task.full_summary_md &&
+    stripProjectionStamp(content) === stripProjectionStamp(task.full_summary_md)
+  ) return true;
+
+  const projectionKey = deriveCompatProjectionKey(
+    projectionPath,
+    [gsdProjectionRoot(basePath), join(basePath, ".gsd")],
+  );
+  return readCompatMarker(basePath).projections[projectionKey]?.sha === computeProjectionSha(content);
+}
+
+function resolveTaskSummaryDriftPath(
+  basePath: string,
+  record: ArtifactDbStatusDivergenceDrift,
+): string | null {
+  if (record.artifactPath) {
+    if (isAbsolute(record.artifactPath)) return record.artifactPath;
+    const candidates = [
+      join(gsdProjectionRoot(basePath), record.artifactPath),
+      join(basePath, ".gsd", record.artifactPath),
+    ];
+    const existing = candidates.find((candidate) => existsSync(candidate));
+    if (existing) return existing;
+  }
+  if (!record.sliceId || !record.taskId) return null;
+  return resolveTaskFile(
+    basePath,
+    record.milestoneId,
+    record.sliceId,
+    record.taskId,
+    "SUMMARY",
+  );
 }
 
 function addUniqueDrift(
@@ -615,13 +686,13 @@ function diskSliceIdDivergenceGuidance(record: DiskSliceIdDivergenceDrift): stri
   );
 }
 
-export function repairArtifactDbDrift(
+export async function repairArtifactDbDrift(
   record:
     | DiskSliceIdDivergenceDrift
     | ArtifactDbStatusDivergenceDrift
     | CompletedMilestoneReopenedDrift,
   ctx: DriftContext,
-): void {
+): Promise<void> {
   if (record.kind === "disk-slice-id-divergence") {
     if (record.disposition === "delete-empty") {
       removeProjectionTreeSync(record.sliceDir);
@@ -640,6 +711,16 @@ export function repairArtifactDbDrift(
     throw new Error(completedMilestoneReopenedGuidance(record));
   }
 
+  if (isAbandonedStagedTaskSummary(record, ctx.basePath)) {
+    const projectionPath = resolveTaskSummaryDriftPath(ctx.basePath, record);
+    if (projectionPath) quarantineProjectionEvidence(ctx.basePath, projectionPath);
+    clearTaskSummaryProjectionState(record.milestoneId, record.sliceId!, record.taskId!);
+    clearPathCache();
+    clearParseCache();
+    invalidateStateCache();
+    return;
+  }
+
   throw new Error(
     `Artifact/DB status drift in ${record.milestoneId}` +
       `${record.sliceId ? `/${record.sliceId}` : ""}` +
@@ -654,6 +735,7 @@ export function describeArtifactDbDriftBlocker(
     | DiskSliceIdDivergenceDrift
     | ArtifactDbStatusDivergenceDrift
     | CompletedMilestoneReopenedDrift,
+  ctx?: DriftContext,
 ): string | null {
   if (record.kind === "disk-slice-id-divergence") {
     if (record.disposition !== "block-meaningful") return null;
@@ -663,6 +745,8 @@ export function describeArtifactDbDriftBlocker(
   if (record.kind === "completed-milestone-reopened") {
     return completedMilestoneReopenedGuidance(record);
   }
+
+  if (ctx && isAbandonedStagedTaskSummary(record, ctx.basePath)) return null;
 
   return (
     `Artifact/DB status drift in ${record.milestoneId}` +

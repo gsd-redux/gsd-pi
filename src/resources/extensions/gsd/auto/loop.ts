@@ -50,15 +50,13 @@ import {
   markCompleted as markDispatchCompleted,
   markFailed as markDispatchFailed,
   getRecentForUnit as getRecentDispatchesForUnit,
-  markActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
 import {
   claimMilestoneLease,
   refreshMilestoneLease,
-  forceReleaseLeasesForWorker,
   milestoneLeaseTtlSeconds,
 } from "../db/milestone-leases.js";
-import { heartbeatAutoWorker, getAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
+import { heartbeatAutoWorker, isDeadLocalAutoWorker } from "../db/auto-workers.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { scheduleSidecarQueue } from "../uok/execution-graph.js";
 import { normalizeRealPath } from "../paths.js";
@@ -150,27 +148,7 @@ import {
   readTerminalTaskRecoveryAbort,
   verifyExpectedArtifact,
 } from "../artifact-verification.js";
-
-/**
- * Returns true if workerId is an active worker in this project whose OS
- * process no longer exists. Used to detect dead lease holders before
- * the heartbeat TTL expires. EPERM means the process is alive (we lack
- * permission to signal it); any other kill(pid,0) error means dead.
- */
-function isDeadLocalLeaseHolder(workerId: string, projectRoot: string): boolean {
-  const worker = getAutoWorker(workerId);
-  if (!worker) return false;
-  if (worker.status !== "active") return false;
-  if (worker.project_root_realpath !== projectRoot) return false;
-  if (!Number.isInteger(worker.pid) || worker.pid <= 0) return true;
-  if (worker.pid === process.pid) return false;
-  try {
-    process.kill(worker.pid, 0);
-    return false;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== "EPERM";
-  }
-}
+import { IS_DISPATCH_OWNER_DEAD, RECLAIM_DEAD_DISPATCH_OWNER } from "./unit-run.js";
 
 function resolveCompletionStopFromState(
   stateSnapshot: GSDState | undefined,
@@ -213,8 +191,12 @@ const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
 const TASK_EXECUTION_CUTOVER_DEPS = {
   claimTaskAttempt,
-  readTerminalTaskRecoveryAbort,
   readLatestTaskAttempt,
+  readTerminalTaskRecoveryAbort: (task: {
+    milestoneId: string;
+    sliceId: string;
+    taskId: string;
+  }) => readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId),
   readTaskAttempt,
   readTaskRecoveryRoute,
   readTaskTechnicalVerdict,
@@ -621,15 +603,15 @@ export async function autoLoop(
     const closeRun = async (
       outcome: IterationRunOutcome,
       reason: string,
-    ): Promise<void> => {
-      if (runClosed) return;
+    ): Promise<string | null> => {
+      if (runClosed) return null;
       const unit = (observedUnitType && observedUnitId
         ? { unitType: observedUnitType, unitId: observedUnitId }
         : null)
         ?? (iterData
           ? { unitType: iterData.unitType, unitId: iterData.unitId }
           : null);
-      if (!unit && dispatchId === null) return;
+      if (!unit && dispatchId === null) return null;
       runClosed = true;
       dispatchSettled = await settleIterationRun(
         {
@@ -649,6 +631,22 @@ export async function autoLoop(
           abandonActiveUnit: s.orchestration?.abandonActiveUnit?.bind(s.orchestration),
         },
       );
+      if (outcome === "retry" && s.orchestration?.getStatus().phase === "stopped") {
+        const stopReason = `liveness backstop tripped during retry closeout for ${unit?.unitType ?? "orchestration"} ${unit?.unitId ?? s.currentMilestoneId ?? "workflow"}`;
+        await deferStopAuto(ctx, pi, markBlockedStopReason(stopReason));
+        return stopReason;
+      }
+      return null;
+    };
+    const finishRetryCloseoutStop = (reason: string): void => {
+      finishIncompleteIteration({
+        status: "stopped",
+        reason,
+        unitType: iterData?.unitType,
+        unitId: iterData?.unitId,
+        failureClass: "closeout",
+      });
+      finishTurn("stopped", "closeout", reason, null);
     };
     let iterationEndEmitted = false;
     const emitIterationEnd = (details: Record<string, unknown> = {}): void => {
@@ -928,6 +926,8 @@ export async function autoLoop(
             markDispatchRunning,
             logClaimRejected: logDispatchClaimRejected,
             logClaimFailed: logDispatchClaimFailed,
+            isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+            reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
           });
           if (claim.kind !== "opened") {
             const reason = claim.kind === "skip" || claim.kind === "degraded"
@@ -1002,8 +1002,8 @@ export async function autoLoop(
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} after unit break`);
           }
           dispatchSettled = customDispatchSettled;
-          await pauseForTaskRecoveryAbort(breakReason);
           await closeRun("failed", breakReason);
+          await pauseForTaskRecoveryAbort(breakReason);
           finishIncompleteIteration({
             status: "stopped",
             reason: breakReason,
@@ -1024,7 +1024,11 @@ export async function autoLoop(
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} before unit retry`);
           }
           dispatchSettled = customDispatchSettled;
-          await closeRun("retry", unitPhaseResult.reason);
+          const retryStopReason = await closeRun("retry", unitPhaseResult.reason);
+          if (retryStopReason) {
+            finishRetryCloseoutStop(retryStopReason);
+            break;
+          }
           finishIncompleteIteration({
             status: "retry",
             reason: unitPhaseResult.reason,
@@ -1696,10 +1700,8 @@ export async function autoLoop(
       });
       if (leaseBeforeClaim.kind === "blocked" && leaseBeforeClaim.holderWorkerId) {
         const holderWorkerId = leaseBeforeClaim.holderWorkerId;
-        if (isDeadLocalLeaseHolder(holderWorkerId, s.canonicalProjectRoot)) {
-          markActiveForWorkerCanceled(holderWorkerId, "crash-recovered");
-          markWorkerCrashed(holderWorkerId);
-          forceReleaseLeasesForWorker(holderWorkerId);
+        if (isDeadLocalAutoWorker(holderWorkerId, s.canonicalProjectRoot)) {
+          RECLAIM_DEAD_DISPATCH_OWNER(holderWorkerId);
           const retryLease = ensureDispatchLease(s, iterData.mid, {
             claimMilestoneLease,
             logLeaseRecovered: logDispatchLeaseRecovered,
@@ -1731,6 +1733,8 @@ export async function autoLoop(
         markDispatchRunning,
         logClaimRejected: logDispatchClaimRejected,
         logClaimFailed: logDispatchClaimFailed,
+        isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+        reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
       });
       let dispatchDecision = decideDispatchClaim(
         dispatchClaim.kind === "opened"
@@ -1752,6 +1756,8 @@ export async function autoLoop(
             markDispatchRunning,
             logClaimRejected: logDispatchClaimRejected,
             logClaimFailed: logDispatchClaimFailed,
+            isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+            reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
           });
           dispatchDecision = decideDispatchClaim(
             dispatchClaim.kind === "opened"
@@ -1881,7 +1887,11 @@ export async function autoLoop(
         break;
       }
       if (unitPhaseResult.action === "retry") {
-        await closeRun("retry", unitPhaseResult.reason);
+        const retryStopReason = await closeRun("retry", unitPhaseResult.reason);
+        if (retryStopReason) {
+          finishRetryCloseoutStop(retryStopReason);
+          break;
+        }
         finishIncompleteIteration({
           status: "retry",
           reason: unitPhaseResult.reason,
@@ -1974,7 +1984,11 @@ export async function autoLoop(
       }
       if (finalizeDecision.action === "retry") {
         abortActiveUnitTurn(ctx);
-        await closeRun("retry", finalizeDecision.ledgerErrorSummary);
+        const retryStopReason = await closeRun("retry", finalizeDecision.ledgerErrorSummary);
+        if (retryStopReason) {
+          finishRetryCloseoutStop(retryStopReason);
+          break;
+        }
         finishIncompleteIteration({
           status: "retry",
           reason: "finalize-retry",

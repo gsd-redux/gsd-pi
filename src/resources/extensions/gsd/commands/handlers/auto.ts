@@ -9,7 +9,7 @@ import { handleRate } from "../../commands-rate.js";
 import { notifyPreferenceDiagnostics } from "../../preferences-diagnostics.js";
 import { setSessionModelOverride } from "../../session-model-override.js";
 import { guardRemoteSession, projectRoot } from "../context.js";
-import { findMilestoneIds } from "../../milestone-id-utils.js";
+import { findMilestoneIds } from "../../milestone-ids.js";
 
 async function hasUnresolvedCloseoutBlocker(ctx: ExtensionCommandContext, basePath: string): Promise<boolean> {
   const { ensureDbOpen } = await import("../../bootstrap/dynamic-tools.js");

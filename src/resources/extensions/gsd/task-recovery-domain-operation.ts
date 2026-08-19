@@ -34,6 +34,7 @@ import {
   isTaskRecoveryResumeAuthorized,
 } from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
 
 export {
   cancelTask,
@@ -187,6 +188,29 @@ export interface TaskRecoveryRouteSnapshot {
   failureKind: string;
   blocker: TaskRecoveryBlockerSnapshot | null;
   resumeAuthorized: boolean;
+  resumeEligibility?: TaskRecoveryResumeEligibility;
+}
+
+export type TaskRecoveryResumeGuard =
+  | "recovery-action-exists"
+  | "abort-action"
+  | "agent-owned"
+  | "action-blocker"
+  | "lifecycle-in-progress"
+  | "attempt-settled"
+  | "causal-authority"
+  | "latest-attempt"
+  | "open-blockers"
+  | "route-head"
+  | "already-resumed";
+
+export interface TaskRecoveryResumeEligibility {
+  recoveryActionId: string;
+  eligible: boolean;
+  attemptId?: string;
+  resultId?: string;
+  failedGuard?: TaskRecoveryResumeGuard;
+  detail?: string;
 }
 
 function taskRecoveryBlockerSnapshot(
@@ -425,7 +449,11 @@ export function readPendingTaskRecoveryContext(
   };
 }
 
-function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAttemptScope {
+function loadRoutedFailureScope(
+  attemptId: string,
+  resultId: string,
+  requireCurrentHead = true,
+): FailedAttemptScope {
   const scope = getDb().prepare(`
     SELECT lifecycle.lifecycle_id, lifecycle.milestone_id, lifecycle.slice_id,
            lifecycle.task_id, attempt.attempt_id, result.result_id,
@@ -450,10 +478,10 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
         (result.outcome = 'succeeded' AND ${CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL})
       )
       AND checkpoint.next_stage = 'route'
-      AND NOT EXISTS (
+      ${requireCurrentHead ? `AND NOT EXISTS (
         SELECT 1 FROM workflow_kernel_checkpoints successor
         WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
-      )
+      )` : ""}
   `).get({ ":attempt_id": attemptId, ":result_id": resultId }) as Record<string, unknown> | undefined;
   if (!scope) throw new Error("Task recovery requires a current execute or verification failure route head");
   return {
@@ -599,9 +627,65 @@ function loadTaskRecoveryReceipt(
   };
 }
 
-function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScope {
+/**
+ * Diagnose the durable guards for an abort resume without binding the caller
+ * to the session that recorded the abort. Guard order is intentional: callers
+ * get the first actionable failure instead of one opaque SQL miss.
+ */
+export function readTaskRecoveryResumeEligibility(
+  recoveryActionId: string,
+): TaskRecoveryResumeEligibility {
+  const normalizedId = requireNonBlank(recoveryActionId, "recoveryActionId");
   const stored = getDb().prepare(`
-    SELECT observation.attempt_id, observation.result_id
+    SELECT action.action, action.blocker_id,
+           observation.recovery_owner, observation.boundary_stage,
+           observation.attempt_id, observation.result_id,
+           attempt.attempt_state, attempt.attempt_number,
+           result.outcome, lifecycle.lifecycle_status,
+           CASE WHEN ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL} THEN 1 ELSE 0 END AS causal_authority,
+           CASE WHEN attempt.attempt_number = (
+             SELECT MAX(latest.attempt_number)
+             FROM workflow_execution_attempts latest
+             WHERE latest.project_id = attempt.project_id
+               AND latest.lifecycle_id = attempt.lifecycle_id
+           ) THEN 1 ELSE 0 END AS latest_attempt,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM workflow_execution_attempts latest
+             WHERE latest.project_id = attempt.project_id
+               AND latest.lifecycle_id = attempt.lifecycle_id
+               AND latest.attempt_state = 'settled'
+               AND latest.settle_outcome = 'succeeded'
+               AND latest.attempt_number > attempt.attempt_number
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow_execution_attempts newer
+                 WHERE newer.project_id = latest.project_id
+                   AND newer.lifecycle_id = latest.lifecycle_id
+                   AND newer.attempt_number > latest.attempt_number
+               )
+           ) THEN 1 ELSE 0 END AS latest_attempt_succeeded,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM workflow_blockers blocker
+             WHERE blocker.project_id = action.project_id
+               AND blocker.lifecycle_id = action.lifecycle_id
+               AND blocker.blocker_status = 'open'
+           ) THEN 1 ELSE 0 END AS has_open_blockers,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM workflow_kernel_checkpoints kernel
+             WHERE kernel.project_id = attempt.project_id
+               AND kernel.lifecycle_id = attempt.lifecycle_id
+               AND kernel.attempt_id = attempt.attempt_id
+               AND kernel.next_stage = 'route'
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow_kernel_checkpoints successor
+                 WHERE successor.previous_kernel_checkpoint_id = kernel.kernel_checkpoint_id
+               )
+           ) THEN 1 ELSE 0 END AS has_route_head,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM workflow_domain_events resumed
+             WHERE resumed.project_id = action.project_id
+               AND resumed.event_type = 'task.recovery.resumed'
+               AND json_extract(resumed.payload_json, '$.recoveryActionId') = action.recovery_action_id
+           ) THEN 1 ELSE 0 END AS already_resumed
     FROM workflow_recovery_actions action
     JOIN workflow_failure_observations observation
       ON observation.project_id = action.project_id
@@ -620,27 +704,57 @@ function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScop
       ON lifecycle.project_id = attempt.project_id
      AND lifecycle.lifecycle_id = attempt.lifecycle_id
     WHERE action.recovery_action_id = :recovery_action_id
-      AND action.action = 'abort'
-      AND action.blocker_id IS NULL
-      AND observation.recovery_owner = 'agent'
-      AND lifecycle.lifecycle_status = 'in_progress'
-      AND attempt.attempt_state = 'settled'
-      AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_blockers blocker
-        WHERE blocker.project_id = action.project_id
-          AND blocker.lifecycle_id = action.lifecycle_id
-          AND blocker.blocker_status = 'open'
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_domain_events resumed
-        WHERE resumed.project_id = action.project_id
-          AND resumed.event_type = 'task.recovery.resumed'
-          AND json_extract(resumed.payload_json, '$.recoveryActionId') = action.recovery_action_id
-      )
-  `).get({ ":recovery_action_id": recoveryActionId }) as Record<string, unknown> | undefined;
-  if (!stored) throw new Error("Task recovery resume requires the current agent-owned abort");
-  return loadRoutedFailureScope(String(stored["attempt_id"]), String(stored["result_id"]));
+  `).get({ ":recovery_action_id": normalizedId }) as Record<string, unknown> | undefined;
+  if (!stored) {
+    return {
+      recoveryActionId: normalizedId,
+      eligible: false,
+      failedGuard: "recovery-action-exists",
+      detail: "no Recovery Action exists with this recoveryActionId",
+    };
+  }
+
+  const base = {
+    recoveryActionId: normalizedId,
+    attemptId: String(stored["attempt_id"]),
+    resultId: String(stored["result_id"]),
+  };
+  const reject = (failedGuard: TaskRecoveryResumeGuard, detail: string): TaskRecoveryResumeEligibility => ({
+    ...base,
+    eligible: false,
+    failedGuard,
+    detail,
+  });
+  if (stored["action"] !== "abort") return reject("abort-action", `Recovery Action is ${String(stored["action"])}, not abort`);
+  if (stored["recovery_owner"] !== "agent") return reject("agent-owned", `recovery owner is ${String(stored["recovery_owner"])}, not agent`);
+  if (stored["blocker_id"] !== null) return reject("action-blocker", "Recovery Action is linked to a Blocker");
+  if (stored["lifecycle_status"] !== "in_progress") return reject("lifecycle-in-progress", `Task lifecycle is ${String(stored["lifecycle_status"])}`);
+  if (stored["attempt_state"] !== "settled") return reject("attempt-settled", `Attempt state is ${String(stored["attempt_state"])}`);
+  if (Number(stored["causal_authority"]) !== 1) return reject("causal-authority", "Result no longer owns the current execute/verify failure route");
+  // #1754 residual databases can contain a settled successful successor that
+  // predates the still-current abort route. Let that durable route be resumed
+  // once; ordinary stale or already-consumed actions still fail this guard.
+  const supersededResidual = Number(stored["latest_attempt_succeeded"]) === 1
+    && Number(stored["already_resumed"]) !== 1;
+  if (Number(stored["latest_attempt"]) !== 1 && !supersededResidual) return reject("latest-attempt", "a newer Task Attempt exists");
+  if (Number(stored["has_open_blockers"]) === 1) return reject("open-blockers", "Task lifecycle has an open Blocker");
+  if (Number(stored["has_route_head"]) !== 1 && !supersededResidual) return reject("route-head", "Attempt no longer owns the current route Kernel checkpoint");
+  if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
+  return { ...base, eligible: true };
+}
+
+function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScope {
+  const eligibility = readTaskRecoveryResumeEligibility(recoveryActionId);
+  if (!eligibility.eligible || !eligibility.attemptId || !eligibility.resultId) {
+    throw new Error(
+      `Task recovery resume rejected by ${eligibility.failedGuard ?? "unknown"} guard: ${eligibility.detail ?? "not eligible"}`,
+    );
+  }
+  return loadRoutedFailureScope(
+    eligibility.attemptId,
+    eligibility.resultId,
+    false,
+  );
 }
 
 function loadTaskRecoveryResumeReceipt(
@@ -727,14 +841,61 @@ export function readTaskRecoveryRoute(attemptId: string): TaskRecoveryRouteSnaps
   `).get({ ":attempt_id": attemptId }) as Record<string, unknown> | undefined;
   if (!stored) return null;
   const blocker = stored["blocker_id"] ? taskRecoveryBlockerSnapshot(stored) : null;
+  const recoveryActionId = String(stored["recovery_action_id"]);
+  const resumeEligibility = stored["action"] === "abort"
+    ? readTaskRecoveryResumeEligibility(recoveryActionId)
+    : undefined;
   return {
-    recoveryActionId: String(stored["recovery_action_id"]),
+    recoveryActionId,
     action: String(stored["action"]) as RecoveryDecision["action"],
     recoveryOwner: String(stored["recovery_owner"]) as TaskRecoveryRouteSnapshot["recoveryOwner"],
     failureKind: String(stored["failure_kind"]),
     blocker,
     resumeAuthorized: stored["action"] === "abort" && isTaskRecoveryResumeAuthorized(attemptId),
+    ...(resumeEligibility ? { resumeEligibility } : {}),
   };
+}
+
+/** Every Attempt that ever committed a recovery action for this Task, newest first. */
+export function readTaskRecoveryAttemptIds(task: {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+}): string[] {
+  const rows = getDb().prepare(`
+    SELECT observation.attempt_id, MAX(action.project_revision) AS latest_project_revision
+    FROM workflow_failure_observations observation
+    JOIN workflow_recovery_actions action
+      ON action.failure_observation_id = observation.failure_observation_id
+     AND action.lifecycle_id = observation.lifecycle_id
+     AND action.project_id = observation.project_id
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = observation.lifecycle_id
+     AND lifecycle.project_id = observation.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+      AND observation.attempt_id IS NOT NULL
+    GROUP BY observation.attempt_id
+    ORDER BY latest_project_revision DESC
+  `).all({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Array<Record<string, unknown>>;
+  return rows.map((row) => String(row["attempt_id"]));
+}
+
+export function readCurrentTaskRecoveryRoute(task: {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+}): (TaskRecoveryRouteSnapshot & { attemptId: string }) | null {
+  const attempt = readLatestTaskAttempt(task);
+  if (!attempt) return null;
+  const route = readTaskRecoveryRoute(attempt.attemptId);
+  return route ? { attemptId: attempt.attemptId, ...route } : null;
 }
 
 export function readTaskRecoveryBlocker(attemptId: string): TaskRecoveryBlockerSnapshot | null {
