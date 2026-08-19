@@ -163,6 +163,7 @@ export function openDispatchClaim(
       !claim.ok
       && claim.error === "already_active"
       && reclaimOwner
+      && typeof claim.existingWorker === "string"
       && deps.isDispatchOwnerDead?.(claim.existingWorker, s.canonicalProjectRoot) === true
     ) {
       reclaimOwner(claim.existingWorker);
