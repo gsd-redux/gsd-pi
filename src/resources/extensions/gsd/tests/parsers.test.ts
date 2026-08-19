@@ -302,6 +302,28 @@ skills_used:
   assert.ok(p.filesLikelyTouched[0].includes('tests/parsers.test.ts'), 'first file');
 });
 
+test('parsePlan: accepts slice-prefixed task ids in flat-phase task blocks', () => {
+  const content = `# S05: Prefixed task ids
+
+**Goal:** Keep legacy DB identities visible in markdown scans.
+
+<tasks>
+- [x] **S05-T01**: Account State Panel _(medium)_
+  - Files: \`src/account-state.ts\`
+  - Verify: pnpm test
+</tasks>
+`;
+
+  const p = parsePlan(content);
+
+  assert.equal(p.tasks.length, 1);
+  assert.equal(p.tasks[0].id, 'S05-T01');
+  assert.equal(p.tasks[0].title, 'Account State Panel');
+  assert.equal(p.tasks[0].done, true);
+  assert.deepEqual(p.tasks[0].files, ['src/account-state.ts']);
+  assert.equal(p.tasks[0].verify, 'pnpm test');
+});
+
 test('parseTaskPlanFile: defaults missing frontmatter fields', () => {
   const content = `# T01: Minimal task plan
 

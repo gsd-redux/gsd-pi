@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import {
   gsdProjectionRoot,
   gsdRoot,
+  buildFlatTaskFileName,
   milestonesDir,
   resolveGsdPathContract,
   resolveSliceFile,
@@ -32,6 +33,11 @@ function initGit(dir: string): void {
 }
 
 describe('paths', () => {
+  test('flat task artifacts do not duplicate a redundant slice prefix', () => {
+    assert.equal(buildFlatTaskFileName('S05', 'S05-T01', 'SUMMARY'), 'S05-T01-SUMMARY.md');
+    assert.equal(buildFlatTaskFileName('S05', 'T01', 'SUMMARY'), 'S05-T01-SUMMARY.md');
+  });
+
   test('Case 1: .gsd exists at basePath — fast path', () => {
     const root = tmp();
     try {

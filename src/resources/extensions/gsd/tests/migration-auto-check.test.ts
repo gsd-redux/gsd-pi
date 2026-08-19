@@ -227,6 +227,7 @@ test("migration auto-check detects identity drift even when counts match", async
     // The DB holds S99 (which markdown lacks), so recover would DELETE it. Even
     // at equal counts the safe recommendation must be rebuild, not recover.
     assert.equal(result.recoveryCommand, "/gsd rebuild markdown");
+    assert.match(result.recoveryFingerprint ?? "", /^[a-f0-9]{64}$/);
     assert.match(result.message ?? "", /Do NOT run/);
   } finally {
     cleanup(base);
@@ -579,6 +580,46 @@ test("rebuildMarkdownProjectionsFromDb realigns markdown when DB holds extra row
     assert.equal(after.reason, "in-sync");
     assert.deepEqual(after.markdown, { milestones: 1, slices: 2, tasks: 2 });
     assert.deepEqual(after.beforeDb, { milestones: 1, slices: 2, tasks: 2 });
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("slice-prefixed DB task ids converge after markdown projection rebuild", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory({ projectContent: "# P\n", decisionsContent: "", requirements: [], milestones: [] }, base);
+    assert.equal(await ensureDbOpen(base), true);
+    insertMilestone({ id: "M016", title: "Prefixed tasks", status: "active" });
+    insertSlice({
+      id: "S05",
+      milestoneId: "M016",
+      title: "Account state",
+      status: "pending",
+      risk: "medium",
+      depends: [],
+      demo: "Account state is visible",
+      sequence: 1,
+    });
+    insertTask({
+      id: "S05-T01",
+      sliceId: "S05",
+      milestoneId: "M016",
+      title: "Account State Panel",
+      status: "pending",
+      sequence: 1,
+    });
+
+    const before = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(before.recoveryCommand, "/gsd rebuild markdown");
+
+    const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.ts");
+    await rebuildMarkdownProjectionsFromDb(base);
+
+    const after = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(after.action, "none");
+    assert.equal(after.reason, "in-sync");
+    assert.deepEqual(after.markdown, { milestones: 1, slices: 1, tasks: 1 });
   } finally {
     cleanup(base);
   }

@@ -237,7 +237,11 @@ export function buildTaskFileName(taskId: string, suffix: string): string {
  * ("S06", "T03", "SUMMARY") → "S06-T03-SUMMARY.md"
  */
 export function buildFlatTaskFileName(sliceId: string, taskId: string, suffix: string): string {
-  return `${sliceId}-${taskId}-${suffix}.md`;
+  const redundantPrefix = `${sliceId}-`;
+  const bareTaskId = taskId.toUpperCase().startsWith(redundantPrefix.toUpperCase())
+    ? taskId.slice(redundantPrefix.length)
+    : taskId;
+  return `${sliceId}-${bareTaskId}-${suffix}.md`;
 }
 
 /**

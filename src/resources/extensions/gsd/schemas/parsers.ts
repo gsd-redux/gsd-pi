@@ -524,7 +524,14 @@ function _parsePlanImpl(content: string): SlicePlan {
   const [, body] = splitFrontmatter(content);
   // Try native parser first for better performance
   const nativeResult = nativeParsePlanFile(body);
-  if (nativeResult) {
+  const taskCheckboxCount = body.match(/^\s*-\s+\[[ xX]\]\s+\*\*/gm)?.length ?? 0;
+  const nativeTasksAreComplete = nativeResult?.tasks.every((task) => task.id.trim().length > 0) ?? false;
+  // Older native engines do not understand flat-phase <tasks> entries. A
+  // zero-task, partial, or empty-id native result is therefore not authoritative
+  // when the source visibly contains task checkboxes; fall through to JS.
+  if (nativeResult && (taskCheckboxCount === 0 || (
+    nativeResult.tasks.length === taskCheckboxCount && nativeTasksAreComplete
+  ))) {
     stopTimer({ native: true });
     return {
       id: nativeResult.id,
@@ -582,11 +589,11 @@ function _parsePlanImpl(content: string): SlicePlan {
       // Match both formats:
       //   Legacy:  - [x] **T01: Title** `est:30m`
       //   Flat-phase: - [x] **T01**: Title _(30m)_
-      const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+):\s+(.+?)\*\*\s*(.*)/)
-        || line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+)\*\*:\s+(.+?)\s*(?:_\(([^)]*)\)_\s*)?$/);
+      const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*((?:S\d+-)?[\w.]+):\s+(.+?)\*\*\s*(.*)/)
+        || line.match(/^-\s+\[([ xX])\]\s+\*\*((?:S\d+-)?[\w.]+)\*\*:\s+(.+?)\s*(?:_\(([^)]*)\)_\s*)?$/);
       // Heading-style: ### T01 -- Title, ### T01: Title, ### T01 — Title
       const hdMatch = !cbMatch
-        ? line.match(/^#{2,4}\s+([A-Z]+\d+(?:\.[A-Z]+\d+)*)\s*(?:--|—|:)\s*(.+)/)
+        ? line.match(/^#{2,4}\s+((?:S\d+-)?[A-Z]+\d+(?:\.[A-Z]+\d+)*)\s*(?:--|—|:)\s*(.+)/)
         : null;
       if (cbMatch || hdMatch) {
         const taskId = cbMatch ? cbMatch[2] : hdMatch![1];
