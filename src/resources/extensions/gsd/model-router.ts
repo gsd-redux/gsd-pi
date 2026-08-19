@@ -4,10 +4,11 @@
 import type { ComplexityTier, ClassificationResult, TaskMetadata } from "./complexity-classifier.js";
 import { tierOrdinal } from "./complexity-classifier.js";
 import type { ResolvedModelConfig } from "./preferences.js";
-import { getProviderCapabilities, type ProviderCapabilities } from "@gsd/pi-ai";
+import { getProviderCapabilities, type Api, type Model, type ProviderCapabilities } from "@gsd/pi-ai";
 import { getToolCompatibility, getAllToolCompatibility } from "@gsd/pi-coding-agent";
 import type { ToolCompatibility } from "@gsd/pi-coding-agent";
 import { incrementLegacyTelemetry } from "./legacy-telemetry.js";
+import { resolveModelEconomics } from "./model-cost-table.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ export interface RoutingDecision {
   capabilityScores?: Record<string, number>;
   /** Profile-confidence class for the chosen model */
   profileConfidence?: CapabilityProfileConfidence;
+  /** Candidates considered but not selected, with concrete rejection reasons. */
+  rejected?: Array<{ modelId: string; reason: string }>;
   /** Tools filtered out due to provider incompatibility (ADR-005) */
   filteredTools?: string[];
   /** Task requirement vector used for scoring */
@@ -112,13 +115,24 @@ function warnUnknownRoutingModel(modelId: string): void {
   );
 }
 
-export type CapabilityProfileConfidence = "curated" | "provisional" | "unknown";
+export type CapabilityProfileConfidence = "curated" | "inherited" | "provisional" | "unknown";
 
 export const PROFILE_CONFIDENCE_ORDINAL: Record<CapabilityProfileConfidence, number> = {
-  curated: 3,
+  curated: 4,
+  inherited: 3,
   provisional: 2,
   unknown: 1,
 };
+
+const CAPABILITY_DIMENSIONS: ReadonlyArray<keyof ModelCapabilities> = [
+  "coding",
+  "debugging",
+  "research",
+  "reasoning",
+  "speed",
+  "longContext",
+  "instruction",
+];
 
 // ─── Known Model Tiers ───────────────────────────────────────────────────────
 // Maps known model IDs to their capability tier. Used when tier_models is not
@@ -340,21 +354,6 @@ export function scoreModel(
   return weightSum > 0 ? weightedSum / weightSum : 50;
 }
 
-function findCapabilityOverride(
-  modelId: string,
-  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
-): Partial<ModelCapabilities> | undefined {
-  if (!capabilityOverrides) return undefined;
-
-  const bareId = modelId.split("/").pop() ?? modelId;
-  const directOverride = capabilityOverrides[modelId] ?? capabilityOverrides[bareId];
-  if (directOverride) return directOverride;
-
-  const canonicalId = canonicalizeModelId(modelId);
-  return capabilityOverrides[canonicalId]
-    ?? Object.entries(capabilityOverrides).find(([id]) => canonicalizeModelId(id) === canonicalId)?.[1];
-}
-
 export function getModelProfileConfidence(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
@@ -364,12 +363,92 @@ export function getModelProfileConfidence(
     return "curated";
   }
 
+  if (findInheritedProfileBase(bareId)) {
+    return "inherited";
+  }
+
   const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
-  if (override && Object.keys(override).length > 0) {
+  if (override && CAPABILITY_DIMENSIONS.every((dimension) => typeof override[dimension] === "number")) {
     return "provisional";
   }
 
   return "unknown";
+}
+
+function findInheritedProfileBase(modelId: string): string | undefined {
+  const bareId = bareModelId(modelId);
+  return Object.keys(MODEL_CAPABILITY_PROFILES)
+    .sort((a, b) => b.length - a.length)
+    .find((knownId) =>
+      bareId !== knownId
+      && (
+        bareId.startsWith(`${knownId}-`)
+        || bareId.startsWith(`${knownId}.`)
+        || bareId.startsWith(`${knownId}:`)
+        || bareId.startsWith(`${knownId}@`)
+      )
+    );
+}
+
+function buildNeutralCapabilityProfile(): ModelCapabilities {
+  return {
+    coding: 50,
+    debugging: 50,
+    research: 50,
+    reasoning: 50,
+    speed: 50,
+    longContext: 50,
+    instruction: 50,
+  };
+}
+
+function resolveCapabilityProfile(
+  modelId: string,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+): { profile: ModelCapabilities; confidence: CapabilityProfileConfidence } {
+  const bareId = bareModelId(modelId);
+  const builtin = MODEL_CAPABILITY_PROFILES[bareId];
+  const inheritedBase = builtin ? undefined : findInheritedProfileBase(bareId);
+  const inherited = inheritedBase ? MODEL_CAPABILITY_PROFILES[inheritedBase] : undefined;
+  const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
+  const confidence = getModelProfileConfidence(modelId, capabilityOverrides);
+
+  if (builtin) {
+    return {
+      profile: override ? { ...builtin, ...override } : builtin,
+      confidence,
+    };
+  }
+
+  if (inherited) {
+    return {
+      profile: override ? { ...inherited, ...override } : inherited,
+      confidence,
+    };
+  }
+
+  if (override && CAPABILITY_DIMENSIONS.every((dimension) => typeof override[dimension] === "number")) {
+    return {
+      profile: override as ModelCapabilities,
+      confidence,
+    };
+  }
+
+  return {
+    profile: buildNeutralCapabilityProfile(),
+    confidence,
+  };
+}
+
+function sameProviderQualifiedModel(
+  modelId: string,
+  candidate: Pick<Model<Api>, "id" | "provider">,
+): boolean {
+  const provider = modelProvider(modelId)?.toLowerCase();
+  const bareId = bareModelId(modelId);
+  const candidateProvider = candidate.provider?.toLowerCase();
+  if (provider && candidateProvider && provider !== candidateProvider) return false;
+  return bareId === candidate.id;
 }
 
 /**
@@ -407,31 +486,26 @@ export function scoreEligibleModels(
   eligibleModelIds: string[],
   requirements: Partial<Record<keyof ModelCapabilities, number>>,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+  availableModels?: Array<Model<Api>>,
 ): Array<{ modelId: string; score: number; confidence: CapabilityProfileConfidence }> {
   const scored = eligibleModelIds.map(modelId => {
-    const canonicalId = canonicalizeModelId(modelId);
-    const builtin = MODEL_CAPABILITY_PROFILES[canonicalId];
-    if (!builtin) warnUnknownRoutingModel(modelId);
-    const override = findCapabilityOverride(modelId, capabilityOverrides);
-    const profile: ModelCapabilities = builtin
-      ? override ? { ...builtin, ...override } : builtin
-      : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
+    const resolved = resolveCapabilityProfile(modelId, capabilityOverrides);
     return {
       modelId,
-      score: scoreModel(profile, requirements),
-      confidence: getModelProfileConfidence(modelId, capabilityOverrides),
+      score: scoreModel(resolved.profile, requirements),
+      confidence: resolved.confidence,
     };
   });
 
   scored.sort((a, b) => {
-    const confidenceDiff = PROFILE_CONFIDENCE_ORDINAL[b.confidence] - PROFILE_CONFIDENCE_ORDINAL[a.confidence];
-    if (confidenceDiff !== 0) return confidenceDiff;
-
     const scoreDiff = b.score - a.score;
     if (Math.abs(scoreDiff) > 2) return scoreDiff;
 
-    const costA = getModelCost(a.modelId);
-    const costB = getModelCost(b.modelId);
+    const confidenceDiff = PROFILE_CONFIDENCE_ORDINAL[b.confidence] - PROFILE_CONFIDENCE_ORDINAL[a.confidence];
+    if (confidenceDiff !== 0) return confidenceDiff;
+
+    const costA = getModelCost(a.modelId, availableModels);
+    const costB = getModelCost(b.modelId, availableModels);
     if (costA !== costB) return costA - costB;
 
     return a.modelId.localeCompare(b.modelId);
@@ -451,6 +525,7 @@ export function getEligibleModels(
   availableModelIds: string[],
   routingConfig: DynamicRoutingConfig,
   preferredModelId?: string,
+  availableModels?: Array<Model<Api>>,
 ): string[] {
   // 1. Check explicit tier_models config
   const explicitModel = routingConfig.tier_models?.[tier];
@@ -467,8 +542,8 @@ export function getEligibleModels(
   const tierMatches = availableModelIds
     .filter(id => getModelTier(id) === tier)
     .sort((a, b) => {
-      const costA = getModelCost(a);
-      const costB = getModelCost(b);
+      const costA = getModelCost(a, availableModels);
+      const costB = getModelCost(b, availableModels);
       return costA - costB;
     });
 
@@ -536,6 +611,7 @@ export function resolveModelForComplexity(
   taskMetadata?: TaskMetadata,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
   preferredModelId?: string,
+  availableModels?: Array<Model<Api>>,
 ): RoutingDecision {
   // If no phase config or routing disabled, pass through
   if (!phaseConfig || !routingConfig.enabled) {
@@ -612,8 +688,9 @@ export function resolveModelForComplexity(
 
   // STEP 1: Get all eligible models for the requested tier
   const eligible = getEligibleModels(requestedTier, availableModelIds, routingConfig, preferredModelId);
+  const eligibleModels = getEligibleModels(requestedTier, availableModelIds, routingConfig, preferredModelId, availableModels);
 
-  if (eligible.length === 0) {
+  if (eligibleModels.length === 0) {
     // No suitable model found — use configured primary
     return {
       modelId: configuredPrimary,
@@ -626,7 +703,7 @@ export function resolveModelForComplexity(
   }
 
   const preferred = findPreferredModelForTier(requestedTier, availableModelIds, preferredModelId);
-  if (preferred && eligible.includes(preferred)) {
+  if (preferred && eligibleModels.includes(preferred)) {
     const fallbacks = buildFallbackChain(preferred, phaseConfig);
     return {
       modelId: preferred,
@@ -641,13 +718,67 @@ export function resolveModelForComplexity(
   // STEP 2: Capability scoring (when enabled and multiple eligible models exist)
   if (routingConfig.capability_routing !== false && eligible.length > 1 && unitType) {
     const requirements = computeTaskRequirements(unitType, taskMetadata);
-    const scored = scoreEligibleModels(eligible, requirements, capabilityOverrides);
+    const scored = scoreEligibleModels(eligibleModels, requirements, capabilityOverrides, availableModels);
     const profiled = scored.filter((candidate) => candidate.confidence !== "unknown");
-    const ranked = profiled.length > 0 ? profiled : scored;
-    const winner = ranked[0];
+
+    if (profiled.length === 0) {
+      const rejected = scored.map((candidate) => ({
+        modelId: candidate.modelId,
+        reason: "no GSD capability profile (unknown confidence) — explicit/manual selection only, not auto-routed",
+      }));
+      return {
+        modelId: configuredPrimary,
+        fallbacks: phaseConfig.fallbacks,
+        tier: requestedTier,
+        wasDowngraded: false,
+        reason: "no profiled candidate eligible for automatic routing — fail closed",
+        selectionMethod: "tier-only",
+        rejected,
+      };
+    }
+
+    const winner = profiled[0];
     if (winner) {
       const capScores: Record<string, number> = {};
       for (const s of scored) capScores[s.modelId] = s.score;
+      const rejected = scored
+        .filter((candidate) => candidate.modelId !== winner.modelId)
+        .map((candidate) => {
+          if (candidate.confidence === "unknown") {
+            return {
+              modelId: candidate.modelId,
+              reason: "no GSD capability profile (unknown confidence) — explicit/manual selection only, not auto-routed",
+            };
+          }
+
+          if (PROFILE_CONFIDENCE_ORDINAL[candidate.confidence] < PROFILE_CONFIDENCE_ORDINAL[winner.confidence]) {
+            return {
+              modelId: candidate.modelId,
+              reason: `lower profile confidence (${candidate.confidence} vs ${winner.confidence}) within the capability score band`,
+            };
+          }
+
+          if (candidate.score < winner.score) {
+            return {
+              modelId: candidate.modelId,
+              reason: `lower capability match (${candidate.score.toFixed(1)} vs ${winner.score.toFixed(1)})`,
+            };
+          }
+
+          const candidateCost = getModelCost(candidate.modelId, availableModels);
+          const winnerCost = getModelCost(winner.modelId, availableModels);
+          if (candidateCost > winnerCost) {
+            return {
+              modelId: candidate.modelId,
+              reason: `higher projected input cost ($${candidateCost.toFixed(4)} vs $${winnerCost.toFixed(4)} per 1K input)`,
+            };
+          }
+
+          return {
+            modelId: candidate.modelId,
+            reason: `ranked below ${winner.modelId} after capability, confidence, and cost tie-breaks`,
+          };
+        });
       const fallbacks = buildFallbackChain(winner.modelId, phaseConfig);
       return {
         modelId: winner.modelId,
@@ -659,12 +790,13 @@ export function resolveModelForComplexity(
         profileConfidence: winner.confidence,
         taskRequirements: requirements,
         selectionMethod: "capability-scored",
+        ...(rejected.length > 0 ? { rejected } : {}),
       };
     }
   }
 
   // STEP 3: Fallback — use first eligible model (cheapest in tier, or single eligible)
-  const targetModelId = eligible[0];
+  const targetModelId = eligibleModels[0];
 
   // Build fallback chain: [downgraded_model, ...configured_fallbacks, configured_primary]
   const fallbacks = buildFallbackChain(targetModelId, phaseConfig);
@@ -909,10 +1041,54 @@ function isKnownModel(modelId: string): boolean {
   return Boolean(bareId && MODEL_CAPABILITY_TIER[bareId]);
 }
 
-function getModelCost(modelId: string): number {
-  const bareId = canonicalizeModelId(modelId);
+function getModelCost(modelId: string, availableModels?: Array<Model<Api>>): number {
+  const provider = modelProvider(modelId) ?? availableModels?.find((candidate) => sameProviderQualifiedModel(modelId, candidate))?.provider ?? "unknown";
+  const bareId = bareModelId(modelId);
 
-  if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) return MODEL_COST_PER_1K_INPUT[bareId];
+  const runtimeModel = availableModels?.find((candidate) => sameProviderQualifiedModel(modelId, candidate));
+  if (runtimeModel?.cost) {
+    const runtimeLongContextTiers = runtimeModel.cost.tiers
+      ?.filter(
+        (tier): tier is typeof tier & { input: number; output: number } =>
+          typeof tier.input === "number" && typeof tier.output === "number",
+      )
+      .map((tier) => ({
+        inputTokensAbove: tier.inputTokensAbove,
+        inputPer1k: tier.input / 1000,
+        outputPer1k: tier.output / 1000,
+        ...(typeof tier.cacheRead === "number" ? { cachedInputPer1k: tier.cacheRead / 1000 } : {}),
+        ...(typeof tier.cacheWrite === "number" ? { cachedOutputPer1k: tier.cacheWrite / 1000 } : {}),
+      }));
+
+    const runtimeEconomics = resolveModelEconomics({
+      provider,
+      modelId: bareId,
+      liveEconomics: {
+        billingUnit: "tokens",
+        stale: false,
+        tokenPrices: {
+          default: {
+            inputPer1k: runtimeModel.cost.input / 1000,
+            outputPer1k: runtimeModel.cost.output / 1000,
+            cachedInputPer1k: runtimeModel.cost.cacheRead / 1000,
+            cachedOutputPer1k: runtimeModel.cost.cacheWrite / 1000,
+          },
+          ...(runtimeLongContextTiers?.length ? { longContextTiers: runtimeLongContextTiers } : {}),
+        },
+      },
+    });
+    const runtimeCost = runtimeEconomics.tokenPrices?.default.inputPer1k;
+    if (runtimeCost !== undefined) return runtimeCost;
+  }
+
+  if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
+    return MODEL_COST_PER_1K_INPUT[bareId];
+  }
+
+  // Check partial matches
+  for (const [knownId, cost] of Object.entries(MODEL_COST_PER_1K_INPUT)) {
+    if (bareId.includes(knownId) || knownId.includes(bareId)) return cost;
+  }
 
   // Unknown cost — assume expensive to avoid routing to unknown cheap models
   warnUnknownRoutingModel(modelId);

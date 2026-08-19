@@ -22,17 +22,20 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { isModelsCatalogOverlay, type Model, type ModelsCatalogOverlay } from "@gsd/pi-ai";
+import { isModelsCatalogOverlay, type Api, type Model, type ModelsCatalogOverlay } from "@gsd/pi-ai";
 
 export {
   applyLastKnownGood,
   dedupeShellNotifications,
   diffCatalogSnapshots,
   fetchGitHubCopilotModels,
+  findStaticCopilotModel,
+  isSuspiciousCatalogShrink,
   sanitizeGitHubCopilotModels,
 } from "./copilot-model-catalog.js";
 export type { CopilotModelRecord, CopilotModelSnapshot } from "./copilot-model-catalog.js";
 
+import { findStaticCopilotModel } from "./copilot-model-catalog.js";
 import type { CopilotModelRecord } from "./copilot-model-catalog.js";
 
 // Inline agentDir computation (mirrors `src/app-paths.ts`'s `agentDir`) —
@@ -61,37 +64,126 @@ export const COPILOT_OVERLAY_HEADERS: Readonly<Record<string, string>> = Object.
 
 const COPILOT_OVERLAY_BASE_URL = "https://api.individual.githubcopilot.com";
 
-/** Placeholder defaults used only when the live Copilot API does not expose a field. Never authoritative. */
-export const COPILOT_OVERLAY_PLACEHOLDER_CONTEXT_WINDOW = 128_000;
-export const COPILOT_OVERLAY_PLACEHOLDER_MAX_TOKENS = 8_192;
+function toPerMillion(valuePer1k: number): number {
+  return valuePer1k * 1000;
+}
+
+function apiSpecificCompat(record: CopilotModelRecord): Model<Api>["compat"] | undefined {
+  const staticModel = findStaticCopilotModel(record.id);
+  if (staticModel?.compat) return staticModel.compat;
+
+  switch (record.execution.api) {
+    case "openai-completions":
+      return {
+        supportsStore: false,
+        supportsDeveloperRole: false,
+        supportsReasoningEffort: false,
+      };
+    case "anthropic-messages":
+    case "openai-responses":
+    default:
+      return undefined;
+  }
+}
+
+function isRegistrationPreviewDisabled(record: CopilotModelRecord): boolean {
+  return record.availability?.preview === true && record.availability?.pickerEnabled === false;
+}
+
+function registrationBlockers(record: CopilotModelRecord): string[] {
+  const blockers: string[] = [];
+
+  if ((record.conflicts?.length ?? 0) > 0) {
+    blockers.push(...record.conflicts);
+  }
+  if (record.availability?.enabled === false) {
+    blockers.push("provider reports the model as disabled");
+  }
+  if (record.availability?.policyState === "disabled") {
+    blockers.push("provider policy disables the model");
+  }
+  if (record.availability?.policyState === "restricted") {
+    blockers.push("provider policy restricts the model");
+  }
+  if (isRegistrationPreviewDisabled(record)) {
+    blockers.push("preview model is not enabled in the model picker");
+  }
+  if (!record.execution?.api) {
+    blockers.push("missing authoritative runtime API/endpoint mapping");
+  }
+  if (record.execution?.toolCalls !== true) {
+    blockers.push("tool calling is unavailable");
+  }
+  if (!record.execution?.contextWindow) {
+    blockers.push("missing authoritative context window");
+  }
+  if (!record.execution?.maxTokens) {
+    blockers.push("missing authoritative max output tokens");
+  }
+  if (record.execution?.reasoning === undefined) {
+    blockers.push("missing authoritative reasoning support flag");
+  }
+  if (record.billing?.inputPer1k === undefined) {
+    blockers.push("missing authoritative input token price");
+  }
+  if (record.billing?.outputPer1k === undefined) {
+    blockers.push("missing authoritative output token price");
+  }
+  if (record.billing?.cacheReadPer1k === undefined) {
+    blockers.push("missing authoritative cache-read token price");
+  }
+  if (record.billing?.cacheWritePer1k === undefined) {
+    blockers.push("missing authoritative cache-write token price");
+  }
+
+  return blockers;
+}
 
 /**
- * Map the minimal fields the live GitHub Copilot `/models` response actually
- * exposes (`id`, `name`, `tool_call`) into a schema-valid `ModelCatalogEntrySchema`
- * shape (see `packages/pi-ai/src/model-catalog.ts`). `reasoning`, `cost`,
- * `contextWindow`, and `maxTokens` are unknown from this endpoint and are set
- * to conservative placeholders pending a `packages/pi-ai` generator refresh
- * (which sources richer data from `models.dev`) — never guessed as if real.
+ * Build a schema-valid overlay entry from a COMPLETE normalized Copilot record.
+ * Callers must only use this after `registrationBlockers()` returned no blockers.
  */
-export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model<"openai-completions"> {
+export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model<Api> {
+  if (!record.execution.api) {
+    throw new Error(`Cannot synthesize overlay entry for ${record.registryId} without a resolved API.`);
+  }
+
   return {
     id: record.id,
     name: record.name || record.id,
-    api: "openai-completions",
+    api: record.execution.api,
     provider: "github-copilot",
     baseUrl: COPILOT_OVERLAY_BASE_URL,
-    // Unknown from the live /models endpoint — placeholder, not a real claim.
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: COPILOT_OVERLAY_PLACEHOLDER_CONTEXT_WINDOW,
-    maxTokens: COPILOT_OVERLAY_PLACEHOLDER_MAX_TOKENS,
-    headers: { ...COPILOT_OVERLAY_HEADERS },
-    compat: {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
+    reasoning: record.execution.reasoning ?? false,
+    ...(record.execution.reasoningLevels.length > 0
+      ? {
+          thinkingLevelMap: Object.fromEntries(
+            record.execution.reasoningLevels.map((level) => [level, level]),
+          ),
+        }
+      : {}),
+    input: record.execution.vision ? ["text", "image"] : ["text"],
+    cost: {
+      input: toPerMillion(record.billing.inputPer1k ?? 0),
+      output: toPerMillion(record.billing.outputPer1k ?? 0),
+      cacheRead: toPerMillion(record.billing.cacheReadPer1k ?? 0),
+      cacheWrite: toPerMillion(record.billing.cacheWritePer1k ?? 0),
+      ...(record.billing.longContextTiers?.length
+        ? {
+            tiers: record.billing.longContextTiers.map((tier) => ({
+              inputTokensAbove: tier.inputTokensAbove,
+              ...(tier.inputPer1k !== undefined ? { input: toPerMillion(tier.inputPer1k) } : {}),
+              ...(tier.outputPer1k !== undefined ? { output: toPerMillion(tier.outputPer1k) } : {}),
+              ...(tier.cacheReadPer1k !== undefined ? { cacheRead: toPerMillion(tier.cacheReadPer1k) } : {}),
+              ...(tier.cacheWritePer1k !== undefined ? { cacheWrite: toPerMillion(tier.cacheWritePer1k) } : {}),
+            })),
+          }
+        : {}),
     },
+    contextWindow: record.execution.contextWindow ?? 1,
+    maxTokens: record.execution.maxTokens ?? 1,
+    headers: { ...COPILOT_OVERLAY_HEADERS },
+    ...(apiSpecificCompat(record) ? { compat: apiSpecificCompat(record) } : {}),
   };
 }
 
@@ -105,7 +197,7 @@ export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model
  */
 export function mergeIntoModelsCatalogOverlay(
   existing: ModelsCatalogOverlay | null,
-  newModels: Model<"openai-completions">[],
+  newModels: Model<Api>[],
 ): ModelsCatalogOverlay {
   const baseModels = existing?.models ?? {};
   const existingCopilotModels = baseModels["github-copilot"] ?? {};
@@ -157,11 +249,14 @@ export function writeModelsCatalogOverlay(path: string, overlay: ModelsCatalogOv
 }
 
 export interface CatalogRegistrationCandidate extends CopilotModelRecord {
+  complete: boolean;
+  blockers: string[];
   reason: string;
 }
 
 export interface RegisterCopilotModelsResult {
   registeredIds: string[];
+  candidates: CatalogRegistrationCandidate[];
   quarantined: CatalogRegistrationCandidate[];
   overlayPath: string;
 }
@@ -187,11 +282,18 @@ export function computeCatalogRegistrationCandidates(
 
   return remoteModels
     .filter((model) => !localIds.has(model.id))
-    .map((model) => ({
-      ...model,
-      reason:
-        "remote-only GitHub Copilot model detected; kept quarantined because the effective local catalog is authoritative and unknown metadata must not be persisted as concrete truth.",
-    }));
+    .map((model) => {
+      const blockers = registrationBlockers(model);
+      const complete = blockers.length === 0;
+      return {
+        ...model,
+        complete,
+        blockers,
+        reason: complete
+          ? "remote-only GitHub Copilot model has complete authoritative metadata and can be registered safely"
+          : `remote-only GitHub Copilot model kept quarantined: ${blockers.join("; ")}`,
+      };
+    });
 }
 
 /**
@@ -213,13 +315,19 @@ export function registerCopilotModelsInOverlay(
     : [];
 
   const effectiveLocalModels = [...localModels, ...overlayLocalModels];
-  const quarantined = computeCatalogRegistrationCandidates(discovered, effectiveLocalModels);
+  const candidates = computeCatalogRegistrationCandidates(discovered, effectiveLocalModels);
+  const quarantined = candidates.filter((candidate) => !candidate.complete);
+  const complete = candidates.filter((candidate) => candidate.complete);
 
-  // The safe registration policy is intentionally no-op for remote-only entries:
-  // they are kept quarantined and never persisted as concrete catalog truth
-  // without known metadata from the authoritative local catalog or generator.
+  if (complete.length > 0) {
+    const entries = complete.map((candidate) => synthesizeCopilotOverlayEntry(candidate));
+    const merged = mergeIntoModelsCatalogOverlay(existingOverlay, entries);
+    writeModelsCatalogOverlay(overlayPath, merged);
+  }
+
   return {
-    registeredIds: [],
+    registeredIds: complete.map((candidate) => candidate.id),
+    candidates,
     quarantined,
     overlayPath,
   };

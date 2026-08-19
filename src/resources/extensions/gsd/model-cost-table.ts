@@ -27,13 +27,39 @@ export type RuntimeEconomicsSource =
   | "provider-live"
   | "provider-static"
   | "bundled-fallback"
+  | "mixed"
   | "unknown";
+
+export type RuntimeEconomicsFreshness = "fresh" | "stale" | "unknown";
 
 export interface TokenPriceTier {
   inputPer1k: number;
   outputPer1k: number;
   cachedInputPer1k?: number;
   cachedOutputPer1k?: number;
+  inputTokensAbove?: number;
+}
+
+export interface RuntimePromotion {
+  discountPercent?: number;
+  startsAt?: string;
+  endsAt?: string;
+  message?: string;
+  status?: "active" | "future" | "expired" | "unknown";
+}
+
+export interface RuntimeEconomicsFieldResolution {
+  source: RuntimeEconomicsSource;
+  freshness: RuntimeEconomicsFreshness;
+  fetchedAt?: number;
+}
+
+export interface RuntimeEconomicsProvenance {
+  billingUnit: RuntimeEconomicsFieldResolution;
+  defaultTokenPrices?: RuntimeEconomicsFieldResolution;
+  longContextTiers?: RuntimeEconomicsFieldResolution;
+  requestMultiplier?: RuntimeEconomicsFieldResolution;
+  promotion?: RuntimeEconomicsFieldResolution;
 }
 
 export interface RuntimeModelEconomics {
@@ -46,13 +72,11 @@ export interface RuntimeModelEconomics {
   tokenPrices?: {
     default: TokenPriceTier;
     longContext?: TokenPriceTier;
+    longContextTiers?: Array<TokenPriceTier & { inputTokensAbove: number }>;
   };
   requestMultiplier?: number;
-  promotion?: {
-    discountPercent?: number;
-    endsAt?: string;
-    message?: string;
-  };
+  promotion?: RuntimePromotion;
+  provenance: RuntimeEconomicsProvenance;
 }
 
 export interface ResolveModelEconomicsInput {
@@ -69,6 +93,118 @@ function stripProviderPrefix(modelId: string): string {
   return modelId.split("/").pop() ?? modelId;
 }
 
+function toFiniteNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function normalizeTokenPriceTier(value: unknown): TokenPriceTier | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const inputPer1k = toFiniteNonNegativeNumber(record.inputPer1k);
+  const outputPer1k = toFiniteNonNegativeNumber(record.outputPer1k);
+  if (inputPer1k === undefined || outputPer1k === undefined) return undefined;
+
+  const cachedInputPer1k = toFiniteNonNegativeNumber(record.cachedInputPer1k);
+  const cachedOutputPer1k = toFiniteNonNegativeNumber(record.cachedOutputPer1k);
+  const inputTokensAbove = toFiniteNonNegativeNumber(record.inputTokensAbove);
+
+  return {
+    inputPer1k,
+    outputPer1k,
+    ...(cachedInputPer1k !== undefined ? { cachedInputPer1k } : {}),
+    ...(cachedOutputPer1k !== undefined ? { cachedOutputPer1k } : {}),
+    ...(inputTokensAbove !== undefined ? { inputTokensAbove } : {}),
+  };
+}
+
+function normalizeLongContextTiers(
+  value: unknown,
+): Array<TokenPriceTier & { inputTokensAbove: number }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tiers = value
+    .map((entry) => normalizeTokenPriceTier(entry))
+    .filter(
+      (entry): entry is TokenPriceTier & { inputTokensAbove: number } =>
+        !!entry && typeof entry.inputTokensAbove === "number",
+    )
+    .sort((a, b) => a.inputTokensAbove - b.inputTokensAbove);
+  return tiers.length > 0 ? tiers : undefined;
+}
+
+function computePromotionStatus(
+  startsAt?: string,
+  endsAt?: string,
+  now = Date.now(),
+): RuntimePromotion["status"] {
+  const startsAtMs = startsAt ? Date.parse(startsAt) : Number.NaN;
+  const endsAtMs = endsAt ? Date.parse(endsAt) : Number.NaN;
+
+  if (Number.isFinite(startsAtMs) && startsAtMs > now) return "future";
+  if (Number.isFinite(endsAtMs) && endsAtMs < now) return "expired";
+  if (Number.isFinite(startsAtMs) || Number.isFinite(endsAtMs)) return "active";
+  return "unknown";
+}
+
+function normalizePromotion(value: unknown): RuntimePromotion | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const discountPercent = toFiniteNonNegativeNumber(
+    record.discountPercent ?? record.discount_percent,
+  );
+  const startsAt = typeof (record.startsAt ?? record.starts_at) === "string"
+    ? String(record.startsAt ?? record.starts_at)
+    : undefined;
+  const endsAt = typeof (record.endsAt ?? record.ends_at) === "string"
+    ? String(record.endsAt ?? record.ends_at)
+    : undefined;
+  const message = typeof record.message === "string" ? record.message : undefined;
+
+  if (
+    discountPercent === undefined
+    && startsAt === undefined
+    && endsAt === undefined
+    && message === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(discountPercent !== undefined ? { discountPercent } : {}),
+    ...(startsAt !== undefined ? { startsAt } : {}),
+    ...(endsAt !== undefined ? { endsAt } : {}),
+    ...(message !== undefined ? { message } : {}),
+    status: computePromotionStatus(startsAt, endsAt),
+  };
+}
+
+function freshnessFor(
+  source: RuntimeEconomicsSource,
+  stale: boolean | undefined,
+): RuntimeEconomicsFreshness {
+  if (source === "unknown") return "unknown";
+  if (source === "user") return "fresh";
+  if (source === "provider-live") return stale === false ? "fresh" : "stale";
+  return "stale";
+}
+
+function resolutionFor(
+  source: RuntimeEconomicsSource,
+  candidate: Partial<RuntimeModelEconomics> | undefined,
+): RuntimeEconomicsFieldResolution {
+  return {
+    source,
+    freshness: freshnessFor(source, candidate?.stale),
+    ...(typeof candidate?.fetchedAt === "number" ? { fetchedAt: candidate.fetchedAt } : {}),
+  };
+}
+
 function hasMeaningfulEconomics(value: Partial<RuntimeModelEconomics> | undefined): value is Partial<RuntimeModelEconomics> {
   return !!value && Object.keys(value).length > 0;
 }
@@ -83,43 +219,169 @@ function buildDefaultTokenPricesFromBundle(modelId: string): RuntimeModelEconomi
       inputPer1k: costEntry.inputPer1k,
       outputPer1k: costEntry.outputPer1k,
     },
+    ...(costEntry.tiers?.length
+      ? {
+          longContextTiers: costEntry.tiers.map((tier) => ({
+            inputTokensAbove: tier.inputTokensAbove,
+            inputPer1k: tier.inputPer1k,
+            outputPer1k: tier.outputPer1k,
+          })),
+        }
+      : {}),
   };
 }
 
-function resolveEconomicsSource(input: ResolveModelEconomicsInput): RuntimeEconomicsSource {
-  if (hasMeaningfulEconomics(input.userOverride)) return "user";
-  if (hasMeaningfulEconomics(input.liveEconomics)) return "provider-live";
-  if (hasMeaningfulEconomics(input.staticEconomics)) return "provider-static";
-  if (hasMeaningfulEconomics(input.fallbackEconomics)) return "bundled-fallback";
-  return "unknown";
+function buildImplicitFallbackEconomics(
+  modelId: string,
+): Partial<RuntimeModelEconomics> | undefined {
+  const tokenPrices = buildDefaultTokenPricesFromBundle(modelId);
+  if (!tokenPrices?.default) return undefined;
+  return {
+    billingUnit: "tokens",
+    tokenPrices,
+    stale: true,
+  };
+}
+
+function firstResolvedField<T>(
+  candidates: Array<{
+    source: RuntimeEconomicsSource;
+    candidate: Partial<RuntimeModelEconomics> | undefined;
+    value: T | undefined;
+  }>,
+): { value?: T; resolution: RuntimeEconomicsFieldResolution } {
+  for (const { source, candidate, value } of candidates) {
+    if (value === undefined) continue;
+    return { value, resolution: resolutionFor(source, candidate) };
+  }
+  return { resolution: { source: "unknown", freshness: "unknown" } };
 }
 
 export function resolveModelEconomics(input: ResolveModelEconomicsInput): RuntimeModelEconomics {
-  const chosen = hasMeaningfulEconomics(input.userOverride)
-    ? input.userOverride!
-    : hasMeaningfulEconomics(input.liveEconomics)
-      ? input.liveEconomics!
-      : hasMeaningfulEconomics(input.staticEconomics)
-        ? input.staticEconomics!
-        : hasMeaningfulEconomics(input.fallbackEconomics)
-          ? input.fallbackEconomics!
-          : {};
+  const modelId = stripProviderPrefix(input.modelId || "unknown");
+  const provider = input.provider || input.userOverride?.provider || input.liveEconomics?.provider || input.staticEconomics?.provider || input.fallbackEconomics?.provider || "unknown";
+  const implicitFallback = buildImplicitFallbackEconomics(modelId);
+  const fallbackEconomics = hasMeaningfulEconomics(input.fallbackEconomics)
+    ? {
+        ...implicitFallback,
+        ...input.fallbackEconomics,
+        tokenPrices: input.fallbackEconomics?.tokenPrices ?? implicitFallback?.tokenPrices,
+      }
+    : implicitFallback;
 
-  const provider = input.provider || chosen.provider || "unknown";
-  const modelId = stripProviderPrefix(input.modelId || chosen.modelId || "unknown");
-  const bundle = lookupModelCost(modelId);
-  const tokenPrices = chosen.tokenPrices ?? (bundle ? buildDefaultTokenPricesFromBundle(modelId) : undefined);
+  const precedence: Array<{
+    source: RuntimeEconomicsSource;
+    candidate: Partial<RuntimeModelEconomics> | undefined;
+  }> = [
+    { source: "user", candidate: hasMeaningfulEconomics(input.userOverride) ? input.userOverride : undefined },
+    { source: "provider-live", candidate: hasMeaningfulEconomics(input.liveEconomics) ? input.liveEconomics : undefined },
+    { source: "provider-static", candidate: hasMeaningfulEconomics(input.staticEconomics) ? input.staticEconomics : undefined },
+    { source: "bundled-fallback", candidate: hasMeaningfulEconomics(fallbackEconomics) ? fallbackEconomics : undefined },
+  ];
+
+  const billingUnit = firstResolvedField(
+    precedence.map(({ source, candidate }) => ({
+      source,
+      candidate,
+      value: candidate?.billingUnit === "tokens" || candidate?.billingUnit === "request" || candidate?.billingUnit === "unknown"
+        ? candidate.billingUnit
+        : undefined,
+    })),
+  );
+
+  const defaultTokenPrices = firstResolvedField(
+    precedence.map(({ source, candidate }) => ({
+      source,
+      candidate,
+      value: normalizeTokenPriceTier(candidate?.tokenPrices?.default),
+    })),
+  );
+
+  const longContextTiers = firstResolvedField(
+    precedence.map(({ source, candidate }) => ({
+      source,
+      candidate,
+      value: normalizeLongContextTiers(candidate?.tokenPrices?.longContextTiers)
+        ?? (() => {
+          const tier = normalizeTokenPriceTier(candidate?.tokenPrices?.longContext);
+          return tier && typeof tier.inputTokensAbove === "number" ? [tier as TokenPriceTier & { inputTokensAbove: number }] : undefined;
+        })(),
+    })),
+  );
+
+  const requestMultiplier = firstResolvedField(
+    precedence.map(({ source, candidate }) => ({
+      source,
+      candidate,
+      value: toFiniteNonNegativeNumber(candidate?.requestMultiplier),
+    })),
+  );
+
+  const promotion = firstResolvedField(
+    precedence.map(({ source, candidate }) => ({
+      source,
+      candidate,
+      value: normalizePromotion(candidate?.promotion),
+    })),
+  );
+
+  const usedSources = [
+    billingUnit.resolution.source,
+    defaultTokenPrices.resolution.source,
+    longContextTiers.resolution.source,
+    requestMultiplier.resolution.source,
+    promotion.resolution.source,
+  ].filter((source) => source !== "unknown");
+
+  const source = usedSources.length === 0
+    ? "unknown"
+    : usedSources.every((candidate) => candidate === usedSources[0])
+      ? usedSources[0]
+      : "mixed";
+
+  const fetchedAt = [
+    billingUnit.resolution.fetchedAt,
+    defaultTokenPrices.resolution.fetchedAt,
+    longContextTiers.resolution.fetchedAt,
+    requestMultiplier.resolution.fetchedAt,
+    promotion.resolution.fetchedAt,
+  ]
+    .filter((value): value is number => typeof value === "number")
+    .sort((a, b) => b - a)[0];
+
+  const stale = [
+    billingUnit.resolution.freshness,
+    defaultTokenPrices.resolution.freshness,
+    longContextTiers.resolution.freshness,
+    requestMultiplier.resolution.freshness,
+    promotion.resolution.freshness,
+  ].includes("stale");
 
   return {
     provider,
     modelId,
-    source: resolveEconomicsSource(input),
-    fetchedAt: chosen.fetchedAt,
-    stale: chosen.stale ?? true,
-    billingUnit: chosen.billingUnit ?? (tokenPrices ? "tokens" : "unknown"),
-    tokenPrices,
-    requestMultiplier: chosen.requestMultiplier,
-    promotion: chosen.promotion,
+    source,
+    ...(fetchedAt !== undefined ? { fetchedAt } : {}),
+    stale,
+    billingUnit: billingUnit.value ?? (defaultTokenPrices.value ? "tokens" : "unknown"),
+    ...(defaultTokenPrices.value
+      ? {
+          tokenPrices: {
+            default: defaultTokenPrices.value,
+            ...(longContextTiers.value?.[0] ? { longContext: longContextTiers.value[0] } : {}),
+            ...(longContextTiers.value ? { longContextTiers: longContextTiers.value } : {}),
+          },
+        }
+      : {}),
+    ...(requestMultiplier.value !== undefined ? { requestMultiplier: requestMultiplier.value } : {}),
+    ...(promotion.value ? { promotion: promotion.value } : {}),
+    provenance: {
+      billingUnit: billingUnit.resolution,
+      ...(defaultTokenPrices.value ? { defaultTokenPrices: defaultTokenPrices.resolution } : {}),
+      ...(longContextTiers.value ? { longContextTiers: longContextTiers.resolution } : {}),
+      ...(requestMultiplier.value !== undefined ? { requestMultiplier: requestMultiplier.resolution } : {}),
+      ...(promotion.value ? { promotion: promotion.resolution } : {}),
+    },
   };
 }
 

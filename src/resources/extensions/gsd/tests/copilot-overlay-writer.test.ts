@@ -9,43 +9,67 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  COPILOT_OVERLAY_PLACEHOLDER_CONTEXT_WINDOW,
-  COPILOT_OVERLAY_PLACEHOLDER_MAX_TOKENS,
   mergeIntoModelsCatalogOverlay,
   readModelsCatalogOverlay,
   registerCopilotModelsInOverlay,
   synthesizeCopilotOverlayEntry,
   writeModelsCatalogOverlay,
 } from "../copilot-overlay-writer.js";
-import type { CopilotModelRecord } from "../copilot-model-catalog.js";
+import { sanitizeGitHubCopilotModels, type CopilotModelRecord } from "../copilot-model-catalog.js";
 
-function record(id: string, name = id): CopilotModelRecord {
-  return { id, name, tool_call: true, registryId: `github-copilot/${id}` };
+function completeRecord(id: string, name = id, overrides: Record<string, unknown> = {}): CopilotModelRecord {
+  return sanitizeGitHubCopilotModels({
+    data: [
+      {
+        id,
+        name,
+        tool_call: true,
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400_000, output: 128_000 },
+        cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+        ...overrides,
+      },
+    ],
+  })[0]!;
 }
 
-test("synthesizeCopilotOverlayEntry produces a schema-valid, clearly-placeholdered entry", () => {
-  const entry = synthesizeCopilotOverlayEntry(record("brand-new-model", "Brand New Model"));
+function incompleteRecord(id: string, name = id, overrides: Record<string, unknown> = {}): CopilotModelRecord {
+  return sanitizeGitHubCopilotModels({
+    data: [
+      {
+        id,
+        name,
+        tool_call: true,
+        ...overrides,
+      },
+    ],
+  })[0]!;
+}
+
+test("synthesizeCopilotOverlayEntry produces a schema-valid entry from a complete live/static record", () => {
+  const entry = synthesizeCopilotOverlayEntry(completeRecord("brand-new-model", "Brand New Model"));
 
   assert.equal(entry.id, "brand-new-model");
   assert.equal(entry.name, "Brand New Model");
-  assert.equal(entry.api, "openai-completions");
+  assert.equal(entry.api, "openai-responses");
   assert.equal(entry.provider, "github-copilot");
   assert.equal(entry.baseUrl, "https://api.individual.githubcopilot.com");
-  assert.equal(entry.reasoning, false, "reasoning is an unknown placeholder, never guessed true");
+  assert.equal(entry.reasoning, true);
   assert.deepEqual(entry.input, ["text"]);
-  assert.deepEqual(entry.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-  assert.equal(entry.contextWindow, COPILOT_OVERLAY_PLACEHOLDER_CONTEXT_WINDOW);
-  assert.equal(entry.maxTokens, COPILOT_OVERLAY_PLACEHOLDER_MAX_TOKENS);
+  assert.deepEqual(entry.cost, { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 });
+  assert.equal(entry.contextWindow, 400_000);
+  assert.equal(entry.maxTokens, 128_000);
   assert.equal(entry.headers?.["User-Agent"], "GitHubCopilotChat/0.35.0");
 });
 
 test("synthesizeCopilotOverlayEntry falls back to id when name is blank", () => {
-  const entry = synthesizeCopilotOverlayEntry({ id: "no-name-model", name: "", tool_call: true });
+  const entry = synthesizeCopilotOverlayEntry(completeRecord("no-name-model", ""));
   assert.equal(entry.name, "no-name-model");
 });
 
 test("mergeIntoModelsCatalogOverlay: starting from nothing produces a valid overlay with only github-copilot", () => {
-  const merged = mergeIntoModelsCatalogOverlay(null, [synthesizeCopilotOverlayEntry(record("new-model"))]);
+  const merged = mergeIntoModelsCatalogOverlay(null, [synthesizeCopilotOverlayEntry(completeRecord("new-model"))]);
   const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.equal(merged.version, 1);
@@ -61,15 +85,15 @@ test("mergeIntoModelsCatalogOverlay never touches unrelated providers", () => {
     source: "https://example.com/catalog.json",
     models: {
       anthropic: {
-        "claude-opus-4-6": synthesizeCopilotOverlayEntry(record("claude-opus-4-6")) as any,
+        "claude-opus-4-6": synthesizeCopilotOverlayEntry(completeRecord("claude-opus-4-6")) as any,
       },
       "github-copilot": {
-        "existing-model": synthesizeCopilotOverlayEntry(record("existing-model")),
+        "existing-model": synthesizeCopilotOverlayEntry(completeRecord("existing-model")),
       },
     },
   };
 
-  const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(record("new-model"))]);
+  const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(completeRecord("new-model"))]);
   const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.ok(merged.models.anthropic["claude-opus-4-6"], "unrelated provider entry must survive untouched");
@@ -79,7 +103,7 @@ test("mergeIntoModelsCatalogOverlay never touches unrelated providers", () => {
 
 test("mergeIntoModelsCatalogOverlay never downgrades an existing entry (e.g. a richer models.dev-sourced one)", () => {
   const richEntry = {
-    ...synthesizeCopilotOverlayEntry(record("gpt-5.4")),
+    ...synthesizeCopilotOverlayEntry(completeRecord("gpt-5.4")),
     reasoning: true,
     cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
     contextWindow: 400_000,
@@ -89,7 +113,7 @@ test("mergeIntoModelsCatalogOverlay never downgrades an existing entry (e.g. a r
     models: { "github-copilot": { "gpt-5.4": richEntry } },
   };
 
-  const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(record("gpt-5.4"))]);
+  const merged = mergeIntoModelsCatalogOverlay(existing, [synthesizeCopilotOverlayEntry(completeRecord("gpt-5.4"))]);
   const githubCopilotModels = merged.models["github-copilot"] as Record<string, unknown>;
 
   assert.deepEqual(
@@ -104,7 +128,7 @@ test("writeModelsCatalogOverlay writes atomically and leaves no temp-file leftov
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const path = join(tmp, "models-catalog.json");
 
-  const overlay = mergeIntoModelsCatalogOverlay(null, [synthesizeCopilotOverlayEntry(record("m1"))]);
+  const overlay = mergeIntoModelsCatalogOverlay(null, [synthesizeCopilotOverlayEntry(completeRecord("m1"))]);
   writeModelsCatalogOverlay(path, overlay);
 
   const onDisk = JSON.parse(readFileSync(path, "utf-8"));
@@ -132,21 +156,37 @@ test("readModelsCatalogOverlay returns null for a malformed/invalid file", (t) =
   assert.equal(readModelsCatalogOverlay(path), null, "empty catalog must fail isModelsCatalog validation");
 });
 
-test("registerCopilotModelsInOverlay: safe containment quarantines remote-only models instead of persisting placeholders", (t) => {
+test("registerCopilotModelsInOverlay: safe containment quarantines incomplete remote-only models instead of persisting placeholders", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const overlayPath = join(tmp, "models-catalog.json");
 
-  const first = registerCopilotModelsInOverlay(overlayPath, [record("model-a"), record("model-b")]);
-  assert.deepEqual(first.registeredIds, [], "remote-only entries are quarantined, never registered as concrete metadata");
+  const first = registerCopilotModelsInOverlay(overlayPath, [incompleteRecord("model-a"), incompleteRecord("model-b")]);
+  assert.deepEqual(first.registeredIds, [], "incomplete remote-only entries are quarantined, never registered as concrete metadata");
   assert.deepEqual(first.quarantined.map((model) => model.id).sort(), ["model-a", "model-b"]);
   assert.equal(first.overlayPath, overlayPath);
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "no placeholder metadata may be written to the on-disk overlay");
 
-  const second = registerCopilotModelsInOverlay(overlayPath, [record("model-a"), record("model-c")]);
-  assert.deepEqual(second.registeredIds, [], "the safe path never materializes remote-only models as registered");
+  const second = registerCopilotModelsInOverlay(overlayPath, [incompleteRecord("model-a"), incompleteRecord("model-c")]);
+  assert.deepEqual(second.registeredIds, [], "the safe path never materializes incomplete remote-only models as registered");
   assert.deepEqual(second.quarantined.map((model) => model.id).sort(), ["model-a", "model-c"]);
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "repeated quarantine checks must not write any placeholder overlay");
+});
+
+test("registerCopilotModelsInOverlay registers complete remote-only models idempotently", (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const first = registerCopilotModelsInOverlay(overlayPath, [completeRecord("model-complete")]);
+  assert.deepEqual(first.registeredIds, ["model-complete"]);
+  assert.deepEqual(first.quarantined, []);
+  const onDisk = readModelsCatalogOverlay(overlayPath);
+  assert.ok(onDisk?.models["github-copilot"]?.["model-complete"]);
+
+  const second = registerCopilotModelsInOverlay(overlayPath, [completeRecord("model-complete")]);
+  assert.deepEqual(second.registeredIds, []);
+  assert.deepEqual(second.quarantined, []);
 });
 
 test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay written by gsd update --models", (t) => {
@@ -160,13 +200,13 @@ test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay wri
     fetchedAt: "2026-01-01T00:00:00.000Z",
     source: "https://raw.githubusercontent.com/open-gsd/gsd-pi/main/packages/pi-ai/src/models.generated.json",
     models: {
-      anthropic: { "claude-opus-4-6": { ...synthesizeCopilotOverlayEntry(record("claude-opus-4-6")), provider: "anthropic" } },
-      "github-copilot": { "gpt-5.4": synthesizeCopilotOverlayEntry(record("gpt-5.4")) },
+      anthropic: { "claude-opus-4-6": { ...synthesizeCopilotOverlayEntry(completeRecord("claude-opus-4-6")), provider: "anthropic" } },
+      "github-copilot": { "gpt-5.4": synthesizeCopilotOverlayEntry(completeRecord("gpt-5.4")) },
     },
   };
   writeFileSync(overlayPath, JSON.stringify(preexisting, null, 2));
 
-  const result = registerCopilotModelsInOverlay(overlayPath, [record("gpt-5.4"), record("brand-new")]);
+  const result = registerCopilotModelsInOverlay(overlayPath, [completeRecord("gpt-5.4"), incompleteRecord("brand-new")]);
   assert.deepEqual(result.registeredIds, [], "existing authoritative entries and remote-only candidates are not written to disk");
   assert.deepEqual(result.quarantined.map((model) => model.id).sort(), ["brand-new"]);
 

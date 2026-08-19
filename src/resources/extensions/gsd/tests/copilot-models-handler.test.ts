@@ -16,6 +16,7 @@ import {
 } from "../commands/handlers/copilot-models.js";
 import { readModelsCatalogOverlay } from "../copilot-overlay-writer.js";
 import { getGsdArgumentCompletions } from "../commands/catalog.js";
+import { showHelp } from "../commands/handlers/core.js";
 
 interface FakeModel {
   id: string;
@@ -127,8 +128,8 @@ test("handleCopilotModels: reports added/removed/changed drift and dedupes repea
 
   const drift = notifications[1];
   assert.equal(drift.level, "info");
-  assert.match(drift.message, /\+ mai-code-1\.1-flash added/);
-  assert.match(drift.message, /- claude-sonnet-5 removed/);
+  assert.match(drift.message, /\+ github-copilot\/mai-code-1\.1-flash added/);
+  assert.match(drift.message, /- github-copilot\/claude-sonnet-5 removed/);
 
   // Re-running the identical fetch should not repeat the same drift notice.
   await handleCopilotModels("", ctx, {
@@ -166,7 +167,7 @@ test("handleCopilotModels: fetch failure preserves last-known-good snapshot", as
       { id: "gpt-5.5", name: "GPT-5.5", tool_call: true },
     ]) as unknown as typeof fetch,
   });
-  assert.match(notifications[2].message, /\+ gpt-5\.5 added/);
+  assert.match(notifications[2].message, /\+ github-copilot\/gpt-5\.5 added/);
 });
 
 test("handleCopilotModels: empty response never overwrites the cached catalog", async () => {
@@ -184,7 +185,7 @@ test("handleCopilotModels: empty response never overwrites the cached catalog", 
     fetchImpl: jsonResponse([]) as unknown as typeof fetch,
   });
   assert.equal(notifications[1].level, "warning");
-  assert.match(notifications[1].message, /empty response/);
+  assert.match(notifications[1].message, /suspicious/);
 });
 
 test("handleCopilotModels: failure with no cached catalog yet reports clearly", async () => {
@@ -423,7 +424,7 @@ test("handleCopilotModels: why reports known economics with source and freshness
   await handleCopilotModels("why mai-code-1.1-flash", ctx, {});
 
   assert.match(notifications[0].message, /^- economics: \$0\.0002 per 1K input \/ \$0\.0012 per 1K output$/m);
-  assert.match(notifications[0].message, /^- source: bundled-fallback$/m);
+  assert.match(notifications[0].message, /^- source: provider-static$/m);
   assert.match(notifications[0].message, /^- freshness: stale$/m);
 });
 
@@ -557,7 +558,7 @@ test("handleCopilotModels: newly added model with a known GSD capability tier is
     ]) as unknown as typeof fetch,
   });
 
-  assert.match(notifications[1].message, /\+ claude-sonnet-5 added.*\(known capability tier: standard\)/);
+  assert.match(notifications[1].message, /\+ github-copilot\/claude-sonnet-5 added.*\(known capability tier: standard\)/);
 });
 
 test("handleCopilotModels: newly added model without a GSD capability profile is flagged as manual-only", async () => {
@@ -581,7 +582,7 @@ test("handleCopilotModels: newly added model without a GSD capability profile is
 
   assert.match(
     notifications[1].message,
-    /\+ brand-new-unreleased-model added.*\(no GSD capability profile yet — manual selection only, not auto-routed\)/,
+    /\+ github-copilot\/brand-new-unreleased-model added.*\(no GSD capability profile yet — manual selection only, not auto-routed\)/,
   );
 });
 
@@ -636,7 +637,7 @@ test("handleCopilotModels: --register quarantines remote-only models instead of 
 
   const onDisk = readModelsCatalogOverlay(overlayPath);
   assert.equal(onDisk, null, "remote-only models are quarantined instead of persisting placeholder metadata");
-  assert.match(notifications[1].message, /quarantined|remote-only|not persisted/i);
+  assert.match(notifications[1].message, /brand-new-model.*quarantined|remote-only.*quarantined|not persisted/i);
 });
 
 test("handleCopilotModels: --register on a no-diff run makes no overlay writes", async (t) => {
@@ -683,13 +684,165 @@ test("handleCopilotModels: --register keeps remote-only models quarantined and n
   });
 
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "no placeholder metadata may be persisted for remote-only models");
-  assert.match(notifications[1].message, /quarantined.*brand-new-model|remote-only.*quarantined|not persisted/i);
+  assert.match(notifications[1].message, /brand-new-model.*quarantined|remote-only.*quarantined|not persisted/i);
 });
 
-test("getGsdArgumentCompletions: /gsd copilot-models completions include why <model>", () => {
+test("handleCopilotModels: changes reports the last accepted diff without another network request", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "mai-code-1.1-flash", name: "MAI Code 1.1 Flash", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("changes", ctx, {});
+
+  assert.match(notifications[2].message, /GitHub Copilot model catalog changes:/);
+  assert.match(notifications[2].message, /github-copilot\/mai-code-1\.1-flash/);
+});
+
+test("handleCopilotModels: pricing explains provider-aware economics locally", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "mai-code-1.1-flash", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("pricing mai-code-1.1-flash", ctx, {});
+
+  assert.match(notifications[0].message, /^GitHub Copilot pricing: github-copilot\/mai-code-1\.1-flash$/m);
+  assert.match(notifications[0].message, /^- source: provider-static$/m);
+  assert.match(notifications[0].message, /^- freshness: stale$/m);
+});
+
+test("handleCopilotModels: promos separates active, future, and expired promotions", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        tool_call: true,
+        promotion: { discountPercent: 20, endsAt: "2999-12-31T00:00:00Z", message: "Active promo" },
+      },
+      {
+        id: "gpt-5.5",
+        name: "GPT-5.5",
+        tool_call: true,
+        promotion: { discountPercent: 10, startsAt: "2999-01-01T00:00:00Z", message: "Future promo" },
+      },
+      {
+        id: "mai-code-1.1-flash",
+        name: "MAI Code 1.1 Flash",
+        tool_call: true,
+        promotion: { discountPercent: 5, endsAt: "2000-01-01T00:00:00Z", message: "Expired promo" },
+      },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("promos", ctx, {});
+
+  assert.match(notifications[1].message, /- active: 1/);
+  assert.match(notifications[1].message, /- future: 1/);
+  assert.match(notifications[1].message, /- expired: 1/);
+});
+
+test("handleCopilotModels: doctor reports cache and quarantine state without a network request", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-doctor-"));
+  const overlayPath = join(tmp, "models-catalog.json");
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+  await handleCopilotModels("doctor", ctx, {});
+
+  assert.match(notifications[1].message, /GitHub Copilot doctor:/);
+  assert.match(notifications[1].message, /quarantined registration candidates: 1/);
+  assert.match(notifications[1].message, /account isolation:/);
+});
+
+test("handleCopilotModels: --register on a first run writes complete remote-only candidates", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-register-complete-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("sync --register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      {
+        id: "brand-new-complete",
+        name: "Brand New Complete",
+        tool_call: true,
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+      },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  const onDisk = readModelsCatalogOverlay(overlayPath);
+  assert.ok(onDisk?.models["github-copilot"]?.["brand-new-complete"]);
+  assert.match(notifications[0].message, /= github-copilot\/brand-new-complete registered into/);
+});
+
+test("getGsdArgumentCompletions: /gsd copilot-models completions include the expanded subcommand surface", () => {
   const completions = getGsdArgumentCompletions("copilot-models ");
-  assert.ok(
-    completions.some((entry) => entry.label === "why <model>"),
-    "completion list must include the why <model> subcommand",
-  );
+  const labels = completions.map((entry) => entry.label);
+  assert.ok(labels.includes("sync"));
+  assert.ok(labels.includes("changes"));
+  assert.ok(labels.includes("pricing [model]"));
+  assert.ok(labels.includes("promos"));
+  assert.ok(labels.includes("doctor"));
+  assert.ok(labels.includes("why <model>"));
+  assert.ok(labels.includes("--register"));
+});
+
+test("showHelp: full help lists the expanded copilot-models subcommands", () => {
+  const lines: string[] = [];
+  const mockCtx = {
+    ui: {
+      notify(message: string) {
+        lines.push(...message.split("\n"));
+      },
+      custom: async () => {},
+    },
+  };
+
+  showHelp(mockCtx as any, "full");
+
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models sync")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models changes")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models pricing [model]")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models promos")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models doctor")));
 });

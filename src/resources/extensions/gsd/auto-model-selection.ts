@@ -829,6 +829,7 @@ export async function selectAndApplyModel(
             availableModelIds,
             routingConfig,
             preferredModelId,
+            routingEligibleModels,
           );
           const hookResult = await pi.emitBeforeModelSelect({
             unitType,
@@ -874,6 +875,7 @@ export async function selectAndApplyModel(
             classification.taskMetadata,
             capabilityOverrides,
             preferredModelId,
+            routingEligibleModels,
           );
         }
 

@@ -1658,6 +1658,11 @@ describe("Phase J routing safety", () => {
     );
   });
 
+  test("getModelProfileConfidence classifies inherited family variants", () => {
+    assert.equal(getModelProfileConfidence("gpt-5.4-preview"), "inherited");
+    assert.equal(getModelProfileConfidence("claude-sonnet-5-beta"), "inherited");
+  });
+
   test("auto-routing excludes unknown-confidence models when a profiled alternative exists", () => {
     const config = { ...defaultRoutingConfig(), enabled: true };
     const result = resolveModelForComplexity(
@@ -1681,5 +1686,58 @@ describe("Phase J routing safety", () => {
 
     assert.equal(results[0].modelId, "claude-sonnet-4-6");
     assert.equal(results[0].score >= results[1].score, true);
+  });
+
+  test("scoreEligibleModels uses provider-aware runtime costs when bare IDs collide across providers", () => {
+    const results = scoreEligibleModels(
+      ["openai/gpt-5.5", "github-copilot/gpt-5.5"],
+      { reasoning: 1.0 },
+      undefined,
+      [
+        {
+          id: "gpt-5.5",
+          provider: "openai",
+          cost: { input: 6, output: 30, cacheRead: 0, cacheWrite: 0 },
+        },
+        {
+          id: "gpt-5.5",
+          provider: "github-copilot",
+          cost: { input: 0.5, output: 2.5, cacheRead: 0, cacheWrite: 0 },
+        },
+      ] as any,
+    );
+
+    assert.equal(results[0].modelId, "github-copilot/gpt-5.5");
+  });
+
+  test("resolveModelForComplexity fails closed when only unknown-profile candidates are available for automatic routing", () => {
+    const config = { ...defaultRoutingConfig(), enabled: true };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-model-a", "brand-new-unreleased-model-b"],
+      "execute-task",
+    );
+
+    assert.equal(result.modelId, "claude-opus-4-6");
+    assert.match(result.reason, /fail closed/i);
+    assert.equal(result.rejected?.length, 2);
+    assert.ok(result.rejected?.every((candidate) => /manual selection only, not auto-routed/i.test(candidate.reason)));
+  });
+
+  test("resolveModelForComplexity records concrete rejection reasons on the capability-scored path", () => {
+    const config = { ...defaultRoutingConfig(), enabled: true };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-model", "claude-sonnet-4-6", "gpt-4o"],
+      "execute-task",
+    );
+
+    assert.equal(result.modelId, "claude-sonnet-4-6");
+    assert.ok(result.rejected?.some((candidate) => candidate.modelId === "brand-new-unreleased-model" && /manual selection only, not auto-routed/i.test(candidate.reason)));
+    assert.ok(result.rejected?.some((candidate) => candidate.modelId === "gpt-4o" && /capability|confidence|cost/i.test(candidate.reason)));
   });
 });

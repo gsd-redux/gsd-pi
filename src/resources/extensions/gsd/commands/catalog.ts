@@ -168,6 +168,15 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "tail", desc: "Show last N notifications (default: 20)" },
     { cmd: "filter", desc: "Filter by severity (error|warning|info|success)" },
   ],
+  "copilot-models": [
+    { cmd: "sync", desc: "Refresh the normalized GitHub Copilot live catalog and record a new accepted snapshot" },
+    { cmd: "changes", desc: "Show the last accepted normalized Copilot catalog diff without another network request" },
+    { cmd: "pricing [model]", desc: "Explain provider-aware Copilot economics and source/freshness for one model or the accepted snapshot" },
+    { cmd: "promos", desc: "Show active, future, and expired Copilot promotions from the accepted live snapshot" },
+    { cmd: "doctor", desc: "Local-only Copilot auth/cache/policy/quarantine diagnostics with no network request" },
+    { cmd: "why <model>", desc: "Explain a Copilot model's local status, routing eligibility, and economics without network access" },
+    { cmd: "--register", desc: "With sync, write only complete remote-only Copilot models into the local models-catalog.json overlay" },
+  ],
   logs: [
     { cmd: "debug", desc: "List or view debug log files" },
     { cmd: "tail", desc: "Show last N activity log summaries" },
@@ -374,10 +383,6 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "merge",  desc: "Merge a worktree into main and clean up" },
     { cmd: "clean",  desc: "Remove all merged/empty worktrees" },
     { cmd: "remove", desc: "Remove a worktree (--force to skip safety checks)" },
-  ],
-  "copilot-models": [
-    { cmd: "why <model>", desc: "Explain a GitHub Copilot model's local status, routing eligibility, and economics (local-only, no network)" },
-    { cmd: "--register", desc: "Register newly-discovered models into the local models-catalog.json overlay" },
   ],
 };
 
