@@ -146,7 +146,10 @@ import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
 } from "../task-recovery-domain-operation.js";
-import { verifyExpectedArtifact } from "../artifact-verification.js";
+import {
+  readTerminalTaskRecoveryAbort,
+  verifyExpectedArtifact,
+} from "../artifact-verification.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -210,6 +213,7 @@ const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
 const TASK_EXECUTION_CUTOVER_DEPS = {
   claimTaskAttempt,
+  readTerminalTaskRecoveryAbort,
   readLatestTaskAttempt,
   readTaskAttempt,
   readTaskRecoveryRoute,

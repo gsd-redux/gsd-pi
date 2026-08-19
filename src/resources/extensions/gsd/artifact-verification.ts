@@ -44,11 +44,10 @@ import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
-import { readLatestTaskAttempt, readTaskAttemptIds } from "./task-execution-domain-operation.js";
-import {
-  readPendingTaskRecoveryContext,
-  readTaskRecoveryRoute,
-} from "./task-recovery-domain-operation.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
+import { getDb } from "./db/engine.js";
+import { isTaskRecoveryResumeAuthorized } from "./db/writers/lifecycle-commands.js";
 import { readMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
 
 export type ExecuteTaskArtifactReadiness = "verify" | "route";
@@ -86,11 +85,31 @@ export function readTerminalTaskRecoveryAbort(
   sliceId: string,
   taskId: string,
 ): { recoveryActionId: string } | null {
-  for (const attemptId of readTaskAttemptIds({ milestoneId, sliceId, taskId })) {
-    const route = readTaskRecoveryRoute(attemptId);
-    if (!route || route.recoveryOwner !== "agent") continue;
-    if (route.action !== "abort" || route.resumeAuthorized) continue;
-    return { recoveryActionId: route.recoveryActionId };
+  const routes = getDb().prepare(`
+    SELECT observation.attempt_id, action.recovery_action_id
+    FROM workflow_failure_observations observation
+    JOIN workflow_recovery_actions action
+      ON action.failure_observation_id = observation.failure_observation_id
+     AND action.project_id = observation.project_id
+     AND action.lifecycle_id = observation.lifecycle_id
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = observation.lifecycle_id
+     AND lifecycle.project_id = observation.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+      AND observation.recovery_owner = 'agent'
+      AND action.action = 'abort'
+    ORDER BY action.project_revision DESC
+  `).all({
+    ":milestone_id": milestoneId,
+    ":slice_id": sliceId,
+    ":task_id": taskId,
+  }) as Array<Record<string, unknown>>;
+  for (const route of routes) {
+    if (isTaskRecoveryResumeAuthorized(String(route["attempt_id"]))) continue;
+    return { recoveryActionId: String(route["recovery_action_id"]) };
   }
   return null;
 }

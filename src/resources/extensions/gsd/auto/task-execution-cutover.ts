@@ -37,6 +37,11 @@ export interface TaskExecutionCutoverInput {
 }
 
 export interface TaskExecutionCutoverDeps {
+  readTerminalTaskRecoveryAbort(
+    milestoneId: string,
+    sliceId: string,
+    taskId: string,
+  ): { recoveryActionId: string } | null;
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): Pick<
@@ -49,15 +54,29 @@ export interface TaskExecutionCutoverDeps {
   routeTaskFailure(input: RouteFailureInput): TaskRecoveryReceipt;
 }
 
+type TaskRecoveryDecision = Pick<
+  TaskRecoveryReceipt,
+  "status" | "action" | "recoveryActionId" | "resumeAuthorized"
+>;
+
 function routeStoredTechnicalFailure(
   input: TaskExecutionCutoverInput,
   attempt: TaskExecutionAttemptSnapshot,
   verdict: TaskTechnicalVerdictSnapshot,
   deps: TaskExecutionCutoverDeps,
-): TaskRecoveryReceipt {
+): TaskRecoveryDecision {
   if (!attempt.resultId) throw new Error("Host verification Attempt Result is missing");
   if (verdict.verdict === "pass") {
     throw new Error("Task recovery cannot route a passing Technical Verdict");
+  }
+  const task = parseTaskIdentity(input.unitId);
+  const terminalAbort = deps.readTerminalTaskRecoveryAbort(
+    task.milestoneId,
+    task.sliceId,
+    task.taskId,
+  );
+  if (terminalAbort) {
+    return { status: "replayed", action: "abort", ...terminalAbort };
   }
   return deps.routeTaskFailure({
     invocation: internalExecutionInvocation(`internal:auto:attempt.route:${attempt.resultId}`),
@@ -179,7 +198,7 @@ function interruptStaleAttempt(
   predecessor: TaskExecutionAttemptSnapshot,
   identity: ReturnType<typeof requireTaskClaimIdentity>,
   deps: TaskExecutionCutoverDeps,
-): TaskRecoveryReceipt {
+): TaskRecoveryDecision {
   if (identity.milestoneLeaseToken < predecessor.milestoneLeaseToken) {
     // A strictly older token means the running Attempt belongs to a newer
     // session; this stale session must not settle it, only refuse.
@@ -251,7 +270,7 @@ function settleRunningAttempt(
   summary: string,
   deps: TaskExecutionCutoverDeps,
   error: unknown = new Error(summary),
-): TaskRecoveryReceipt {
+): TaskRecoveryDecision {
   const attempt = deps.readTaskAttempt(attemptId);
   let resultId = attempt?.resultId;
   const recovery = attempt?.resultRecovery ?? taskRecoveryClassification(
@@ -331,7 +350,16 @@ function routeTaskFailure(
   summary: string,
   recovery: TaskResultRecoveryClassification,
   deps: TaskExecutionCutoverDeps,
-): TaskRecoveryReceipt {
+): TaskRecoveryDecision {
+  const task = parseTaskIdentity(input.unitId);
+  const terminalAbort = deps.readTerminalTaskRecoveryAbort(
+    task.milestoneId,
+    task.sliceId,
+    task.taskId,
+  );
+  if (terminalAbort) {
+    return { status: "replayed", action: "abort", ...terminalAbort };
+  }
   return deps.routeTaskFailure({
     invocation: internalExecutionInvocation(`internal:auto:attempt.route:${resultId}`),
     attemptId,
@@ -363,7 +391,7 @@ function taskRecoveryAbortResult(recoveryActionId: string): UnitPhaseResult {
 }
 
 function applyRecoveryDecision(
-  recovery: TaskRecoveryReceipt,
+  recovery: TaskRecoveryDecision,
 ): UnitPhaseResult {
   switch (recovery.action) {
     case "retry":
@@ -382,6 +410,15 @@ function applyRecoveryDecision(
   }
 }
 
+function isNewlyRecordedBlocker(
+  attempt: TaskExecutionAttemptSnapshot | null,
+): boolean {
+  return attempt?.state === "settled" &&
+    attempt.outcome === "failed" &&
+    attempt.nextStage === "route" &&
+    attempt.resultFailureClass === "blocker-discovered";
+}
+
 function reconcileNext(
   input: TaskExecutionCutoverInput,
   attemptId: string,
@@ -396,6 +433,7 @@ function reconcileNext(
   if (attempt?.state === "settled") {
     input.markCanonicalDispatchSettled();
     if ((attempt.outcome === "failed" || attempt.outcome === "interrupted") && attempt.nextStage === "route") {
+      if (isNewlyRecordedBlocker(attempt)) return result;
       if (!attempt.resultId) throw new Error("Task recovery requires the settled Attempt Result identity");
       const summary = attempt.resultSummary ?? "Task executor recorded a failed Result";
       return applyRecoveryDecision(routeTaskFailure(
@@ -519,6 +557,10 @@ export async function runWithTaskExecutionAttempt(
         ? predecessor.attemptId
         : undefined);
     if (!attemptId) throw error;
+    if (isNewlyRecordedBlocker(deps.readTaskAttempt(attemptId))) {
+      input.markCanonicalDispatchSettled();
+      return { action: "next", data: {} };
+    }
     return applyRecoveryDecision(
       settleRunningAttempt(input, attemptId, "executor-error", summary, deps, error),
     );
@@ -530,6 +572,11 @@ export async function runWithTaskExecutionAttempt(
 
   if (result.action === "next") {
     return reconcileNext(input, claim.attemptId, result, deps);
+  }
+
+  if (isNewlyRecordedBlocker(deps.readTaskAttempt(claim.attemptId))) {
+    input.markCanonicalDispatchSettled();
+    return result;
   }
 
   const recovery = settleRunningAttempt(
