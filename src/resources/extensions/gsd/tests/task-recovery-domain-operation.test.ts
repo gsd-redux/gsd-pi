@@ -1385,6 +1385,53 @@ test("deterministic repair abort resumes after restart and is consumed by one su
   `, { ":attempt_id": secondFailure.attemptId }).count), 1);
 });
 
+test("latest resumed abort supersedes an ancestor whose authorization was consumed", () => {
+  const firstFailure = seedFailedAttempt();
+  const route = (
+    key: string,
+    failure: { attemptId: string; resultId: string },
+  ) => recordFailureAndSelectRecovery({
+    invocation: invocation(key),
+    ...failure,
+    owner: "agent",
+    classification: { failureKind: "verification-failed" },
+    summary: "Host verification still fails after remediation.",
+    evidence: { command: "python3 -m pytest", exitCode: 1, verdict: "FAIL" },
+    rationale: "remediate the failed host verification",
+  });
+
+  route("recovery/repeated-verify/1", firstFailure);
+  const secondFailure = seedRetryFailure(firstFailure.attemptId, 2);
+  route("recovery/repeated-verify/2", secondFailure);
+  const thirdFailure = seedRetryFailure(secondFailure.attemptId, 3);
+  const ancestorAbort = route("recovery/repeated-verify/3", thirdFailure);
+  assert.equal(ancestorAbort.action, "abort");
+  resumeTaskRecovery({
+    invocation: invocation("recovery/repeated-verify/resume-ancestor"),
+    recoveryActionId: ancestorAbort.recoveryActionId,
+    repairSummary: "Applied and checked the first verification repair.",
+    evidence: { command: "python3 -m pytest", exitCode: 0, verdict: "PASS" },
+  });
+
+  const latestFailure = seedRetryFailure(thirdFailure.attemptId, 4);
+  const latestAbort = route("recovery/repeated-verify/4", latestFailure);
+  assert.equal(latestAbort.action, "abort");
+  resumeTaskRecovery({
+    invocation: invocation("recovery/repeated-verify/resume-latest"),
+    recoveryActionId: latestAbort.recoveryActionId,
+    repairSummary: "Applied and checked the second verification repair.",
+    evidence: { command: "python3 -m pytest", exitCode: 0, verdict: "PASS" },
+  });
+
+  assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, false);
+  assert.equal(readTaskRecoveryRoute(latestFailure.attemptId)?.resumeAuthorized, true);
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
+    null,
+    "the latest unconsumed resume authorization must allow its successor dispatch",
+  );
+});
+
 test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754 residual)", () => {
   const firstFailure = seedFailedAttempt();
   const route = (

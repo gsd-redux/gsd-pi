@@ -68,8 +68,8 @@ export function readExecuteTaskArtifactReadiness(
 }
 
 /**
- * The recovery action id when any Task Attempt already settled on an
- * agent-owned `abort` that is not resume-authorized.
+ * The recovery action id when the newest agent-owned `abort` is not
+ * resume-authorized.
  *
  * `readExecuteTaskArtifactReadiness` reports "route" for *any* settled Attempt
  * parked at the route stage — including one whose agent-owned recovery already
@@ -79,8 +79,9 @@ export function readExecuteTaskArtifactReadiness(
  * refuse instead of clearing the dispatch ring and re-dispatching.
  *
  * Detection is not limited to the latest Attempt: a terminal abort on a
- * superseded Attempt is just as operative, and the latest Attempt carrying no
- * route of its own must not hide it (#1754 residual).
+ * superseded Attempt remains operative when newer Attempts carry no agent abort
+ * of their own (#1754 residual). A newer resume-authorized abort does supersede
+ * older aborts whose authorization was consumed by that newer Attempt (#1861).
  */
 export function readTerminalTaskRecoveryAbort(
   milestoneId: string,
@@ -90,8 +91,8 @@ export function readTerminalTaskRecoveryAbort(
   for (const attemptId of readTaskRecoveryAttemptIds({ milestoneId, sliceId, taskId })) {
     const route = readTaskRecoveryRoute(attemptId);
     if (!route || route.recoveryOwner !== "agent") continue;
-    if (route.action !== "abort" || route.resumeAuthorized) continue;
-    return { recoveryActionId: route.recoveryActionId };
+    if (route.action !== "abort") continue;
+    return route.resumeAuthorized ? null : { recoveryActionId: route.recoveryActionId };
   }
   return null;
 }
