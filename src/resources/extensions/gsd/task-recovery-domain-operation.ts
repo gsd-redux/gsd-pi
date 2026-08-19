@@ -646,6 +646,20 @@ export function readTaskRecoveryResumeEligibility(
                AND latest.lifecycle_id = attempt.lifecycle_id
            ) THEN 1 ELSE 0 END AS latest_attempt,
            CASE WHEN EXISTS (
+             SELECT 1 FROM workflow_execution_attempts latest
+             WHERE latest.project_id = attempt.project_id
+               AND latest.lifecycle_id = attempt.lifecycle_id
+               AND latest.attempt_state = 'settled'
+               AND latest.settle_outcome = 'succeeded'
+               AND latest.attempt_number > attempt.attempt_number
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow_execution_attempts newer
+                 WHERE newer.project_id = latest.project_id
+                   AND newer.lifecycle_id = latest.lifecycle_id
+                   AND newer.attempt_number > latest.attempt_number
+               )
+           ) THEN 1 ELSE 0 END AS latest_attempt_succeeded,
+           CASE WHEN EXISTS (
              SELECT 1 FROM workflow_blockers blocker
              WHERE blocker.project_id = action.project_id
                AND blocker.lifecycle_id = action.lifecycle_id
@@ -713,7 +727,13 @@ export function readTaskRecoveryResumeEligibility(
   if (stored["lifecycle_status"] !== "in_progress") return reject("lifecycle-in-progress", `Task lifecycle is ${String(stored["lifecycle_status"])}`);
   if (stored["attempt_state"] !== "settled") return reject("attempt-settled", `Attempt state is ${String(stored["attempt_state"])}`);
   if (Number(stored["causal_authority"]) !== 1) return reject("causal-authority", "Result no longer owns the current execute/verify failure route");
-  if (Number(stored["latest_attempt"]) !== 1) return reject("latest-attempt", "a newer Task Attempt exists");
+  // #1754 residual databases can contain a settled successful successor that
+  // predates the still-current abort route. Let that durable route be resumed
+  // once; ordinary stale or already-consumed actions still fail this guard.
+  const supersededResidual = Number(stored["latest_attempt_succeeded"]) === 1
+    && Number(stored["has_route_head"]) === 1
+    && Number(stored["already_resumed"]) !== 1;
+  if (Number(stored["latest_attempt"]) !== 1 && !supersededResidual) return reject("latest-attempt", "a newer Task Attempt exists");
   if (Number(stored["has_open_blockers"]) === 1) return reject("open-blockers", "Task lifecycle has an open Blocker");
   if (Number(stored["has_route_head"]) !== 1) return reject("route-head", "Attempt no longer owns the current route Kernel checkpoint");
   if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");

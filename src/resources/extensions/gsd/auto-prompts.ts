@@ -2851,11 +2851,17 @@ async function resolveExecuteTaskPlan(input: {
   const inlinePlan = input.slicePlanContent
     ? extractInlineTaskPlan(input.slicePlanContent, input.taskId)
     : null;
+  const slicePlanRelativePath = relSliceFile(
+    input.basePath,
+    input.milestoneId,
+    input.sliceId,
+    "PLAN",
+  );
   return {
     content: inlinePlan,
-    relativePath,
+    relativePath: inlinePlan ? slicePlanRelativePath : relativePath,
     source: inlinePlan
-      ? `\`${relSliceFile(input.basePath, input.milestoneId, input.sliceId, "PLAN")}\``
+      ? `\`${slicePlanRelativePath}\``
       : `\`${relativePath}\``,
   };
 }

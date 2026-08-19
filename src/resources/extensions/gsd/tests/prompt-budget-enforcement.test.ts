@@ -476,8 +476,10 @@ describe("prompt-budget: execute-task template", () => {
 
       assert.match(
         prompt,
-        /Task plan not found at dispatch time\. Read `\.gsd\/phases\/01-flat-phase\/01-01-PLAN\.md` before executing\./,
+        /Source: `\.gsd\/phases\/01-flat-phase\/01-01-PLAN\.md`/,
       );
+      assert.match(prompt, /\*\*T01: Flat task\*\*/);
+      assert.doesNotMatch(prompt, /Task plan not found at dispatch time/);
       assert.doesNotMatch(prompt, /\.gsd\/phases\/01-flat-phase\/tasks\/T01-PLAN\.md/);
     } finally {
       cleanup(base);
@@ -649,8 +651,10 @@ describe("prompt-budget: reactive-execute builder", () => {
 
       assert.match(
         prompt,
-        /Task plan not found at dispatch time\. Read `\.gsd\/phases\/01-flat-phase\/01-01-PLAN\.md` before executing\./,
+        /Source: `\.gsd\/phases\/01-flat-phase\/01-01-PLAN\.md`/,
       );
+      assert.match(prompt, /\*\*T01: Flat task\*\*/);
+      assert.doesNotMatch(prompt, /Task plan not found at dispatch time/);
       assert.doesNotMatch(prompt, /\.gsd\/phases\/01-flat-phase\/tasks\/T01-PLAN\.md/);
     } finally {
       cleanup(base);

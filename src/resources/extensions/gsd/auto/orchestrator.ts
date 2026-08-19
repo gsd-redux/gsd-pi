@@ -85,7 +85,7 @@ import {
   markCanceled as markDispatchCanceled,
   getRecentForUnit as getRecentDispatchesForUnit,
   getActiveForWorker,
-  getLatestForUnit,
+  getDispatchById,
 } from "../db/unit-dispatches.js";
 import { claimMilestoneLease } from "../db/milestone-leases.js";
 import { isAutoWorkerLive } from "../db/auto-workers.js";
@@ -1297,25 +1297,33 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         });
       }
 
-      const activeDispatch = getLatestForUnit(decision.unitId);
-      if (activeDispatch && ["claimed", "running"].includes(activeDispatch.status)) {
-        const parsed = parseUnitId(decision.unitId);
-        const latestTaskAttempt = decision.unitType === "execute-task" && parsed.milestone && parsed.slice && parsed.task
-          ? readLatestTaskAttempt({
-              milestoneId: parsed.milestone,
-              sliceId: parsed.slice,
-              taskId: parsed.task,
-            })
-          : null;
-        const activeTaskAttempt = latestTaskAttempt?.coordinationDispatchId === activeDispatch.id
+      const parsed = parseUnitId(decision.unitId);
+      const latestTaskAttempt = decision.unitType === "execute-task" && parsed.milestone && parsed.slice && parsed.task
+        ? readLatestTaskAttempt({
+            milestoneId: parsed.milestone,
+            sliceId: parsed.slice,
+            taskId: parsed.task,
+          })
+        : null;
+      const recovery = latestTaskAttempt
+        ? readTaskRecoveryRoute(latestTaskAttempt.attemptId)
+        : null;
+      const activeDispatch = getRecentDispatchesForUnit(decision.unitId)
+        .find((dispatch) => dispatch.status === "claimed" || dispatch.status === "running");
+      const attemptDispatch = latestTaskAttempt
+        ? getDispatchById(latestTaskAttempt.coordinationDispatchId)
+        : null;
+      const orphanCandidate = activeDispatch
+        ?? (latestTaskAttempt && (latestTaskAttempt.state === "running" || recovery?.action === "abort")
+          ? attemptDispatch
+          : null);
+      if (orphanCandidate) {
+        const activeTaskAttempt = latestTaskAttempt?.coordinationDispatchId === orphanCandidate.id
           ? latestTaskAttempt
           : null;
-        const executorWorkerId = activeTaskAttempt?.workerId ?? activeDispatch.worker_id;
+        const executorWorkerId = activeTaskAttempt?.workerId ?? orphanCandidate.worker_id;
         if (!isAutoWorkerLive(executorWorkerId)) {
           this.clearPendingDispatch();
-          const recovery = activeTaskAttempt
-            ? readTaskRecoveryRoute(activeTaskAttempt.attemptId)
-            : null;
           const recoveryInstruction = recovery?.action === "abort"
             ? ` Resume with gsd_task_recovery_resume using recoveryActionId ${recovery.recoveryActionId}.`
             : activeTaskAttempt?.state === "running"
@@ -1323,7 +1331,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
               : " Inspect /gsd status for the active UnitRun's recovery eligibility.";
           const executionDetail = activeTaskAttempt
             ? `Attempt ${activeTaskAttempt.attemptId} is ${activeTaskAttempt.state}`
-            : `UnitRun ${activeDispatch.id} is ${activeDispatch.status}`;
+            : `UnitRun ${orphanCandidate.id} is ${orphanCandidate.status}`;
           const reason =
             `stale-active ${decision.unitType} ${decision.unitId}: ${executionDetail}, ` +
             `but executor worker ${executorWorkerId} is not live.${recoveryInstruction}`;
@@ -1345,7 +1353,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
             inputPayload: JSON.stringify({
               unitType: decision.unitType,
               unitId: decision.unitId,
-              dispatchId: activeDispatch.id,
+              dispatchId: orphanCandidate.id,
               attemptId: activeTaskAttempt?.attemptId ?? null,
               attemptState: activeTaskAttempt?.state ?? null,
               executorWorkerId,
