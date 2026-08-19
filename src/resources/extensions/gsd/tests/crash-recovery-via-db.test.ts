@@ -21,9 +21,9 @@ import {
   insertTask,
   _getAdapter,
 } from "../gsd-db.ts";
-import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.ts";
+import { getAutoWorker, markWorkerStopping, registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease } from "../db/milestone-leases.ts";
-import { getLatestForUnit, recordDispatchClaim } from "../db/unit-dispatches.ts";
+import { getLatestForUnit, markRunning, recordDispatchClaim } from "../db/unit-dispatches.ts";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.ts";
 import {
   writeLock,
@@ -266,6 +266,81 @@ test("clearLock marks stale worker stopping when no current-process worker match
   clearLock(base);
 
   assert.equal(getAutoWorker(workerId)?.status, "stopping");
+  assert.equal(getRuntimeKv("worker", workerId, "session_file"), null);
+  assert.equal(readCrashLock(base), null);
+});
+
+test("clearStaleWorkerLock cancels all active dispatches for a dead stopping worker", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "T", status: "active" });
+  const projectRoot = normalizeRealPath(base);
+  const workerId = registerAutoWorker({ projectRootRealpath: projectRoot });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
+  const pending = recordDispatchClaim({
+    traceId: "t1",
+    workerId,
+    milestoneLeaseToken: lease.token,
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    unitType: "hook/codex-review",
+    unitId: "M001/S01/T01",
+  });
+  assert.equal(pending.ok, true);
+  if (!pending.ok) return;
+  _getAdapter()!.prepare("UPDATE unit_dispatches SET status = 'pending' WHERE id = :id")
+    .run({ ":id": pending.dispatchId });
+
+  const claimed = recordDispatchClaim({
+    traceId: "t2",
+    workerId,
+    milestoneLeaseToken: lease.token,
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T02",
+    unitType: "hook/codex-review",
+    unitId: "M001/S01/T02",
+  });
+  assert.equal(claimed.ok, true);
+  if (!claimed.ok) return;
+
+  const running = recordDispatchClaim({
+    traceId: "t3",
+    workerId,
+    milestoneLeaseToken: lease.token,
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T03",
+    unitType: "validate-milestone",
+    unitId: "M001",
+  });
+  assert.equal(running.ok, true);
+  if (!running.ok) return;
+  markRunning(running.dispatchId);
+  setRuntimeKv("worker", workerId, "session_file", "/tmp/pi-session-hook.jsonl");
+  markWorkerStopping(workerId);
+  setWorkerPid(workerId, 99999);
+  expireWorker(workerId);
+
+  assert.ok(readCrashLock(base), "stale worker is detected before cleanup");
+
+  clearStaleWorkerLock(base);
+
+  assert.equal(getAutoWorker(workerId)?.status, "stopping");
+  for (const unitId of ["M001/S01/T01", "M001/S01/T02", "M001"]) {
+    const dispatch = getLatestForUnit(unitId);
+    assert.ok(dispatch);
+    assert.equal(dispatch!.status, "canceled");
+    assert.equal(dispatch!.exit_reason, "crash-recovered");
+  }
+  const leaseRow = _getAdapter()!.prepare(
+    `SELECT status FROM milestone_leases WHERE fencing_token = :ft`,
+  ).get({ ":ft": lease.token }) as { status: string } | undefined;
+  assert.equal(leaseRow?.status, "released");
   assert.equal(getRuntimeKv("worker", workerId, "session_file"), null);
   assert.equal(readCrashLock(base), null);
 });

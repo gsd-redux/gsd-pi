@@ -17,6 +17,7 @@ function makeSession(overrides?: Partial<AutoSession>): AutoSession {
   return {
     workerId: "worker-1",
     milestoneLeaseToken: 7,
+    canonicalProjectRoot: "/project",
     ...overrides,
   } as AutoSession;
 }
@@ -168,6 +169,39 @@ test("openDispatchClaim skips already-active claims with existing dispatch detai
     existingId: 12,
     existingWorker: "worker-2",
   }]);
+});
+
+test("openDispatchClaim reclaims an already-active dispatch from a dead owner", () => {
+  const reclaimed: string[] = [];
+  const running: number[] = [];
+  let claimCalls = 0;
+
+  const outcome = openDispatchClaim(
+    makeSession(),
+    "flow",
+    "turn",
+    makeIterationData({ unitType: "plan-slice", unitId: "M001/S001" }),
+    makeDeps({
+      recordDispatchClaim: () => {
+        claimCalls += 1;
+        return claimCalls === 1
+          ? { ok: false, error: "already_active", existingId: 12, existingWorker: "worker-dead" }
+          : { ok: true, dispatchId: 13 };
+      },
+      isDispatchOwnerDead: (workerId, projectRoot) => {
+        assert.equal(workerId, "worker-dead");
+        assert.equal(projectRoot, "/project");
+        return true;
+      },
+      reclaimDeadDispatchOwner: workerId => reclaimed.push(workerId),
+      markDispatchRunning: dispatchId => running.push(dispatchId),
+    }),
+  );
+
+  assert.deepEqual(outcome, { kind: "opened", dispatchId: 13 });
+  assert.equal(claimCalls, 2);
+  assert.deepEqual(reclaimed, ["worker-dead"]);
+  assert.deepEqual(running, [13]);
 });
 
 test("openDispatchClaim maps non-active claim rejections to stale lease skips", () => {

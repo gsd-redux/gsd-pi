@@ -54,6 +54,8 @@ export interface OpenDispatchClaimDeps {
     existingWorker?: string;
   }) => void;
   logClaimFailed: (err: unknown) => void;
+  isDispatchOwnerDead?: (workerId: string, projectRootRealpath: string) => boolean;
+  reclaimDeadDispatchOwner?: (workerId: string) => void;
 }
 
 export interface EnsureDispatchLeaseDeps {
@@ -143,7 +145,7 @@ export function openDispatchClaim(
   const attemptN = (recent[0]?.attempt_n ?? 0) + 1;
 
   try {
-    const claim = deps.recordDispatchClaim({
+    const claimInput = {
       traceId: flowId,
       turnId,
       workerId: s.workerId,
@@ -154,7 +156,19 @@ export function openDispatchClaim(
       unitType: iterData.unitType,
       unitId: iterData.unitId,
       attemptN,
-    });
+    };
+    let claim = deps.recordDispatchClaim(claimInput);
+    const reclaimOwner = deps.reclaimDeadDispatchOwner;
+    if (
+      !claim.ok
+      && claim.error === "already_active"
+      && reclaimOwner
+      && typeof claim.existingWorker === "string"
+      && deps.isDispatchOwnerDead?.(claim.existingWorker, s.canonicalProjectRoot) === true
+    ) {
+      reclaimOwner(claim.existingWorker);
+      claim = deps.recordDispatchClaim(claimInput);
+    }
     if (!claim.ok) {
       deps.logClaimRejected({
         unitId: iterData.unitId,

@@ -9,7 +9,11 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 import { mergeMilestoneToMain } from "../auto-worktree-merge.ts";
-import { checkCloseoutConsistencyGate } from "../closeout-consistency-gate.ts";
+import {
+  checkCloseoutConsistencyGate,
+  formatCloseoutAuthorizationBlockers,
+  formatCloseoutConsistencyBlock,
+} from "../closeout-consistency-gate.ts";
 import {
   _getAdapter,
   closeDatabase,
@@ -57,6 +61,7 @@ test("mergeMilestoneToMain blocks when project DB closeout is still open", () =>
     insertMilestone({ id: "M001", title: "Milestone One", status: "active" });
 
     const mainHeadBefore = git(["rev-parse", "main"], repo);
+    writeFileSync(join(repo, "ad-hoc-helper.ps1"), "Write-Output helper\n");
     process.chdir(repo);
 
     assert.throws(
@@ -66,11 +71,37 @@ test("mergeMilestoneToMain blocks when project DB closeout is still open", () =>
 
     assert.equal(git(["rev-parse", "main"], repo), mainHeadBefore);
     assert.equal(git(["branch", "--show-current"], repo), "main");
+    assert.equal(existsSync(join(repo, "ad-hoc-helper.ps1")), true);
+    assert.match(git(["status", "--porcelain"], repo), /\?\? ad-hoc-helper\.ps1/);
   } finally {
     closeDatabase();
     process.chdir(savedCwd);
     if (existsSync(repo)) rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("closeout source mismatch preserves revision and offending-path diagnostics", () => {
+  const message = formatCloseoutAuthorizationBlockers(
+    [{
+      kind: "validation-source-revision-mismatch",
+      expectedSourceRevision: "sha256:current",
+      testedSourceRevision: "sha256:validated",
+    }],
+    { paths: ["ad-hoc-helper.ps1"], autoCommitDetected: true },
+  );
+  assert.match(message, /expected source revision sha256:current/);
+  assert.match(message, /tested source revision sha256:validated/);
+  assert.match(message, /ad-hoc-helper\.ps1/);
+  assert.match(message, /pre-merge auto-commit/);
+
+  const formatted = formatCloseoutConsistencyBlock({
+    ok: false,
+    reason: "validation-source-revision-mismatch",
+    recoveryReason: "closeout-consistency-blocked",
+    message,
+  });
+  assert.match(formatted, /working-tree drift/);
+  assert.doesNotMatch(formatted, /Resolve the canonical DB state/);
 });
 
 test("closeout consistency treats deferred slices as inactive", () => {

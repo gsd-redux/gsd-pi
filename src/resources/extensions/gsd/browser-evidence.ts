@@ -78,3 +78,57 @@ export function hasBrowserEvidenceText(text: string): boolean {
       BROWSER_ACTION_RE.test(chunk) &&
       BROWSER_ASSERTION_RE.test(chunk));
 }
+
+function markdownTableCells(line: string): string[] {
+  if (!line.trimStart().startsWith("|")) return [];
+  return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+}
+
+export function hasPassedStructuredBrowserUatEvidenceText(text: string): boolean {
+  if (!/\bverdict:\s*PASS\b/i.test(text)) return false;
+  return text.split(/\r?\n/).some((line) => {
+    const cells = markdownTableCells(line);
+    if (cells.length < 4) return false;
+    const [, mode, result, evidence] = cells;
+    return /^browser$/i.test(mode ?? "") && /^PASS$/i.test(result ?? "") &&
+      /(?:^|<br>)\s*browser:/i.test(evidence ?? "");
+  });
+}
+
+function evidenceSucceeded(record: Record<string, unknown>): boolean {
+  if (record.ok === true) return true;
+  const status = String(record.status ?? record.result ?? "").toLowerCase();
+  return status === "success" || status === "pass" || status === "passed";
+}
+
+function evidenceFailed(record: Record<string, unknown>): boolean {
+  if (record.ok === false) return true;
+  const status = String(record.status ?? record.result ?? "").toLowerCase();
+  return status === "error" || status === "fail" || status === "failed";
+}
+
+export function browserTimelineHasNavigateAndAssert(value: unknown): boolean {
+  let navigated = false;
+  let asserted = false;
+
+  const visit = (candidate: unknown, parentFailed = false, parentSucceeded = false): void => {
+    if (!candidate || typeof candidate !== "object") return;
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) visit(entry, parentFailed, parentSucceeded);
+      return;
+    }
+    const record = candidate as Record<string, unknown>;
+    const failed = parentFailed || evidenceFailed(record);
+    const action = String(record.action ?? record.tool ?? "").toLowerCase();
+    const succeeded = parentSucceeded || evidenceSucceeded(record);
+    if (!failed && succeeded) {
+      if (action === "navigate" || action === "browser_navigate") navigated = true;
+      if (action === "assert" || action === "browser_assert") asserted = true;
+    }
+    const batchSucceeded = parentSucceeded || (!failed && succeeded && action === "browser_batch");
+    for (const child of Object.values(record)) visit(child, failed, batchSucceeded);
+  };
+
+  visit(value);
+  return navigated && asserted;
+}

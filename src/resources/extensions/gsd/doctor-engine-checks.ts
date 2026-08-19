@@ -35,6 +35,13 @@ import { parseProjectionPlan } from "./schemas/parsers.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { isCanonicalStagedTaskSummaryProjection } from "./task-summary-projection-classification.js";
+import { isMilestoneLifecycleAdopted, readMilestoneCloseoutAuthorization } from "./db/milestone-closeout-readiness.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import {
+  captureMilestoneVerificationSourceRevision,
+  diagnoseMilestoneVerificationSourceDrift,
+  type VerificationSourceDriftDiagnosis,
+} from "./verification-source-integrity.js";
 import {
   getWorkflowDatabaseStatus,
   openExistingWorkflowDatabase,
@@ -505,6 +512,55 @@ export function checkLifecycleProjectionKinds(
   }
 }
 
+export function createValidationSourceDriftDoctorIssue(
+  milestoneId: string,
+  mismatch: { expectedSourceRevision: string; testedSourceRevision: string },
+  drift: VerificationSourceDriftDiagnosis,
+): DoctorIssue {
+  const paths = drift.paths.length > 0
+    ? ` Offending source paths: ${drift.paths.join(", ")}.`
+    : " Inspect `git status` and the latest commit for the offending source paths.";
+  const recovery = drift.autoCommitDetected
+    ? " GSD's pre-merge auto-commit is the current HEAD. If it captured unintended files, run `git reset --mixed HEAD^` to preserve them as working-tree changes, remove or ignore unwanted files, then retry."
+    : " Restore or remove unintended working-tree changes before retrying.";
+  return {
+    severity: "error",
+    code: "validation_source_revision_mismatch",
+    scope: "milestone",
+    unitId: milestoneId,
+    message:
+      `Milestone ${milestoneId} validation source revision does not match the current tree ` +
+      `(expected ${mismatch.expectedSourceRevision}; tested ${mismatch.testedSourceRevision}).${paths}${recovery} ` +
+      `If the current content is intended, run \`/gsd validate-milestone ${milestoneId}\`, then \`/gsd auto\`.`,
+    file: drift.paths[0],
+    fixable: true,
+  };
+}
+
+export function reportMilestoneValidationSourceDrift(basePath: string, issues: DoctorIssue[]): void {
+  for (const milestone of getAllMilestones()) {
+    if (!isClosedStatus(milestone.status) || !isMilestoneLifecycleAdopted(milestone.id)) continue;
+    const sourceRoot = resolveCanonicalMilestoneRoot(basePath, milestone.id);
+    const preferences = loadEffectiveGSDPreferences(sourceRoot)?.preferences;
+    const source = captureMilestoneVerificationSourceRevision(sourceRoot, preferences);
+    if (!source.ok) continue;
+    const authorization = readMilestoneCloseoutAuthorization({
+      milestoneId: milestone.id,
+      sourceRevision: source.sourceRevision,
+    });
+    if (authorization.authorized) continue;
+    const mismatch = authorization.blockers.find(
+      (blocker) => blocker.kind === "validation-source-revision-mismatch",
+    );
+    if (!mismatch || mismatch.kind !== "validation-source-revision-mismatch") continue;
+    issues.push(createValidationSourceDriftDoctorIssue(
+      milestone.id,
+      mismatch,
+      diagnoseMilestoneVerificationSourceDrift(sourceRoot, preferences),
+    ));
+  }
+}
+
 export async function checkEngineHealth(
   basePath: string,
   issues: DoctorIssue[],
@@ -644,6 +700,12 @@ export async function checkEngineHealth(
         checkLifecycleProjectionKinds(issues, fixesApplied, options?.repair === true);
       } catch {
         // Non-fatal — lifecycle projection kind check failed
+      }
+
+      try {
+        reportMilestoneValidationSourceDrift(basePath, issues);
+      } catch {
+        // Non-fatal — closeout source drift diagnostics failed
       }
 
       // a. Orphaned tasks (task.slice_id points to non-existent slice)

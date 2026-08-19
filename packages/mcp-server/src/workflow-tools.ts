@@ -3280,7 +3280,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_reassess_roadmap",
-    "Reassess a milestone roadmap after a slice completes, writing ASSESSMENT.md and re-rendering ROADMAP.md.",
+    "Reassess a milestone roadmap after a slice completes, writing ROADMAP-ASSESSMENT.md and re-rendering ROADMAP.md.",
     reassessRoadmapParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(reassessRoadmapSchema, args);

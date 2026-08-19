@@ -59,6 +59,7 @@ import { getRegisteredToolSnapshot, getToolBaselineSnapshot } from "../auto-mode
 import { deriveState } from "../state.js";
 import { isSkippedForDispatch } from "../status-guards.js";
 import { getErrorMessage } from "../error-utils.js";
+import { parseUnitId } from "../unit-id.js";
 import { logWarning } from "../workflow-logger.js";
 import { normalizeRealPath } from "../paths.js";
 import { preserveProjectionChanges } from "../projection-worker.js";
@@ -84,8 +85,10 @@ import {
   markCanceled as markDispatchCanceled,
   getRecentForUnit as getRecentDispatchesForUnit,
   getActiveForWorker,
+  getDispatchById,
 } from "../db/unit-dispatches.js";
 import { claimMilestoneLease } from "../db/milestone-leases.js";
+import { isAutoWorkerLive } from "../db/auto-workers.js";
 import type { IterationRunOutcome } from "./iteration-run.js";
 import {
   activeUnitFromWorker,
@@ -104,6 +107,8 @@ import {
   getAlreadyClosedDispatchReason as getDispatchAlreadyClosedReason,
   shouldBypassAlreadyClosedForVerificationRetry,
 } from "./dispatch.js";
+import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
+import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.js";
 
 type UokFlags = ReturnType<typeof resolveUokFlags>;
 
@@ -1292,6 +1297,73 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         });
       }
 
+      const parsed = parseUnitId(decision.unitId);
+      const latestTaskAttempt = decision.unitType === "execute-task" && parsed.milestone && parsed.slice && parsed.task
+        ? readLatestTaskAttempt({
+            milestoneId: parsed.milestone,
+            sliceId: parsed.slice,
+            taskId: parsed.task,
+          })
+        : null;
+      const recovery = latestTaskAttempt
+        ? readTaskRecoveryRoute(latestTaskAttempt.attemptId)
+        : null;
+      const activeDispatch = getRecentDispatchesForUnit(decision.unitId)
+        .find((dispatch) => dispatch.status === "claimed" || dispatch.status === "running");
+      const attemptDispatch = latestTaskAttempt
+        ? getDispatchById(latestTaskAttempt.coordinationDispatchId)
+        : null;
+      const orphanCandidate = activeDispatch
+        ?? (latestTaskAttempt && (latestTaskAttempt.state === "running" || recovery?.action === "abort")
+          ? attemptDispatch
+          : null);
+      if (orphanCandidate) {
+        const activeTaskAttempt = latestTaskAttempt?.coordinationDispatchId === orphanCandidate.id
+          ? latestTaskAttempt
+          : null;
+        const executorWorkerId = activeTaskAttempt?.workerId ?? orphanCandidate.worker_id;
+        if (!isAutoWorkerLive(executorWorkerId)) {
+          this.clearPendingDispatch();
+          const recoveryInstruction = recovery?.action === "abort"
+            ? ` Resume with gsd_task_recovery_resume using recoveryActionId ${recovery.recoveryActionId}.`
+            : activeTaskAttempt?.state === "running"
+              ? ` Settle the orphaned Attempt with gsd_task_settle using attemptId ${activeTaskAttempt.attemptId}.`
+              : " Inspect /gsd status for the active UnitRun's recovery eligibility.";
+          const executionDetail = activeTaskAttempt
+            ? `Attempt ${activeTaskAttempt.attemptId} is ${activeTaskAttempt.state}`
+            : `UnitRun ${orphanCandidate.id} is ${orphanCandidate.status}`;
+          const reason =
+            `stale-active ${decision.unitType} ${decision.unitId}: ${executionDetail}, ` +
+            `but executor worker ${executorWorkerId} is not live.${recoveryInstruction}`;
+          const blocked: AutoAdvanceResult = {
+            kind: "blocked",
+            reason,
+            action: "stop",
+            stateSnapshot: reconciliation.stateSnapshot,
+          };
+          this.journalTransition({
+            name: "advance-blocked",
+            reason,
+            unitType: decision.unitType,
+            unitId: decision.unitId,
+          });
+          this.postAdvanceRecord(blocked);
+          return this.withLivenessInput(blocked, {
+            guardId: "orphaned-active-unit",
+            inputPayload: JSON.stringify({
+              unitType: decision.unitType,
+              unitId: decision.unitId,
+              dispatchId: orphanCandidate.id,
+              attemptId: activeTaskAttempt?.attemptId ?? null,
+              attemptState: activeTaskAttempt?.state ?? null,
+              executorWorkerId,
+              recoveryActionId: recovery?.recoveryActionId ?? null,
+            }),
+            sanctionedExit: reason,
+          });
+        }
+      }
+
       const existingRun = resolveExistingUnitRun({
         workerId: this.s.workerId,
         unitType: decision.unitType,
@@ -1304,6 +1376,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           kind: "skipped",
           code: UNIT_ALREADY_ACTIVE_SKIP_CODE,
           reason: UNIT_ALREADY_ACTIVE_SKIP_REASON,
+          stateSnapshot: reconciliation.stateSnapshot,
         };
         this.journalTransition({
           name: "advance-skipped",

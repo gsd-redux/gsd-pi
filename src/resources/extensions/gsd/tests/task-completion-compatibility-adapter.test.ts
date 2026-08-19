@@ -736,6 +736,34 @@ test("#1763: staging from a milestone worktree dual-writes the SUMMARY to the pr
   );
 });
 
+test("#1763: verified publication from a milestone worktree restores both SUMMARY projections", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, planPath, attemptId } = createFixture();
+  writeFileSync(join(basePath, ".git", "info", "exclude"), ".gsd-worktrees/\n");
+  const worktreePath = join(basePath, ".gsd-worktrees", "M001");
+  const worktreePhaseDir = join(worktreePath, ".gsd", "phases", "01-test");
+  mkdirSync(worktreePhaseDir, { recursive: true });
+  writeFileSync(join(worktreePhaseDir, "01-01-PLAN.md"), readFileSync(planPath, "utf8"));
+  const staged = await stageTaskCompletion(stageInput(worktreePath));
+
+  const { resolveTaskFile } = await import("../paths.js");
+  const rootSummary = resolveTaskFile(basePath, "M001", "S01", "T01", "SUMMARY");
+  assert.ok(rootSummary, "project-root SUMMARY path resolves");
+  unlinkSync(rootSummary);
+  unlinkSync(staged.summaryPath);
+  recordPassingHostVerdict(basePath, attemptId);
+
+  const published = await publishVerifiedTaskCompletion(publishInput(worktreePath, attemptId));
+
+  assert.equal(existsSync(rootSummary), true, "publication restores the canonical copy");
+  assert.equal(existsSync(published.summaryPath), true, "publication restores the worktree copy");
+  assert.equal(
+    readFileSync(rootSummary, "utf8"),
+    readFileSync(published.summaryPath, "utf8"),
+    "the project-root and worktree copies are byte-identical",
+  );
+});
+
 test("#1677: inside a worktree the classifier falls back to the project-root copy", async () => {
   const { stageTaskCompletion } = await subject();
   const { basePath } = createFixture();

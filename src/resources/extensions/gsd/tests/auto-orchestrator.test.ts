@@ -41,10 +41,11 @@ import {
   openDatabase,
 } from "../gsd-db.js";
 import { AutoSession } from "../auto/session.js";
-import { registerAutoWorker } from "../db/auto-workers.js";
+import { markWorkerCrashed, registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from "../db/milestone-leases.js";
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.js";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
 import { normalizeRealPath, resolveMilestoneFile } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
@@ -723,14 +724,114 @@ test("idempotency skip fires with its own reason before saturation", async (t) =
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  const workerId = f.session.workerId;
+  const milestoneLeaseToken = f.session.milestoneLeaseToken;
+  assert.ok(workerId);
+  assert.ok(milestoneLeaseToken);
+  claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:live-executor:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken,
+    coordinationDispatchId: first.dispatchId,
+  });
   f.session.unitExecutionInFlight = true;
   const second = await f.orchestrator.advance();
 
-  assert.equal(first.kind, "advanced");
   assert.equal(second.kind, "skipped");
   if (second.kind !== "skipped") return;
   assert.equal(second.reason, "idempotent advance: unit already active");
   assert.equal(second.code, "unit-already-active");
+});
+
+test("an active UnitRun with a settled executor Attempt stops with durable recovery guidance", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  const workerId = f.session.workerId;
+  const milestoneLeaseToken = f.session.milestoneLeaseToken;
+  assert.ok(workerId);
+  assert.ok(milestoneLeaseToken);
+
+  const attempt = claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:orphan:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken,
+    coordinationDispatchId: first.dispatchId,
+  });
+  const settled = settleTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:orphan:settle"),
+    attemptId: attempt.attemptId,
+    outcome: "failed",
+    failureClass: "execution",
+    summary: "executor stopped before closeout",
+    output: {},
+  });
+  const recovery = recordFailureAndSelectRecovery({
+    invocation: internalExecutionInvocation("test:orchestrator:orphan:route"),
+    attemptId: attempt.attemptId,
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "executor stopped before closeout",
+    evidence: { source: "test" },
+    rationale: "preserve a durable resume action",
+  });
+  assert.equal(recovery.action, "abort");
+
+  markWorkerCrashed(workerId);
+  f.session.workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
+  f.session.milestoneLeaseToken = null;
+  f.session.unitExecutionInFlight = false;
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") throw new Error("expected orphaned active unit to block");
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /stale-active execute-task M001\/S01\/T01/);
+  assert.match(result.reason, /executor worker .* is not live/);
+  assert.match(result.reason, new RegExp(recovery.recoveryActionId));
+  assert.match(result.reason, /gsd_task_recovery_resume/);
+  assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
+test("an active UnitRun checks its running Attempt worker before idling", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  const workerId = f.session.workerId;
+  const milestoneLeaseToken = f.session.milestoneLeaseToken;
+  assert.ok(workerId);
+  assert.ok(milestoneLeaseToken);
+
+  const attempt = claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:dead-executor:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken,
+    coordinationDispatchId: first.dispatchId,
+  });
+  markWorkerCrashed(workerId);
+  f.session.unitExecutionInFlight = true;
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") throw new Error("expected dead executor to block");
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, new RegExp(attempt.attemptId));
+  assert.match(result.reason, /is running/);
+  assert.match(result.reason, /executor worker .* is not live/);
+  assert.match(result.reason, /gsd_task_settle/);
 });
 
 test("completeActiveUnit clears in-flight idempotency and stops stale same-unit advance", async (t) => {

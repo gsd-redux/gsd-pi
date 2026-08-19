@@ -14,6 +14,11 @@ export interface ActionTimeline {
 	entries: ActionEntry[];
 }
 
+export interface PersistedBatchStep {
+	action: string;
+	ok: boolean;
+}
+
 export interface ActionEntry {
 	id: number;
 	tool: string;
@@ -28,6 +33,7 @@ export interface ActionEntry {
 	diffSummary?: string;
 	changed?: boolean;
 	error?: string;
+	batchSteps?: PersistedBatchStep[];
 }
 
 export interface ActionPartial {
@@ -52,6 +58,7 @@ export interface ActionUpdates {
 	diffSummary?: string;
 	changed?: boolean;
 	error?: string;
+	batchSteps?: PersistedBatchStep[];
 }
 
 export interface DiffResult {
@@ -134,6 +141,7 @@ export interface FormattedTimeline {
 		beforeUrl: string;
 		afterUrl: string;
 		line: string;
+		batchSteps?: PersistedBatchStep[];
 	}>;
 	retained: number;
 	totalRecorded: number;
@@ -211,6 +219,7 @@ export function finishAction(timeline: ActionTimeline, actionId: number, updates
     diffSummary: updates.diffSummary ?? entry.diffSummary,
     changed: updates.changed ?? entry.changed,
     error: updates.error ?? entry.error,
+    batchSteps: updates.batchSteps ?? entry.batchSteps,
   });
   return entry;
 }
@@ -999,6 +1008,7 @@ export function formatTimelineEntries(entries: ActionEntry[] = [], options: Reco
       beforeUrl: entry.beforeUrl ?? "",
       afterUrl: entry.afterUrl ?? "",
       line: parts.join(" | "),
+      ...(entry.batchSteps ? { batchSteps: entry.batchSteps } : {}),
     };
   });
 

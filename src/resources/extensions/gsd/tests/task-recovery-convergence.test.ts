@@ -444,7 +444,7 @@ test("agent recovery exhausts durably, resumes once, then passes host verificati
     recoveryActionId: routed3.recoveryActionId,
     repairSummary: "Attempting to reuse already-consumed authorization.",
     evidence: { verification: "must be rejected" },
-  }), /already been consumed|current (?:agent-owned )?abort|pending recovery/i);
+  }), /latest-attempt guard|already been consumed|current (?:agent-owned )?abort|pending recovery/i);
 
   recordPassingVerdict(basePath, claim4.attemptId, "convergence/verdict/4");
   const published = await publishVerifiedTaskCompletion({

@@ -32,6 +32,7 @@ import type { UnitGsdToolName } from "../unit-registry.ts";
 import {
   buildExecuteTaskPrompt,
   buildGateEvaluatePrompt,
+  buildReactiveExecutePrompt,
   buildReassessRoadmapPrompt,
   buildWorkflowPreferencesPrompt,
   renderTaskRecoveryDispatchContext,
@@ -592,6 +593,104 @@ test("execute-task prompt injects unresolved blocking rework findings", async (t
   assert.match(prompt, /Compile regression/);
   assert.match(prompt, /pnpm run typecheck:extensions/);
   assert.match(prompt, /reworkResolution/);
+});
+
+test("execute-task prompt resolves an inline slice task without a standalone task plan", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Inline task", status: "pending" });
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"),
+    [
+      "# S01: First",
+      "",
+      "<tasks>",
+      "- [ ] **T01**: Earlier task",
+      "- [ ] **T02**: Inline task",
+      "  - Files: `src/inline.ts`",
+      "  - Verify: pnpm test inline",
+      "</tasks>",
+      "",
+    ].join("\n"),
+  );
+
+  const prompt = await buildExecuteTaskPrompt("M001", "S01", "First", "T02", "Inline task", base);
+
+  assert.match(prompt, /Source: `\.gsd\/milestones\/M001\/slices\/S01\/S01-PLAN\.md`/);
+  assert.match(prompt, /\*\*T02\*\*: Inline task/);
+  assert.match(prompt, /src\/inline\.ts/);
+  assert.doesNotMatch(prompt, /Task plan not found at dispatch time/);
+  assert.doesNotMatch(prompt, /tasks\/T02-PLAN\.md/);
+});
+
+test("execute-task prompt prefers durable inline task planning state when no task file exists", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  insertTask({
+    id: "T02",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Durable task",
+    status: "pending",
+    planning: {
+      description: "Implement the durable inline contract.",
+      estimate: "1h",
+      files: ["src/durable.ts"],
+      verify: "pnpm test durable",
+      inputs: [],
+      expectedOutput: ["src/durable.ts"],
+      observabilityImpact: "none",
+      fullPlanMd: "# T02: Durable task\n\nImplement the durable inline contract.\n",
+    },
+  });
+
+  const prompt = await buildExecuteTaskPrompt("M001", "S01", "First", "T02", "Durable task", base);
+
+  assert.match(prompt, /Source: durable task planning state for M001\/S01\/T02/);
+  assert.match(prompt, /Implement the durable inline contract/);
+  assert.doesNotMatch(prompt, /Task plan not found at dispatch time/);
+});
+
+test("reactive execute-task dispatch resolves inline slice task plans", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Inline reactive task", status: "pending" });
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"),
+    [
+      "# S01: First",
+      "",
+      "<tasks>",
+      "- [ ] **T02**: Inline reactive task",
+      "  - Files: `src/reactive-inline.ts`",
+      "  - Verify: pnpm test reactive-inline",
+      "</tasks>",
+      "",
+    ].join("\n"),
+  );
+
+  const prompt = await buildReactiveExecutePrompt(
+    "M001",
+    "Recovery",
+    "S01",
+    "First",
+    ["T02"],
+    base,
+  );
+
+  assert.match(prompt, /Source: `\.gsd\/milestones\/M001\/slices\/S01\/S01-PLAN\.md`/);
+  assert.match(prompt, /src\/reactive-inline\.ts/);
+  assert.doesNotMatch(prompt, /Task plan not found at dispatch time/);
+  assert.doesNotMatch(prompt, /tasks\/T02-PLAN\.md/);
 });
 
 test("execute-task recovery context gives repair, remediation, and replan distinct executor contracts", () => {

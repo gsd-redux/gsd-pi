@@ -50,15 +50,13 @@ import {
   markCompleted as markDispatchCompleted,
   markFailed as markDispatchFailed,
   getRecentForUnit as getRecentDispatchesForUnit,
-  markActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
 import {
   claimMilestoneLease,
   refreshMilestoneLease,
-  forceReleaseLeasesForWorker,
   milestoneLeaseTtlSeconds,
 } from "../db/milestone-leases.js";
-import { heartbeatAutoWorker, getAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
+import { heartbeatAutoWorker, isDeadLocalAutoWorker } from "../db/auto-workers.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { scheduleSidecarQueue } from "../uok/execution-graph.js";
 import { normalizeRealPath } from "../paths.js";
@@ -150,27 +148,7 @@ import {
   readTerminalTaskRecoveryAbort,
   verifyExpectedArtifact,
 } from "../artifact-verification.js";
-
-/**
- * Returns true if workerId is an active worker in this project whose OS
- * process no longer exists. Used to detect dead lease holders before
- * the heartbeat TTL expires. EPERM means the process is alive (we lack
- * permission to signal it); any other kill(pid,0) error means dead.
- */
-function isDeadLocalLeaseHolder(workerId: string, projectRoot: string): boolean {
-  const worker = getAutoWorker(workerId);
-  if (!worker) return false;
-  if (worker.status !== "active") return false;
-  if (worker.project_root_realpath !== projectRoot) return false;
-  if (!Number.isInteger(worker.pid) || worker.pid <= 0) return true;
-  if (worker.pid === process.pid) return false;
-  try {
-    process.kill(worker.pid, 0);
-    return false;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== "EPERM";
-  }
-}
+import { IS_DISPATCH_OWNER_DEAD, RECLAIM_DEAD_DISPATCH_OWNER } from "./unit-run.js";
 
 function resolveCompletionStopFromState(
   stateSnapshot: GSDState | undefined,
@@ -948,6 +926,8 @@ export async function autoLoop(
             markDispatchRunning,
             logClaimRejected: logDispatchClaimRejected,
             logClaimFailed: logDispatchClaimFailed,
+            isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+            reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
           });
           if (claim.kind !== "opened") {
             const reason = claim.kind === "skip" || claim.kind === "degraded"
@@ -1720,10 +1700,8 @@ export async function autoLoop(
       });
       if (leaseBeforeClaim.kind === "blocked" && leaseBeforeClaim.holderWorkerId) {
         const holderWorkerId = leaseBeforeClaim.holderWorkerId;
-        if (isDeadLocalLeaseHolder(holderWorkerId, s.canonicalProjectRoot)) {
-          markActiveForWorkerCanceled(holderWorkerId, "crash-recovered");
-          markWorkerCrashed(holderWorkerId);
-          forceReleaseLeasesForWorker(holderWorkerId);
+        if (isDeadLocalAutoWorker(holderWorkerId, s.canonicalProjectRoot)) {
+          RECLAIM_DEAD_DISPATCH_OWNER(holderWorkerId);
           const retryLease = ensureDispatchLease(s, iterData.mid, {
             claimMilestoneLease,
             logLeaseRecovered: logDispatchLeaseRecovered,
@@ -1755,6 +1733,8 @@ export async function autoLoop(
         markDispatchRunning,
         logClaimRejected: logDispatchClaimRejected,
         logClaimFailed: logDispatchClaimFailed,
+        isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+        reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
       });
       let dispatchDecision = decideDispatchClaim(
         dispatchClaim.kind === "opened"
@@ -1776,6 +1756,8 @@ export async function autoLoop(
             markDispatchRunning,
             logClaimRejected: logDispatchClaimRejected,
             logClaimFailed: logDispatchClaimFailed,
+            isDispatchOwnerDead: IS_DISPATCH_OWNER_DEAD,
+            reclaimDeadDispatchOwner: RECLAIM_DEAD_DISPATCH_OWNER,
           });
           dispatchDecision = decideDispatchClaim(
             dispatchClaim.kind === "opened"

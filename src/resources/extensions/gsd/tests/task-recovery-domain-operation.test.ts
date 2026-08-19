@@ -27,6 +27,7 @@ import {
   grantTaskWaiver,
   readPendingTaskRecoveryContext,
   readTaskRecoveryAttemptIds,
+  readTaskRecoveryResumeEligibility,
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
@@ -43,6 +44,8 @@ import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-i
 import { handleReplanTask } from "../tools/replan-task.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import { verifyExpectedArtifact, readTerminalTaskRecoveryAbort } from "../artifact-verification.ts";
+import { formatTextStatus } from "../commands/handlers/core.ts";
+import type { GSDState } from "../types.ts";
 import { refreshRecoveryDbForArtifact } from "../auto-recovery.ts";
 
 const tempDirs = new Set<string>();
@@ -1236,7 +1239,7 @@ test("durable budget use survives retries and exhausts to agent abort", async ()
     recoveryActionId: third.recoveryActionId,
     repairSummary: "Try to record a second authorization.",
     evidence: { source: "duplicate" },
-  }), /current agent-owned abort/i);
+  }), /already-resumed guard/i);
 
   const fourthFailure = seedRetryFailure(thirdFailure.attemptId, 4);
   assert.ok(fourthFailure.attemptId);
@@ -1254,13 +1257,13 @@ test("durable budget use survives retries and exhausts to agent abort", async ()
     recoveryActionId: third.recoveryActionId,
     repairSummary: "Try to reuse stale authorization.",
     evidence: { source: "stale" },
-  }), /current agent-owned abort/i);
+  }), /latest-attempt guard/i);
   assert.throws(() => resumeTaskRecovery({
     invocation: invocation("recovery/resume/non-abort"),
     recoveryActionId: first.recoveryActionId,
     repairSummary: "Try to resume a retry action.",
     evidence: { source: "invalid" },
-  }), /current agent-owned abort/i);
+  }), /abort-action guard/i);
 });
 
 test("deterministic repair abort resumes after restart and is consumed by one successor claim", () => {
@@ -1295,17 +1298,41 @@ test("deterministic repair abort resumes after restart and is consumed by one su
   );
   assert.equal(second.action, "abort");
   assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeAuthorized, false);
+  assert.deepEqual(readTaskRecoveryResumeEligibility(second.recoveryActionId), {
+    recoveryActionId: second.recoveryActionId,
+    eligible: true,
+    attemptId: secondFailure.attemptId,
+    resultId: secondFailure.resultId,
+  });
+  assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeEligibility?.eligible, true);
+  const status = formatTextStatus({
+    activeMilestone: { id: "M001", title: "Recovery" },
+    activeSlice: { id: "S01", title: "Recovery operation" },
+    activeTask: { id: "T01", title: "Recover atomically" },
+    phase: "executing",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Resume recovery",
+    registry: [{ id: "M001", title: "Recovery", status: "active", dependsOn: [] }],
+  } as GSDState, firstFailure.basePath);
+  assert.match(status, new RegExp(`Task recovery: abort ${second.recoveryActionId} — resume eligible`));
 
   closeDatabase();
   assert.equal(openDatabase(firstFailure.dbPath), true);
+  const replacementInvocation = {
+    ...invocation("recovery/deterministic/resume"),
+    actorId: "replacement-agent-session",
+    traceId: "trace:replacement-agent-session",
+    turnId: "turn:replacement-agent-session",
+  };
   const resumed = resumeTaskRecovery({
-    invocation: invocation("recovery/deterministic/resume"),
+    invocation: replacementInvocation,
     recoveryActionId: second.recoveryActionId,
     repairSummary: "Recreated the missing worktree root and verified GSD can resolve it.",
     evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
   });
   const replayedResume = resumeTaskRecovery({
-    invocation: invocation("recovery/deterministic/resume"),
+    invocation: replacementInvocation,
     recoveryActionId: second.recoveryActionId,
     repairSummary: "Recreated the missing worktree root and verified GSD can resolve it.",
     evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
@@ -1350,7 +1377,7 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     recoveryActionId: second.recoveryActionId,
     repairSummary: "Try to reuse a consumed repaired-abort authorization.",
     evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
-  }), /current agent-owned abort/i);
+  }), /latest-attempt guard/i);
   assert.equal(Number(row(`
     SELECT COUNT(*) AS count
     FROM workflow_execution_attempts

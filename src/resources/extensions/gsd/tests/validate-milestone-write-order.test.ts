@@ -449,6 +449,50 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
     assert.equal(result.verdict, "pass");
   });
 
+  it("keeps pass when persisted browser evidence references a successful batch timeline", async () => {
+    base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({
+      id: "M001",
+      planning: { verificationUat: "Navigate through the browser acceptance check." },
+    });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      demo: "Visit localhost:58081 and verify the stats response.",
+    });
+    const timelineRef = ".artifacts/browser/session/sse-stats.json";
+    mkdirSync(join(base, ".artifacts", "browser", "session"), { recursive: true });
+    writeFileSync(join(base, timelineRef), JSON.stringify({
+      entries: [{
+        tool: "browser_batch",
+        status: "success",
+        batchSteps: [
+          { action: "navigate", ok: true },
+          { action: "assert", ok: true },
+        ],
+      }],
+    }));
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    writeFileSync(join(sliceDir, "S01-ASSESSMENT.md"), [
+      "---",
+      "verdict: PASS",
+      "---",
+      `Browser evidence: browser:${timelineRef}`,
+      "",
+    ].join("\n"));
+
+    const result = await handleValidateMilestone({
+      ...VALID_PARAMS,
+      verificationClasses: `${VALID_PARAMS.verificationClasses}\n- UAT: persisted batch timeline`,
+    }, base);
+
+    assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+    assert.equal(result.verdict, "pass");
+  });
+
   it("keeps pass when browser-like criteria are verified by runtime-executable UAT", async () => {
     base = makeTmpBase();
     const dbPath = join(base, ".gsd", "gsd.db");
@@ -501,6 +545,35 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
       },
       base,
     );
+
+    assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+    assert.equal(result.verdict, "pass");
+  });
+
+  it("keeps pass for a Contract-only API milestone even when its endpoint is browser-reachable", async () => {
+    base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({
+      id: "M001",
+      planning: {
+        successCriteria: ["The SSE stats endpoint is reachable at localhost:58081."],
+        verificationContract: "Contract-check the SSE response schema and streaming behavior.",
+      },
+    });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      demo: "Open localhost:58081/admin-api/log/stream/stats to inspect the JSON contract.",
+      planning: {
+        successCriteria: "The localhost SSE endpoint returns the Contract-defined stats payload.",
+      },
+    });
+
+    const result = await handleValidateMilestone({
+      ...VALID_PARAMS,
+      verificationClasses: "| Contract | SSE response schema and streaming checks passed. |",
+    }, base);
 
     assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
     assert.equal(result.verdict, "pass");

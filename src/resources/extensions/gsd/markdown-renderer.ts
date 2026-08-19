@@ -1563,6 +1563,22 @@ export function resolveAssessmentProjectionPath(
     );
 }
 
+export function resolveRoadmapAssessmentProjectionPath(
+  basePath: string,
+  milestoneId: string,
+): string {
+  const legacyDir = join(legacyMilestonesDir(basePath), milestoneId);
+  if (existsSync(legacyDir)) {
+    return join(legacyDir, `${milestoneId}-ROADMAP-ASSESSMENT.md`);
+  }
+  return targetMilestoneFile(
+    basePath,
+    milestoneId,
+    "ROADMAP-ASSESSMENT",
+    getMilestone(milestoneId)?.title,
+  );
+}
+
 export async function renderReplanFromDb(
   basePath: string,
   milestoneId: string,
@@ -1639,6 +1655,37 @@ export async function renderAssessmentFromDb(
     artifact_type: "ASSESSMENT",
     milestone_id: milestoneId,
     slice_id: sliceId,
+  }, basePath);
+
+  return { assessmentPath: absPath, content: stamped };
+}
+
+export async function renderRoadmapAssessmentFromDb(
+  basePath: string,
+  milestoneId: string,
+  assessmentData: AssessmentData,
+): Promise<{ assessmentPath: string; content: string }> {
+  const absPath = resolveRoadmapAssessmentProjectionPath(basePath, milestoneId);
+  mkdirSync(dirname(absPath), { recursive: true });
+  const artifactPath = toArtifactPath(absPath, basePath);
+
+  const lines = [
+    `# ${milestoneId} Roadmap Assessment`,
+    "",
+    `**Milestone:** ${milestoneId}`,
+    ...(assessmentData.completedSliceId ? [`**Completed Slice:** ${assessmentData.completedSliceId}`] : []),
+    `**Verdict:** ${assessmentData.verdict}`,
+    `**Created:** ${assessmentData.createdAt ?? new Date().toISOString()}`,
+    "",
+    "## Assessment",
+    "",
+    assessmentData.assessment,
+    "",
+  ];
+  const content = `${lines.join("\n").trimEnd()}\n`;
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
+    artifact_type: "ASSESSMENT",
+    milestone_id: milestoneId,
   }, basePath);
 
   return { assessmentPath: absPath, content: stamped };

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import {
   openDatabase,
   closeDatabase,
+  _getAdapter,
   insertMilestone,
   insertSlice,
 } from "../gsd-db.ts";
@@ -260,6 +261,9 @@ test("markActiveForWorkerCanceled cancels every active dispatch for a worker (#1
   });
   assert.equal(first.ok, true);
   if (!first.ok) return;
+  _getAdapter()!.prepare(
+    "UPDATE unit_dispatches SET status = 'pending' WHERE id = :id",
+  ).run({ ":id": first.dispatchId });
 
   const second = recordDispatchClaim({
     traceId: "tc-2", workerId, milestoneLeaseToken: leaseToken,
@@ -267,15 +271,23 @@ test("markActiveForWorkerCanceled cancels every active dispatch for a worker (#1
   });
   assert.equal(second.ok, true);
   if (!second.ok) return;
-  markRunning(second.dispatchId);
 
-  // Both the claimed and the running row are canceled — sweeping only the
-  // latest leaves the older orphan wedged forever.
+  const third = recordDispatchClaim({
+    traceId: "tc-3", workerId, milestoneLeaseToken: leaseToken,
+    milestoneId: "M001", unitType: "validate-milestone", unitId: "M001",
+  });
+  assert.equal(third.ok, true);
+  if (!third.ok) return;
+  markRunning(third.dispatchId);
+
+  // Pending, claimed, and running rows are all canceled — sweeping only the
+  // latest or only one status leaves older work orphaned forever.
   assert.equal(markActiveForWorkerCanceled(workerId, "signal-exit"), true);
   assert.equal(getLatestForUnit("M001/S01")!.status, "canceled");
-  const latest = getLatestForUnit("M001/S01/T01")!;
-  assert.equal(latest.status, "canceled");
-  assert.equal(latest.exit_reason, "signal-exit");
+  assert.equal(getLatestForUnit("M001/S01/T01")!.status, "canceled");
+  const running = getLatestForUnit("M001")!;
+  assert.equal(running.status, "canceled");
+  assert.equal(running.exit_reason, "signal-exit");
   assert.equal(markActiveForWorkerCanceled(workerId, "signal-exit"), false);
 });
 
