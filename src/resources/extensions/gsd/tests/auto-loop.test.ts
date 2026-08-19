@@ -5311,7 +5311,7 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
   }
 });
 
-test("#1690: projection-lock transient pauses wait out a bounded backoff and never wedge", async () => {
+test("#1852: projection-lock transient pauses exhaust their backoff and never wedge", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -5321,13 +5321,17 @@ test("#1690: projection-lock transient pauses wait out a bounded backoff and nev
   ctx.ui.notify = (message: string) => { notices.push(message); };
 
   const s = makeLoopSession({ currentMilestoneId: "M001" });
+  let advanceCalls = 0;
   s.orchestration = {
     start: async () => ({ kind: "stopped" as const, reason: "unused" }),
-    advance: async () => ({
-      kind: "paused" as const,
-      reason: "projection root operation failed: file in use (os error 32)",
-      backoffMs: [1, 1, 1],
-    }),
+    advance: async () => {
+      advanceCalls++;
+      return {
+        kind: "paused" as const,
+        reason: "projection root operation failed: file in use (os error 32)",
+        backoffMs: [1, 1, 1],
+      };
+    },
     settle: async () => {},
     completeActiveUnit: async () => {},
     retryActiveUnit: async () => {},
@@ -5352,11 +5356,21 @@ test("#1690: projection-lock transient pauses wait out a bounded backoff and nev
   try {
     await autoLoop(ctx, pi, s, deps);
 
-    assert.ok(
-      notices.some((message) => /waiting \d+s before retrying/.test(message)),
-      "the transient pause must wait observably before re-entry",
+    assert.equal(advanceCalls, 4, "all three waits must run before the next pause exhausts retries");
+    assert.equal(
+      notices.filter((message) => /waiting \d+s before retrying/.test(message)).length,
+      3,
+      "every class-specific backoff entry must be reachable",
     );
-    assert.equal(deps.callLog.includes("stopAuto"), true, "the error budget still stops a never-healing transient");
+    assert.equal(deps.callLog.includes("stopAuto"), true, "the class budget still stops a never-healing transient");
+    assert.match(stopReason, /^Blocked: /);
+
+    // A later manual restart can exhaust the same naturally-identical lock
+    // failure again without that recurrence becoming an ADR-047 wedge.
+    s.active = true;
+    stopReason = "";
+    await autoLoop(ctx, pi, s, deps);
+    assert.equal(advanceCalls, 8);
     assert.match(stopReason, /^Blocked: /);
     const wedgeResult = getOpenWedge(realpathSync(s.basePath));
     assert.equal(wedgeResult.ok, true);

@@ -480,6 +480,7 @@ export async function autoLoop(
     lastDispatchPhase: null,
   };
   let consecutiveErrors = 0;
+  let consecutiveProjectionLockPauses = 0;
   let consecutiveCooldowns = 0;
   const recentErrorMessages: string[] = [];
   const workerHeartbeatDeps = {
@@ -665,6 +666,7 @@ export async function autoLoop(
         emitIterationEnd: () => emitIterationEnd(),
         logIterationComplete: () => debugLog("autoLoop", { phase: "iteration-complete", iteration }),
       });
+      consecutiveProjectionLockPauses = 0;
     };
     const finishIncompleteIteration = (details: Record<string, unknown>): void => {
       emitIterationEnd(details);
@@ -1432,42 +1434,65 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
-            // ADR-047: transient-retry pauses (classifyFailure "retry" routes)
-            // previously looped invisibly — this branch neither incremented the
-            // error budget nor fed the liveness ledger, so a never-healing
-            // transient with identical text spun forever. Count them against
-            // the loop's EXISTING consecutive-error budget (reset by
-            // completeIteration on a genuinely advancing turn); exhaustion
-            // stops through the blocked path and records the outcome in the
-            // backstop ledger so a repeat exhaustion trips the wedge.
-            consecutiveErrors++;
             const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
-            recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
-            const pausedDecision = decideIterationErrorRecovery({
-              consecutiveErrors,
-              recentErrorMessages,
-              currentErrorMessage: pausedMsg,
-            });
-            if (pausedDecision.action === "stop") {
-              ctx.ui.notify(pausedDecision.notifyMessage, "error");
-              await deferStopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
-              finishTurn("stopped", "execution", pausedMsg, "transient-retry-exhausted");
-              finishIncompleteIteration({
-                status: "stopped",
-                reason: pausedMsg,
-                failureClass: "execution",
+            const backoffMs = orchestrationResult.backoffMs;
+            const projectionLockTransient = isTransientProjectionLockError(pausedMsg)
+              && backoffMs !== undefined
+              && backoffMs.length > 0;
+            let pauseAttempt: number;
+            if (projectionLockTransient) {
+              // Projection-root contention owns a longer class-specific schedule.
+              // It must not consume the generic three-error budget: doing so made
+              // every entry after 2s unreachable. Stop only after every scheduled
+              // wait has run, and keep the exhaustion out of ADR-047 because an
+              // unchanged lock error is not evidence of a deterministic wedge.
+              consecutiveProjectionLockPauses++;
+              pauseAttempt = consecutiveProjectionLockPauses;
+              if (pauseAttempt > backoffMs.length) {
+                const stopMessage =
+                  `projection root remained busy after ${backoffMs.length} transient retries`;
+                ctx.ui.notify(`Auto-mode stopped: ${stopMessage}.`, "error");
+                await deferStopAuto(ctx, pi, markBlockedStopReason(stopMessage));
+                finishTurn("stopped", "execution", pausedMsg, null);
+                finishIncompleteIteration({
+                  status: "stopped",
+                  reason: pausedMsg,
+                  failureClass: "execution",
+                });
+                break;
+              }
+            } else {
+              consecutiveProjectionLockPauses = 0;
+              // ADR-047: other transient-retry pauses still consume the generic
+              // consecutive-error budget and feed the liveness ledger.
+              consecutiveErrors++;
+              pauseAttempt = consecutiveErrors;
+              recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
+              const pausedDecision = decideIterationErrorRecovery({
+                consecutiveErrors,
+                recentErrorMessages,
+                currentErrorMessage: pausedMsg,
               });
-              break;
-            }
-            if (pausedDecision.action === "invalidate-and-retry") {
-              deps.invalidateAllCaches();
+              if (pausedDecision.action === "stop") {
+                ctx.ui.notify(pausedDecision.notifyMessage, "error");
+                await deferStopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
+                finishTurn("stopped", "execution", pausedMsg, "transient-retry-exhausted");
+                finishIncompleteIteration({
+                  status: "stopped",
+                  reason: pausedMsg,
+                  failureClass: "execution",
+                });
+                break;
+              }
+              if (pausedDecision.action === "invalidate-and-retry") {
+                deps.invalidateAllCaches();
+              }
             }
             // #1690 defect A: a transient pause carries the policy's bounded
             // backoff schedule — wait it out before re-entry instead of
             // immediately retrying a lock that needs time to clear.
-            const backoffMs = orchestrationResult.backoffMs;
             if (backoffMs && backoffMs.length > 0) {
-              const waitMs = backoffMs[Math.min(Math.max(consecutiveErrors, 1), backoffMs.length) - 1]!;
+              const waitMs = backoffMs[Math.min(Math.max(pauseAttempt, 1), backoffMs.length) - 1]!;
               ctx.ui.notify(
                 `Transient pause (${pausedMsg}) — waiting ${Math.round(waitMs / 1000)}s before retrying.`,
                 "warning",
@@ -1481,8 +1506,8 @@ export async function autoLoop(
             // #1690 defect B: a projection-lock transient pause must not feed
             // the deterministic strike counter — N identical os-error-32
             // strings would false-trip the liveness wedge. Other pause classes
-            // keep the ADR-047 ledger behavior, and the consecutive-error
-            // budget above still stops a never-healing transient.
+            // keep the ADR-047 ledger behavior; projection locks stop through
+            // their class-specific budget above.
             finishTurn(
               "skipped",
               "execution",
