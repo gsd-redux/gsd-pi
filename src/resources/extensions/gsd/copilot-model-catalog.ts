@@ -667,6 +667,13 @@ export async function fetchGitHubCopilotModels(options: FetchCopilotModelsOption
     : undefined;
 
   try {
+    if (combinedSignal?.aborted) {
+      if (timeoutController.signal.aborted) {
+        throw new CopilotCatalogFetchError("timeout", `Copilot models fetch timed out after ${timeoutMs}ms.`);
+      }
+      throw new CopilotCatalogFetchError("aborted", "Copilot models fetch was cancelled.");
+    }
+
     const response = await fetcher(`${endpoint}/models`, {
       method: "GET",
       headers: {

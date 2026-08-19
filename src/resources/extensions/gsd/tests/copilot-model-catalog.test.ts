@@ -16,6 +16,7 @@ import {
 
 import {
   applyLastKnownGood as applyLastKnownGoodSnapshot,
+  CopilotCatalogFetchError,
   dedupeShellNotifications as dedupeShellNotificationsSnapshot,
   diffCatalogSnapshots as diffCatalogSnapshotsSnapshot,
   fetchGitHubCopilotModels as fetchGitHubCopilotModelsSnapshot,
@@ -111,6 +112,87 @@ test("fetchGitHubCopilotModels computes a provider-qualified registryId for each
   });
 
   assert.equal(result.models[0]?.registryId, "github-copilot/mai-code-1.1-flash");
+});
+
+test("fetchGitHubCopilotModels classifies 403 and 429 responses distinctly", async () => {
+  await assert.rejects(
+    fetchGitHubCopilotModels({
+      provider: "github-copilot",
+      fetchImpl: async () => ({ ok: false, status: 403 }) as Response,
+    }),
+    (error: unknown) => error instanceof CopilotCatalogFetchError && error.kind === "forbidden" && error.status === 403,
+  );
+
+  await assert.rejects(
+    fetchGitHubCopilotModels({
+      provider: "github-copilot",
+      fetchImpl: async () => ({ ok: false, status: 429 }) as Response,
+    }),
+    (error: unknown) => error instanceof CopilotCatalogFetchError && error.kind === "rate-limited" && error.status === 429,
+  );
+});
+
+test("fetchGitHubCopilotModels reports malformed JSON, timeout, and cancellation distinctly", async () => {
+  await assert.rejects(
+    fetchGitHubCopilotModels({
+      provider: "github-copilot",
+      fetchImpl: async () => ({ ok: true, json: async () => { throw new Error("bad json"); } }) as unknown as Response,
+    }),
+    (error: unknown) => error instanceof CopilotCatalogFetchError && error.kind === "malformed",
+  );
+
+  await assert.rejects(
+    fetchGitHubCopilotModels({
+      provider: "github-copilot",
+      timeoutMs: 1,
+      fetchImpl: async (_url: string | URL | Request, init?: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          const abortError = Object.assign(new Error("aborted"), { name: "AbortError" });
+          init?.signal?.addEventListener("abort", () => reject(abortError), { once: true });
+        }),
+    }),
+    (error: unknown) => error instanceof CopilotCatalogFetchError && error.kind === "timeout",
+  );
+
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    fetchGitHubCopilotModels({
+      provider: "github-copilot",
+      signal: controller.signal,
+      fetchImpl: async (_url: string | URL | Request, init?: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          const abortError = Object.assign(new Error("aborted"), { name: "AbortError" });
+          init?.signal?.addEventListener("abort", () => reject(abortError), { once: true });
+        }),
+    }),
+    (error: unknown) => error instanceof CopilotCatalogFetchError && error.kind === "aborted",
+  );
+});
+
+test("sanitizeGitHubCopilotModels preserves preview/disabled/policy metadata when supplied", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [
+      {
+        id: "preview-model",
+        name: "Preview Model",
+        tool_call: true,
+        enabled: false,
+        preview: true,
+        model_picker_enabled: false,
+        policy_state: "restricted",
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+      },
+    ],
+  })[0]!;
+
+  assert.equal(record.availability.enabled, false);
+  assert.equal(record.availability.preview, true);
+  assert.equal(record.availability.pickerEnabled, false);
+  assert.equal(record.availability.policyState, "restricted");
 });
 
 test("sanitizeGitHubCopilotModels drops invalid and duplicate rows but keeps non-tool-capable records visible", () => {

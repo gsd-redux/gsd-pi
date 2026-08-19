@@ -724,6 +724,42 @@ test("handleCopilotModels: pricing explains provider-aware economics locally", a
   assert.match(notifications[0].message, /^- freshness: stale$/m);
 });
 
+test("handleCopilotModels: pricing reports long-context tiers and request multipliers when live data supplies them", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "special-priced-model", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      {
+        id: "special-priced-model",
+        name: "Special Priced Model",
+        tool_call: true,
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        pricing: {
+          input: 0.2,
+          output: 1.2,
+          cache_read: 0.02,
+          cache_write: 0.01,
+          tiers: [{ input_tokens_above: 200000, input: 0.4, output: 2.4, cache_read: 0.03, cache_write: 0.02 }],
+        },
+        request_multiplier: 0.25,
+      },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("pricing special-priced-model", ctx, {});
+
+  assert.match(notifications[1].message, /^- source: provider-live$/m);
+  assert.match(notifications[1].message, /^- freshness: fresh$/m);
+  assert.match(notifications[1].message, /request multiplier: 0\.25x/);
+  assert.match(notifications[1].message, /long-context tiers: >200000:/);
+});
+
 test("handleCopilotModels: promos separates active, future, and expired promotions", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
@@ -759,6 +795,63 @@ test("handleCopilotModels: promos separates active, future, and expired promotio
   assert.match(notifications[1].message, /- active: 1/);
   assert.match(notifications[1].message, /- future: 1/);
   assert.match(notifications[1].message, /- expired: 1/);
+});
+
+test("handleCopilotModels: changes is isolated per authenticated account fingerprint", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const first = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-account-a",
+  });
+  const second = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-account-b",
+  });
+
+  await handleCopilotModels("", first.ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("", second.ctx, {
+    fetchImpl: jsonResponse([{ id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true }]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("changes", first.ctx, {});
+  await handleCopilotModels("changes", second.ctx, {});
+
+  assert.match(first.notifications[1].message, /github-copilot\/gpt-5\.4/);
+  assert.doesNotMatch(first.notifications[1].message, /claude-sonnet-5/);
+  assert.match(second.notifications[1].message, /github-copilot\/claude-sonnet-5/);
+});
+
+test("handleCopilotModels: why reports preview and policy blockers as non-routable", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "preview-model", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      {
+        id: "preview-model",
+        name: "Preview Model",
+        tool_call: true,
+        preview: true,
+        model_picker_enabled: false,
+        policy_state: "restricted",
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+      },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why preview-model", ctx, {});
+
+  assert.match(notifications[1].message, /^- policy state: restricted$/m);
+  assert.match(notifications[1].message, /^- preview: yes$/m);
+  assert.match(notifications[1].message, /^- automatic routing eligible: no$/m);
 });
 
 test("handleCopilotModels: doctor reports cache and quarantine state without a network request", async () => {

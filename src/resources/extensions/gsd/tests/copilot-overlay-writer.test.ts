@@ -189,6 +189,29 @@ test("registerCopilotModelsInOverlay registers complete remote-only models idemp
   assert.deepEqual(second.quarantined, []);
 });
 
+test("registerCopilotModelsInOverlay quarantines preview-disabled or policy-restricted models", (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const result = registerCopilotModelsInOverlay(overlayPath, [
+    incompleteRecord("preview-disabled", "Preview Disabled", {
+      preview: true,
+      model_picker_enabled: false,
+      policy_state: "restricted",
+      supported_endpoints: ["/responses"],
+      reasoning: true,
+      limit: { context: 400000, output: 128000 },
+      cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+    }),
+  ]);
+
+  assert.deepEqual(result.registeredIds, []);
+  assert.deepEqual(result.quarantined.map((candidate) => candidate.id), ["preview-disabled"]);
+  assert.ok(result.quarantined[0]?.blockers.some((blocker) => /preview model/i.test(blocker)));
+  assert.ok(result.quarantined[0]?.blockers.some((blocker) => /policy restricts/i.test(blocker)));
+});
+
 test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay written by gsd update --models", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));

@@ -93,6 +93,68 @@ test("resolveModelEconomics treats unknown costs as unknown rather than zero", (
   assert.equal(resolved.tokenPrices, undefined);
 });
 
+test("resolveModelEconomics applies per-field precedence and reports mixed provenance", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "gpt-5.6-sol",
+    userOverride: {
+      billingUnit: "tokens",
+      tokenPrices: { default: { inputPer1k: 0.0004, outputPer1k: 0.002 } },
+      stale: false,
+    },
+    liveEconomics: {
+      requestMultiplier: 0.25,
+      stale: false,
+      fetchedAt: 123,
+    },
+  });
+
+  assert.equal(resolved.source, "mixed");
+  assert.equal(resolved.tokenPrices?.default.inputPer1k, 0.0004);
+  assert.equal(resolved.provenance.defaultTokenPrices?.source, "user");
+  assert.equal(resolved.requestMultiplier, 0.25);
+  assert.equal(resolved.provenance.requestMultiplier?.source, "provider-live");
+  assert.equal(resolved.provenance.longContextTiers?.source, "bundled-fallback");
+  assert.ok((resolved.tokenPrices?.longContextTiers?.length ?? 0) > 0);
+});
+
+test("resolveModelEconomics keeps request billing separate from token pricing", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "mai-code-1.1-flash",
+    liveEconomics: {
+      billingUnit: "request",
+      requestMultiplier: 0.25,
+      stale: false,
+    },
+  });
+
+  assert.equal(resolved.billingUnit, "request");
+  assert.equal(resolved.requestMultiplier, 0.25);
+  assert.equal(resolved.provenance.requestMultiplier?.source, "provider-live");
+});
+
+test("resolveModelEconomics keeps promotion lifecycle metadata without mutating prices", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "mai-code-1.1-flash",
+    liveEconomics: {
+      billingUnit: "tokens",
+      tokenPrices: { default: { inputPer1k: 0.0002, outputPer1k: 0.0012 } },
+      promotion: {
+        discountPercent: 50,
+        endsAt: "2000-01-01T00:00:00Z",
+        message: "Expired promo",
+      },
+      stale: false,
+    },
+  });
+
+  assert.equal(resolved.tokenPrices?.default.inputPer1k, 0.0002);
+  assert.equal(resolved.promotion?.status, "expired");
+  assert.equal(resolved.provenance.promotion?.source, "provider-live");
+});
+
 // ─── compareModelCost ────────────────────────────────────────────────────────
 
 test("haiku is cheaper than opus", () => {

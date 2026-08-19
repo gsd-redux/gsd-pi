@@ -162,6 +162,27 @@ function activeRefresh(): CopilotRefreshState | null {
   return sessionStates.get(lastActiveAccountKey)?.lastRefresh ?? null;
 }
 
+async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<{
+  auth: Awaited<ReturnType<typeof resolveCopilotAuth>>;
+  accountKey: string | null;
+  state: CopilotSessionState | null;
+}> {
+  const auth = await resolveCopilotAuth(ctx);
+  if (auth.accountKey) {
+    return {
+      auth,
+      accountKey: auth.accountKey,
+      state: sessionStates.get(auth.accountKey) ?? null,
+    };
+  }
+
+  return {
+    auth,
+    accountKey: null,
+    state: null,
+  };
+}
+
 function localCopilotModels(ctx: ExtensionCommandContext): any[] {
   const getAll = (ctx.modelRegistry as { getAll?: () => any[] }).getAll;
   const all = typeof getAll === "function" ? getAll() : ctx.modelRegistry.getAvailable();
@@ -724,11 +745,21 @@ export async function handleCopilotModels(
   }
 
   if (command === "changes") {
-    ctx.ui.notify(formatChanges(activeDiff()), "info");
+    const current = await resolveCurrentAccountView(ctx);
+    if (!current.auth.configured) {
+      ctx.ui.notify(
+        "GitHub Copilot is not configured for this session — no account-scoped catalog diff is available.",
+        "info",
+      );
+      return;
+    }
+    ctx.ui.notify(formatChanges(current.state?.lastAcceptedDiff ?? null), "info");
     return;
   }
 
   if (command === "pricing") {
+    const current = await resolveCurrentAccountView(ctx);
+    const currentSnapshot = current.state?.lastKnownGoodSnapshot ?? null;
     const parsed = parseProviderModelArgument("pricing", args, false);
     if (!parsed.valid) {
       ctx.ui.notify(parsed.error ?? "Usage: /gsd copilot-models pricing <model>", "warning");
@@ -738,13 +769,13 @@ export async function handleCopilotModels(
     if (parsed.target) {
       const bareId = parsed.target;
       ctx.ui.notify(
-        formatPricingRecord(findLiveRecord(activeSnapshot(), bareId), findLocalModel(ctx, bareId), bareId).join("\n"),
+        formatPricingRecord(findLiveRecord(currentSnapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n"),
         "info",
       );
       return;
     }
 
-    const snapshot = activeSnapshot();
+    const snapshot = currentSnapshot;
     const records = snapshot?.models ?? localCopilotModels(ctx).map((model) => ({ id: model.id, registryId: `github-copilot/${model.id}` } as CopilotModelRecord));
     if (records.length === 0) {
       ctx.ui.notify("GitHub Copilot pricing unavailable — no accepted live snapshot or effective local Copilot models are present.", "warning");
@@ -759,18 +790,20 @@ export async function handleCopilotModels(
   }
 
   if (command === "promos") {
-    ctx.ui.notify(formatPromotions(activeSnapshot()), "info");
+    const current = await resolveCurrentAccountView(ctx);
+    ctx.ui.notify(formatPromotions(current.state?.lastKnownGoodSnapshot ?? null), "info");
     return;
   }
 
   if (command === "doctor") {
-    const auth = await resolveCopilotAuth(ctx);
-    const snapshot = activeSnapshot();
-    const refresh = activeRefresh();
+    const current = await resolveCurrentAccountView(ctx);
+    const auth = current.auth;
+    const snapshot = current.state?.lastKnownGoodSnapshot ?? null;
+    const refresh = current.state?.lastRefresh ?? null;
     const blockedByPolicy = snapshot?.models.filter((model) => model.availability.policyState === "disabled" || model.availability.policyState === "restricted") ?? [];
     const previewDisabled = snapshot?.models.filter((model) => model.availability.preview === true && model.availability.pickerEnabled === false) ?? [];
-    const quarantined = activeDiff()?.candidates.filter((candidate) => !candidate.complete) ?? [];
-    const activeAccountKey = lastActiveAccountKey;
+    const quarantined = current.state?.lastAcceptedDiff?.candidates.filter((candidate) => !candidate.complete) ?? [];
+    const activeAccountKey = current.accountKey;
     const lines = [
       "GitHub Copilot doctor:",
       `- configured: ${auth.configured ? "yes" : "no"}`,
