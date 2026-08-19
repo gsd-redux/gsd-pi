@@ -61,7 +61,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "skill-health", desc: "Skill lifecycle dashboard" },
   { cmd: "notifications", desc: "View, filter, and clear persistent notification history" },
   { cmd: "doctor", desc: "Runtime health checks with auto-fix" },
-  { cmd: "copilot-models", desc: "Check the live GitHub Copilot model catalog for drift (network only if Copilot is configured)" },
+  { cmd: "copilot-models", desc: "Inspect and manage the live GitHub Copilot model catalog (sync, changes, pricing, promos, doctor, why)" },
   { cmd: "logs", desc: "Browse activity logs, debug logs, and metrics" },
   { cmd: "usage", desc: "Current LLM context window usage and session token totals" },
   { cmd: "context", desc: "Context breakdown chart (skills, injections, history)" },
