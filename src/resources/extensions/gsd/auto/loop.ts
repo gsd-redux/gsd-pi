@@ -146,7 +146,7 @@ import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
 } from "../task-recovery-domain-operation.js";
-import { verifyExpectedArtifact } from "../artifact-verification.js";
+import { readTerminalTaskRecoveryAbort, verifyExpectedArtifact } from "../artifact-verification.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -212,6 +212,8 @@ const TASK_EXECUTION_CUTOVER_DEPS = {
   claimTaskAttempt,
   readLatestTaskAttempt,
   readTaskAttempt,
+  readTerminalTaskRecoveryAbort: (task: { milestoneId: string; sliceId: string; taskId: string }) =>
+    readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId),
   readTaskRecoveryRoute,
   readTaskTechnicalVerdict,
   routeTaskFailure: recordFailureAndSelectRecovery,

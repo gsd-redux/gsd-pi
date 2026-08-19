@@ -785,6 +785,11 @@ test("#1726: a blockerDiscovered failure leaves no staged SUMMARY and no wedge",
     0,
     "no SUMMARY artifact is projected for a failed Attempt",
   );
+  assert.equal(
+    Number(row("SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'attempt.route'").count),
+    0,
+    "recording a blocker only settles the Attempt; recovery routing belongs to unit closeout",
+  );
   assert.deepEqual(
     await taskSummaryDivergence(basePath),
     { doctorDivergence: false, reconciliationDivergence: false },

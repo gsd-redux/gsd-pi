@@ -975,7 +975,7 @@ export async function executeTaskComplete(
           type: "text",
           text: staged.nextStage === "verify"
             ? `Staged task ${params.taskId}; awaiting host verification before completion.`
-            : `Recorded blocker for task ${params.taskId}; routed for recovery.`,
+            : `Recorded blocker for task ${params.taskId}; awaiting recovery routing.`,
         }],
         details: {
           operation: "complete_task",

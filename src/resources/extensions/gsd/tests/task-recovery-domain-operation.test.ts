@@ -26,6 +26,7 @@ import {
   cancelTask,
   grantTaskWaiver,
   readPendingTaskRecoveryContext,
+  readTaskRecoveryAttemptIds,
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
@@ -1459,6 +1460,40 @@ test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754
     readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
     null,
     "a resume-authorized abort clears the stop-guard",
+  );
+});
+
+test("terminal recovery history remains discoverable when an Attempt leaves the live lifecycle join", () => {
+  const firstFailure = seedFailedAttempt();
+  const aborted = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/history/abort"),
+    attemptId: firstFailure.attemptId,
+    resultId: firstFailure.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "The fatal executor fault requires a terminal abort.",
+    evidence: { source: "executor" },
+    rationale: "stop after the fatal executor fault",
+  });
+  assert.equal(aborted.action, "abort");
+
+  // Model an interruption-settled legacy row that is no longer reachable from
+  // the live Attempt join while its immutable failure/action history remains.
+  db().exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP TRIGGER trg_workflow_attempt_delete;
+  `);
+  db().prepare("DELETE FROM workflow_execution_attempts WHERE attempt_id = :attempt_id").run({
+    ":attempt_id": firstFailure.attemptId,
+  });
+
+  assert.deepEqual(
+    readTaskRecoveryAttemptIds({ milestoneId: "M001", sliceId: "S01", taskId: "T01" }),
+    [firstFailure.attemptId],
+  );
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01")?.recoveryActionId,
+    aborted.recoveryActionId,
   );
 });
 
