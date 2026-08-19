@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { _openManagedProjectionRootWithRetryForTest } from "../managed-projection-history.ts";
+import {
+  _openManagedProjectionRootWithRetryForTest,
+  _withManagedProjectionRootForTest,
+} from "../managed-projection-history.ts";
 
 test("managed projection root acquisition retries transient lock failures with exponential backoff", () => {
   const waits: number[] = [];
@@ -65,4 +68,26 @@ test("managed projection root acquisition does not retry permanent identity fail
   );
   assert.equal(attempts, 1);
   assert.deepEqual(waits, []);
+});
+
+test("managed projection operations acquire through the retrying open path", () => {
+  let attempts = 0;
+  let closes = 0;
+  const handle = { close: () => { closes++; } };
+
+  const result = _withManagedProjectionRootForTest(
+    () => {
+      attempts++;
+      if (attempts < 3) throw new Error("projection root operation failed: os error 32");
+      return handle as never;
+    },
+    (opened) => {
+      assert.equal(opened, handle);
+      return "completed";
+    },
+  );
+
+  assert.equal(result, "completed");
+  assert.equal(attempts, 3);
+  assert.equal(closes, 1);
 });

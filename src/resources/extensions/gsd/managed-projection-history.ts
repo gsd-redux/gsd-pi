@@ -253,13 +253,21 @@ export function _openManagedProjectionRootWithRetryForTest<T>(
 function withManagedProjectionRoot<T>(
   targetRoot: string,
   operation: (handle: ProjectionRootIdentityLock) => T,
+  open: (root: string) => ProjectionRootIdentityLock = openManagedProjectionRoot,
 ): T {
-  const handle = openManagedProjectionRoot(targetRoot);
+  const handle = openManagedProjectionRootWithRetry(() => open(targetRoot));
   try {
     return operation(handle);
   } finally {
     handle.close();
   }
+}
+
+export function _withManagedProjectionRootForTest<T>(
+  open: () => ProjectionRootIdentityLock,
+  operation: (handle: ProjectionRootIdentityLock) => T,
+): T {
+  return withManagedProjectionRoot("", operation, open);
 }
 
 function parseManagedProjectionPaths(value: unknown): string[] {
