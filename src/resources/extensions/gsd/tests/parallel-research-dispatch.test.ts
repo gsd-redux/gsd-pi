@@ -142,6 +142,51 @@ describe("parallel-research-slices dispatch rule", () => {
     if (action.action === "dispatch") {
       assert.equal(action.unitType, "research-slice");
       assert.equal(action.unitId, "M001/parallel-research");
+      assert.match(action.prompt, /agent:\s*["`]scout["`]/);
+    }
+  });
+
+  test("dispatch renders Claude Code's registered reconnaissance type", async () => {
+    writeRoadmap(base, "M001", [
+      { id: "S01", title: "Alpha" },
+      { id: "S02", title: "Beta" },
+    ]);
+
+    const action = await resolveDispatch({
+      basePath: base,
+      mid: "M001",
+      midTitle: "Parallel Research Milestone",
+      state: baseState(),
+      prefs: undefined,
+      sessionProvider: "claude-code",
+    });
+
+    assert.equal(action.action, "dispatch");
+    if (action.action === "dispatch") {
+      assert.match(action.prompt, /agent:\s*["`]Explore["`]/);
+      assert.doesNotMatch(action.prompt, /agent:\s*["`]scout["`]/);
+      assert.match(action.prompt, /Subagents: `Explore`, `Plan`/);
+    }
+  });
+
+  test("single-slice dispatch renders Claude Code's registered reconnaissance type", async () => {
+    writeRoadmap(base, "M001", [{ id: "S01", title: "Alpha" }]);
+
+    const action = await resolveDispatch({
+      basePath: base,
+      mid: "M001",
+      midTitle: "Parallel Research Milestone",
+      state: baseState(),
+      prefs: undefined,
+      sessionProvider: "claude-code",
+    });
+
+    assert.equal(action.action, "dispatch");
+    if (action.action === "dispatch") {
+      assert.equal(action.unitId, "M001/S01");
+      assert.match(action.prompt, /Use `Explore` first/);
+      assert.doesNotMatch(action.prompt, /Use `scout` first/);
+      assert.match(action.prompt, /Subagents: `Explore`, `Plan`/);
     }
   });
 
@@ -300,6 +345,24 @@ describe("buildParallelResearchSlicesPrompt", () => {
     assert.match(prompt, /Alpha slice title/);
     assert.match(prompt, /Beta slice title/);
     assert.match(prompt, /Gamma slice title/);
+  });
+
+  test("resolves scout dispatches to Claude Code's Explore agent type", async () => {
+    const prompt = await buildParallelResearchSlicesPrompt(
+      "M001",
+      "Parallel Research Milestone",
+      [
+        { id: "S01", title: "Alpha" },
+        { id: "S02", title: "Beta" },
+      ],
+      base,
+      undefined,
+      undefined,
+      "claude-code",
+    );
+
+    assert.match(prompt, /agent:\s*["`]Explore["`]/);
+    assert.doesNotMatch(prompt, /agent:\s*["`]scout["`]/);
   });
 
   test("#4068: prompt caps subagent retries at one and instructs writing a BLOCKER on second failure", async () => {

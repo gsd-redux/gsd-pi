@@ -1,6 +1,6 @@
 **Working directory:** `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
 
-Run one-time **project-level domain research** after `discuss-requirements` and the `research-decision` gate, before milestone work. Read `.gsd/PROJECT.md` and `.gsd/REQUIREMENTS.md`, then spawn 4 parallel `Task` calls with agent class `scout`, one per research dimension, each writing exactly one file under `.gsd/research/`.
+Run one-time **project-level domain research** after `discuss-requirements` and the `research-decision` gate, before milestone work. Read `.gsd/PROJECT.md` and `.gsd/REQUIREMENTS.md`, then spawn 4 parallel `Task` calls with agent class `{{scoutAgentType}}`, one per research dimension, each writing exactly one file under `.gsd/research/`.
 
 **Structured questions available: {{structuredQuestionsAvailable}}**
 
@@ -28,7 +28,7 @@ If either file is missing, STOP and emit: `"PROJECT.md or REQUIREMENTS.md missin
 
 ## Fan-out
 
-Issue **4 `Task` tool calls in one assistant response** (one block with four calls). Use `agent: "scout"` for every task. Do not use `agent: "researcher"`. Runtime parallelizes them, so do not chain calls across turns. Wait for ALL results before "After fan-out completes."
+Issue **4 `Task` tool calls in one assistant response** (one block with four calls). Use `agent: "{{scoutAgentType}}"` for every task. Do not use `agent: "researcher"`. Runtime parallelizes them, so do not chain calls across turns. Wait for ALL results before "After fan-out completes."
 
 Each task gets its own focused prompt. Each task writes one file.
 

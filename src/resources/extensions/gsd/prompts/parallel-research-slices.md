@@ -16,7 +16,7 @@ Dispatch ALL slices simultaneously using the `subagent` tool in **parallel mode*
 
 ## Execution Protocol
 
-1. Call `subagent` with `tasks: [{ agent: "scout", task: "<prompt>" }, ...]` containing one entry per slice below
+1. Call `subagent` with `tasks: [{ agent: "{{scoutAgentType}}", task: "<prompt>" }, ...]` containing one entry per slice below
 2. Wait for ALL subagents to complete
 3. Verify each slice's RESEARCH file was written (check `.gsd/milestones/{{mid}}/slices/<slice-id>/`)
 4. If a subagent failed to write its RESEARCH file, retry it **once** individually

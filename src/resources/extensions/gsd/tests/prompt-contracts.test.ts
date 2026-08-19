@@ -372,7 +372,7 @@ test("workflow preferences prompt writes defaults without interactive questions"
 
 test("project research prompt dispatches scout agents allowed by planning-dispatch", () => {
   const prompt = readPrompt("guided-research-project");
-  assert.match(prompt, /agent:\s*"scout"/);
+  assert.match(prompt, /agent:\s*"\{\{scoutAgentType\}\}"/);
   assert.match(prompt, /Do not use `agent: "researcher"`/);
   assert.match(prompt, /runtime clears the dispatch marker/i);
   assert.doesNotMatch(prompt, /Delete `\.gsd\/runtime\/research-project-inflight`/);
@@ -756,7 +756,7 @@ test("reactive-execute prompt references tool calls instead of checkbox updates"
 test("parallel subagent prompts forbid serialized tasks arrays", () => {
   const expectations = [
     { name: "reactive-execute", agent: "worker" },
-    { name: "parallel-research-slices", agent: "scout" },
+    { name: "parallel-research-slices", agent: "\\{\\{scoutAgentType\\}\\}" },
     { name: "gate-evaluate", agent: "tester" },
   ] as const;
 

@@ -276,6 +276,7 @@ test("research-slice prompt substitutes skillActivation", () => {
     outputPath: join(fixtureRoot, ".gsd", "milestones", "M001", "slices", "S01", "S01-RESEARCH.md"),
     inlinedContext: "Context",
     dependencySummaries: "",
+    scoutAgentType: "scout",
     skillDiscoveryMode: "manual",
     skillDiscoveryInstructions: " Discover skills manually.",
     skillActivation: "Load slice research skills first.",
@@ -341,6 +342,7 @@ test("guided research slice prompt substitutes skillActivation", () => {
     milestoneId: "M001",
     sliceId: "S01",
     sliceTitle: "Test Slice",
+    scoutAgentType: "scout",
     inlinedTemplates: "Templates",
     skillActivation: "Load guided research skills first.",
   });

@@ -103,7 +103,9 @@ export async function dispatchDirectPhase(
 
         unitType = "research-slice";
         unitId = `${mid}/${sid}`;
-        prompt = await buildResearchSlicePrompt(mid, midTitle, sid, sTitle, dispatchBase);
+        prompt = await buildResearchSlicePrompt(mid, midTitle, sid, sTitle, dispatchBase, {
+          sessionProvider: ctx.model?.provider,
+        });
       } else {
         unitType = "research-milestone";
         unitId = mid;

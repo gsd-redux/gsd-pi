@@ -80,6 +80,7 @@ import {
   type PendingTaskRecoveryContext,
 } from "./task-recovery-domain-operation.js";
 import type { MilestoneScope } from "./workspace.js";
+import { resolveSubagentRoleForProvider } from "./subagent-role-resolver.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
 
@@ -459,8 +460,13 @@ function prependContextModeToBlock(
   base: string,
   block: string,
   renderMode: ContextModeRenderMode = "standalone",
+  sessionProvider?: string,
 ): string {
-  const toolSurface = composeToolSurfaceInstructions(unitType, { renderMode, basePath: base });
+  const toolSurface = composeToolSurfaceInstructions(unitType, {
+    renderMode,
+    basePath: base,
+    sessionProvider,
+  });
   const contextMode = renderContextModeBlockForPrompt(unitType, base, renderMode);
   const guidance = [toolSurface, contextMode].filter(Boolean).join("\n\n");
   if (!guidance) return block;
@@ -1869,11 +1875,14 @@ export async function buildWorkflowPreferencesPrompt(
 export async function buildResearchProjectPrompt(
   base: string,
   structuredQuestionsAvailable = "false",
+  sessionProvider?: string,
 ): Promise<string> {
+  const scoutAgentType = resolveSubagentRoleForProvider("scout", sessionProvider);
   return prependContextModeToBlock("research-project", base, loadPrompt("guided-research-project", {
     workingDirectory: base,
     structuredQuestionsAvailable,
-  }));
+    scoutAgentType,
+  }), "standalone", sessionProvider);
 }
 
 /**
@@ -2320,7 +2329,7 @@ export async function buildPlanMilestonePrompt(
 
 export async function buildResearchSlicePrompt(
   mid: string, _midTitle: string, sid: string, sTitle: string, base: string,
-  options?: { contextModeRenderMode?: ContextModeRenderMode },
+  options?: { contextModeRenderMode?: ContextModeRenderMode; sessionProvider?: string },
 ): Promise<string> {
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
@@ -2444,10 +2453,12 @@ export async function buildResearchSlicePrompt(
     base,
     cappedInlinedContext,
     options?.contextModeRenderMode,
+    options?.sessionProvider,
   );
   emitPromptContextTelemetry("research-slice", contextTelemetry, inlinedContext);
 
   const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
+  const scoutAgentType = resolveSubagentRoleForProvider("scout", options?.sessionProvider);
   return loadPrompt("research-slice", {
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
@@ -2458,6 +2469,7 @@ export async function buildResearchSlicePrompt(
     outputPath: join(base, outputRelPath),
     inlinedContext,
     dependencySummaries: depContent,
+    scoutAgentType,
     skillActivation: buildSkillActivationBlock({
       base,
       milestoneId: mid,
@@ -4429,16 +4441,21 @@ export async function buildParallelResearchSlicesPrompt(
   basePath: string,
   subagentModel?: string,
   subagentThinking?: string,
+  sessionProvider?: string,
 ): Promise<string> {
   // Build individual research-slice prompts for each slice
   const subagentSections: string[] = [];
   const modelSuffix = subagentCallSuffix(subagentModel, subagentThinking);
+  const scoutAgentType = resolveSubagentRoleForProvider("scout", sessionProvider);
   for (const slice of slices) {
-    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath, { contextModeRenderMode: "nested" });
+    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath, {
+      contextModeRenderMode: "nested",
+      sessionProvider,
+    });
     subagentSections.push([
       `### ${slice.id}: ${slice.title}`,
       "",
-      `Use this as the prompt for a \`subagent\` call${modelSuffix} (agent: \`scout\`):`,
+      `Use this as the prompt for a \`subagent\` call${modelSuffix} (agent: \`${scoutAgentType}\`):`,
       "",
       "```",
       slicePrompt,
@@ -4452,6 +4469,7 @@ export async function buildParallelResearchSlicesPrompt(
     midTitle,
     sliceCount: String(slices.length),
     sliceList: slices.map((s) => `- **${s.id}**: ${s.title}`).join("\n"),
+    scoutAgentType,
     subagentPrompts: subagentSections.join("\n\n---\n\n"),
   });
 }

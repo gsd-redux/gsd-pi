@@ -28,6 +28,7 @@ import type {
 import { KNOWN_UNIT_TYPES, UNIT_MANIFESTS } from "../unit-context-manifest.ts";
 import { getUnitToolSurfaceContract } from "../unit-tool-contracts.ts";
 import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
+import { resolveSubagentRole } from "../subagent-role-resolver.ts";
 import type { UnitGsdToolName } from "../unit-registry.ts";
 import {
   buildExecuteTaskPrompt,
@@ -55,6 +56,23 @@ import { clearGSDPreferencesCache, getProjectGSDPreferencesPath } from "../prefe
 test("#4782 composer: returns empty string for unknown unit type", async () => {
   const out = await composeInlinedContext("never-dispatched", async () => "body");
   assert.strictEqual(out, "");
+});
+
+test("research tool guidance renders Claude Code agent types instead of internal roles", () => {
+  const out = composeToolSurfaceInstructions("research-slice", {
+    renderMode: "standalone",
+    sessionProvider: "claude-code",
+  });
+
+  assert.match(out, /\*\*Explore\*\*/);
+  assert.match(out, /\*\*Plan\*\*/);
+  assert.doesNotMatch(out, /\*\*scout\*\*|\*\*planner\*\*/);
+});
+
+test("subagent role resolution preserves registered roles and falls back predictably", () => {
+  assert.equal(resolveSubagentRole("scout", ["scout", "general-purpose"]), "scout");
+  assert.equal(resolveSubagentRole("scout", ["Explore", "general-purpose"]), "Explore");
+  assert.equal(resolveSubagentRole("tester", ["Explore", "general-purpose"]), "general-purpose");
 });
 
 test("#4782 composer: walks the manifest's inline list in declared order", async () => {
@@ -299,11 +317,11 @@ test("Context Mode composer: run-uat guidance steers to gsd_uat_exec in both ren
   assert.doesNotMatch(standalone, /`gsd_exec`/);
 });
 
-test("Context Mode composer: research-project guidance steers to scout orchestration", () => {
+test("Context Mode composer: research-project guidance steers to reconnaissance orchestration", () => {
   for (const renderMode of ["nested", "standalone"] as const) {
     const out = composeContextModeInstructions("research-project", { enabled: true, renderMode });
     assert.match(out, /research lane/i);
-    assert.match(out, /scout subagents/i);
+    assert.match(out, /reconnaissance subagents/i);
     assert.match(out, /\.gsd\/research\//);
     assert.match(out, /STACK\.md/);
     assert.match(out, /PITFALLS\.md/);

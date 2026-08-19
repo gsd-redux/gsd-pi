@@ -47,6 +47,7 @@ import {
   type UnitContextManifest,
 } from "./unit-context-manifest.js";
 import { resolveEffectivePlanningToolsPolicy } from "./planning-subagent-policy.js";
+import { resolveSubagentRoleForProvider } from "./subagent-role-resolver.js";
 import { getUnitToolSurfaceContract } from "./unit-tool-contracts.js";
 import type { UnitPromptContextContract } from "./tool-contract.js";
 
@@ -155,7 +156,7 @@ export const CONTEXT_MODE_GUIDANCE_BY_UNIT: Readonly<Record<string, string>> = {
   "run-uat":
     "Use `gsd_uat_exec` for acceptance checks so evidence is typed as UAT-owned, and `gsd_resume` after compaction or resume.",
   "research-project":
-    "Dispatch parallel scout subagents for stack, features, architecture, and pitfalls research; each writes one file under `.gsd/research/` (`STACK.md`, `FEATURES.md`, `ARCHITECTURE.md`, `PITFALLS.md`).",
+    "Dispatch parallel reconnaissance subagents for stack, features, architecture, and pitfalls research; each writes one file under `.gsd/research/` (`STACK.md`, `FEATURES.md`, `ARCHITECTURE.md`, `PITFALLS.md`).",
   "gate-evaluate":
     "Use `subagent` to dispatch tester agents, then persist each gate with `gsd_save_gate_result`; rely on testers for verification evidence.",
 };
@@ -209,6 +210,7 @@ export function composeContextModeInstructions(
 export interface ComposeToolSurfaceInstructionOptions {
   readonly renderMode: ContextModeRenderMode;
   readonly basePath?: string;
+  readonly sessionProvider?: string;
 }
 
 const TOOL_SURFACE_GUIDANCE_BY_UNIT: Record<string, string> = {
@@ -228,32 +230,46 @@ const TOOL_SURFACE_GUIDANCE_BY_UNIT: Record<string, string> = {
     "Persist completion only through `gsd_complete_milestone` after verification passes. Do not query `.gsd/gsd.db` directly. Do not write `.gsd/PROJECT.md` or `.gsd/REQUIREMENTS.md` by hand — use `gsd_summary_save` and `gsd_requirement_update`.",
   "replan-slice":
     "Persist replans through `gsd_replan_slice` only. Do not edit `PLAN.md` or task plans directly.",
-  "research-slice":
-    "Dispatch subagents only to **scout** or **planner** for reconnaissance. Do not edit user source files outside `.gsd/**`.",
 };
 
-function formatAllowedAgents(agents: readonly string[]): string {
-  return agents.map((agent) => `**${agent}**`).join(", ");
+function resolveAllowedAgentTypes(agents: readonly string[], sessionProvider?: string): string[] {
+  return Array.from(new Set(
+    agents.map((agent) => resolveSubagentRoleForProvider(agent, sessionProvider)),
+  ));
 }
 
-function guidanceForUnitToolsPolicy(unitType: string, policy: ToolsPolicy): string | undefined {
+function formatAllowedAgents(agents: readonly string[], sessionProvider?: string): string {
+  return resolveAllowedAgentTypes(agents, sessionProvider)
+    .map((agent) => `**${agent}**`)
+    .join(", ");
+}
+
+function guidanceForUnitToolsPolicy(
+  unitType: string,
+  policy: ToolsPolicy,
+  sessionProvider?: string,
+): string | undefined {
+  if (unitType === "research-slice" && policy.mode === "planning-dispatch") {
+    return `Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents, sessionProvider)} for reconnaissance. Do not edit user source files outside \`.gsd/**\`.`;
+  }
+
   if (unitType === "plan-slice") {
     const dispatch = policy.mode === "planning-dispatch"
-      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents)} for reconnaissance — not implementation agents.`
+      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents, sessionProvider)} for reconnaissance — not implementation agents.`
       : " Do not dispatch subagents.";
     return `Persist planning through \`gsd_plan_slice\` and \`gsd_plan_task\`.${dispatch} Do not edit user source files outside \`.gsd/**\`. Keep self-verification inside the active worktree: inspect with read-only tools and run any required command through \`gsd_exec\` or \`gsd_exec_search\`, not a direct shell or an out-of-worktree path.`;
   }
 
   if (unitType === "refine-slice") {
     const dispatch = policy.mode === "planning-dispatch"
-      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents)}.`
+      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents, sessionProvider)}.`
       : " Do not dispatch subagents.";
     return `Persist refinements through \`gsd_plan_slice\` only.${dispatch} Do not edit user source files outside \`.gsd/**\`.`;
   }
 
   if (unitType === "plan-milestone") {
     const dispatch = policy.mode === "planning-dispatch"
-      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents)}.`
+      ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents, sessionProvider)}.`
       : "";
     return `Persist milestone planning through \`gsd_plan_milestone\` / \`gsd_plan_slice\`.${dispatch} Do not edit user source files outside \`.gsd/**\`.`;
   }
@@ -261,19 +277,19 @@ function guidanceForUnitToolsPolicy(unitType: string, policy: ToolsPolicy): stri
   return undefined;
 }
 
-function guidanceForToolsPolicy(policy: ToolsPolicy): string | null {
+function guidanceForToolsPolicy(policy: ToolsPolicy, sessionProvider?: string): string | null {
   switch (policy.mode) {
     case "planning":
       return "Writes are restricted to `.gsd/**` under the working directory — do not edit user source files. `bash` is limited to read-only investigation commands. Do not dispatch subagents. For human elicitation, use workflow MCP `ask_user_questions` when available — not native `AskUserQuestion`.";
     case "planning-dispatch": {
-      const agents = policy.allowedSubagents.map((agent) => `**${agent}**`).join(", ");
+      const agents = formatAllowedAgents(policy.allowedSubagents, sessionProvider);
       return `Writes are restricted to \`.gsd/**\`. Dispatch subagents only to: ${agents}. Do not edit user source files.`;
     }
     case "docs":
       return "Writes are restricted to `.gsd/**` and project documentation paths (`docs/`, `README*`, `CHANGELOG.md`, root `*.md`). Do not edit application source.";
     case "verification": {
       const subagentLine = policy.allowedSubagents?.length
-        ? ` Dispatch subagents only to: ${policy.allowedSubagents.map((agent) => `**${agent}**`).join(", ")}.`
+        ? ` Dispatch subagents only to: ${formatAllowedAgents(policy.allowedSubagents, sessionProvider)}.`
         : " Do not dispatch subagents.";
       return `\`bash\` is limited to build/test verification commands. Writes restricted to \`.gsd/**\`.${subagentLine}`;
     }
@@ -315,6 +331,7 @@ function formatAllowedToolsLine(
   unitType: string,
   policy: ToolsPolicy | null,
   style: "surface" | "reminder" = "surface",
+  sessionProvider?: string,
 ): string | null {
   const allowedGsdTools = getUnitToolSurfaceContract(unitType)?.allowedGsdTools ?? [];
   const subagents = policy && "allowedSubagents" in policy ? policy.allowedSubagents ?? [] : [];
@@ -325,7 +342,8 @@ function formatAllowedToolsLine(
     parts.push(`${toolLabel}: ${allowedGsdTools.map((t) => `\`${t}\``).join(", ")}.`);
   }
   if (subagents.length > 0) {
-    parts.push(`${agentLabel}: ${subagents.map((a) => `\`${a}\``).join(", ")}.`);
+    const resolvedSubagents = resolveAllowedAgentTypes(subagents, sessionProvider);
+    parts.push(`${agentLabel}: ${resolvedSubagents.map((agent) => `\`${agent}\``).join(", ")}.`);
   }
   return parts.length > 0 ? parts.join(" ") : null;
 }
@@ -339,12 +357,16 @@ function formatAllowedToolsLine(
  * `"review"` anyway. Repeating it at the very end puts it where the model acts.
  * Kept to one line: the tail is prime real estate and every unit prompt pays for it.
  */
-export function composeToolAffordanceReminder(unitType: string, basePath?: string): string {
+export function composeToolAffordanceReminder(
+  unitType: string,
+  basePath?: string,
+  sessionProvider?: string,
+): string {
   const manifest = resolveManifest(unitType);
   const policy = manifest
     ? resolveEffectivePlanningToolsPolicy(unitType, manifest.tools, basePath) ?? manifest.tools
     : null;
-  const line = formatAllowedToolsLine(unitType, policy, "reminder");
+  const line = formatAllowedToolsLine(unitType, policy, "reminder", sessionProvider);
   if (!line) return "";
   // Phrased as a name-reference, not a menu. Wording it as "available here" read
   // as an invitation: acceptance run 13 saw validate-milestone reach for
@@ -365,11 +387,11 @@ export function composeToolSurfaceInstructions(
   const effectiveTools = manifest
     ? resolveEffectivePlanningToolsPolicy(unitType, manifest.tools, opts.basePath) ?? manifest.tools
     : null;
-  const allowedLine = formatAllowedToolsLine(unitType, effectiveTools);
+  const allowedLine = formatAllowedToolsLine(unitType, effectiveTools, "surface", opts.sessionProvider);
   const unitGuidance = effectiveTools
-    ? guidanceForUnitToolsPolicy(unitType, effectiveTools) ?? TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType]
+    ? guidanceForUnitToolsPolicy(unitType, effectiveTools, opts.sessionProvider) ?? TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType]
     : TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType];
-  const policyGuidance = unitGuidance || !effectiveTools ? null : guidanceForToolsPolicy(effectiveTools);
+  const policyGuidance = unitGuidance || !effectiveTools ? null : guidanceForToolsPolicy(effectiveTools, opts.sessionProvider);
   const forbiddenLine = formatForbiddenWorkflowToolsLine(unitType, unitGuidance);
   const parts = [unitGuidance, policyGuidance, forbiddenLine].filter(
     (part): part is string => typeof part === "string" && part.length > 0,
