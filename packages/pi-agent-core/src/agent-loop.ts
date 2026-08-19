@@ -12,8 +12,9 @@ import {
 	isAgentToolName,
 	isEmptyPathToolArguments,
 	isToolSearchToolName,
-	streamSimple,
 	normalizeToolResultContent,
+	parseStreamingJson,
+	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@gsd/pi-ai";
@@ -415,6 +416,8 @@ async function streamAssistantResponse(
 	});
 
 	let partialMessage: AssistantMessage | null = null;
+	let providerPartialMessage: AssistantMessage | null = null;
+	const partialToolCallJson = new Map<number, string>();
 	let addedPartial = false;
 	let sawStreamActivity = false;
 
@@ -423,37 +426,99 @@ async function streamAssistantResponse(
 			sawStreamActivity = true;
 			markLatency(config, "agent_loop.first_stream_activity", { eventType: event.type });
 		}
+		let shouldEmitUpdate = false;
 		switch (event.type) {
 			case "start":
 				markLatency(config, "agent_loop.assistant_start", {
 					provider: event.partial.provider,
 					model: event.partial.model,
 				});
-				partialMessage = event.partial;
+				providerPartialMessage = event.partial;
+				partialMessage = {
+					...event.partial,
+					content: event.partial.content.map((block) => ({ ...block })),
+				};
 				context.messages.push(partialMessage);
 				addedPartial = true;
 				await emit({ type: "message_start", message: partialMessage });
 				break;
 
 			case "text_start":
+				if (partialMessage) {
+					partialMessage.content[event.contentIndex] = { type: "text", text: "" };
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "text_delta":
+				if (partialMessage) {
+					const block = partialMessage.content[event.contentIndex];
+					if (block?.type === "text") block.text += event.delta;
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "text_end":
+				if (partialMessage) {
+					const block = partialMessage.content[event.contentIndex];
+					if (block?.type === "text") block.text = event.content;
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "thinking_start":
+				if (partialMessage) {
+					partialMessage.content[event.contentIndex] = { type: "thinking", thinking: "" };
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "thinking_delta":
+				if (partialMessage) {
+					const block = partialMessage.content[event.contentIndex];
+					if (block?.type === "thinking") block.thinking += event.delta;
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "thinking_end":
+				if (partialMessage) {
+					const block = partialMessage.content[event.contentIndex];
+					if (block?.type === "thinking") block.thinking = event.content;
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "toolcall_start":
+				if (partialMessage) {
+					const streamedBlock = providerPartialMessage?.content[event.contentIndex];
+					partialMessage.content[event.contentIndex] =
+						streamedBlock?.type === "toolCall"
+							? { ...streamedBlock, arguments: {} }
+							: { type: "toolCall", id: "", name: "", arguments: {} };
+					partialToolCallJson.set(event.contentIndex, "");
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "toolcall_delta":
+				if (partialMessage) {
+					const block = partialMessage.content[event.contentIndex];
+					if (block?.type === "toolCall") {
+						const json = (partialToolCallJson.get(event.contentIndex) ?? "") + event.delta;
+						partialToolCallJson.set(event.contentIndex, json);
+						block.arguments = parseStreamingJson(json);
+					}
+				}
+				shouldEmitUpdate = true;
+				break;
+
 			case "toolcall_end":
 				if (partialMessage) {
-					// partialMessage is already updated locally by individual delta events
-					// (text_delta appends to text, thinking_delta to thinking, etc.)
-					context.messages[context.messages.length - 1] = partialMessage;
-					await emit({
-						type: "message_update",
-						assistantMessageEvent: event,
-						message: partialMessage,
-					});
+					partialMessage.content[event.contentIndex] = { ...event.toolCall };
+					partialToolCallJson.delete(event.contentIndex);
 				}
+				shouldEmitUpdate = true;
 				break;
 
 			case "done":
@@ -470,6 +535,15 @@ async function streamAssistantResponse(
 				await emit({ type: "message_end", message: finalMessage });
 				return finalMessage;
 			}
+		}
+
+		if (shouldEmitUpdate && partialMessage) {
+			context.messages[context.messages.length - 1] = partialMessage;
+			await emit({
+				type: "message_update",
+				assistantMessageEvent: event,
+				message: { ...partialMessage },
+			});
 		}
 	}
 
