@@ -8,6 +8,69 @@ This changelog starts from the `open-gsd/gsd-pi` ownership baseline. Earlier pro
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-17
+
+### Added
+- **gsd**: verify-after-write receipts for save-tool units (#1802)
+- **gsd**: settle orphaned task attempts and add gsd_task_settle operator tool (#1777)
+- **gsd**: collapse auto-mode onto the unit_dispatches UnitRun (ADR-048)
+- **pi-ai**: add MAI Code 1.1 Flash routing
+- **models**: add Claude Opus 5 across catalogs and registries
+- **gsd**: delete leftover filesystem-state read path
+
+### Fixed
+- **gsd**: Windows projection-lock resilience — backoff, EXDEV fallback, transient-aware liveness (#1801)
+- **output**: normalize markdown table separator formatting to pass MD055/MD056 (#1610)
+- **gsd**: optimize streaming render pipeline to reduce TUI CPU churn (#1686)
+- **verification-gate**: detect package manager and use correct run command (#1706)
+- **gsd**: apply canonical list predicates before SQL limit (#1732)
+- **gsd**: align canonical read errors across native and MCP (#1734)
+- **pi-ai**: decouple delta events from accumulated message to eliminate O(n²) payload overhead  (#1736)
+- **issue**: Auto-mode wedge: task-recovery-* retry branch omits retryActiveUnit → pinned lastAdvanceKey → orchestration-stale-active-unit wedge (1.15.0) (#1770)
+- **doctor**: task_file_not_in_plan fires on every sibling slice in flat-phase layouts (#1797)
+- **gsd**: sweep orphaned dispatches and self-heal Q8 gate rows (#1799)
+- **gsd**: align artifact/DB divergence on disk-vs-DB truth (#1800)
+- **gsd**: quote-aware verify substitution and flag-tolerant prose (#1807)
+- **gsd**: actionable verification verdicts and honest timeouts (#1808)
+- **gsd**: prefer project venvs for Python verification (#1809)
+- **gsd**: parse plan numbers from suffixed slice IDs (#1810)
+- **gsd**: bridge cursor-agent lifecycle tools and persist stdio MCP trust (#1811)
+- **gsd**: out-of-surface blocker, convergent schema retries, plan-task cap (#1812)
+- **gsd**: settle migration before drift reconciliation (#1806)
+- **hermes**: resolve session key live instead of at registration (#1813)
+- **pi-ai**: cast Gemini tool-choice literals for string-enum assignability
+- **pi-ai**: keep google-shared type-only on genai and run vitest in CI
+- **gsd**: register gsd_task_settle in workflow contracts and update v47 test fixtures
+- **gsd**: satisfy tsc on UnitRun iteration narrowing and null identities
+- **gsd**: fail-closed auto-mode closeout for remaining field wedges (#1754, #1739, #1726)
+- **gsd**: group MAI cost under Copilot section
+- **gsd**: group MAI cost under Copilot
+- **issue**: fix(auto): degraded dispatch-claim silently proceeds with null dispatchId, execute-task throws 'requires a positive coordination dispatch identity' and wedges
+- **issue**: Orphaned Task Attempt from a killed auto-mode process can never be settled (milestone_leases keeps no history)
+- **read**: add requirement class filtering
+- **bug-1**: Blank rationale crashes runtime-error verification finalization runtime-error verification failures now persist a meaningful, nonblank rationale.
+- **read**: isolate canonical reads from global db handle
+- **model-router**: remove duplicate claude-sonnet-5 registry rows
+- **model-router**: drop duplicate claude-sonnet-5 rows that break tsc
+- **issue**: auto-mode wedge: stale active-unit marker after abnormal unit exit triggers orchestration-stale-active-unit
+- **gsd**: classify Anthropic cache_control.ttl 400 as model-error
+- **issue**: [Bug]: slow startup when cursor-agent executable is on path without subscription
+- **gsd**: restore single claude-sonnet-5 entry in model-router tables
+- **issue**: [Bug]: auto-mode wedges with orchestration-stale-active-unit after task-recovery deferral leaves the orchestrator active-unit claim dangling (1.15.0)
+- **model-router**: restore claude-sonnet-5 registry rows dropped by a merge
+- **gsd**: persist CONTEXT-DRAFT artifacts from structured question rounds
+- **gsd**: stop live derive from treating markdown as state authority
+- **model-router**: restore claude-sonnet-5 registry entries dropped in #1705 merge
+- **issue**: [Bug]: Worktree-isolated plan-milestone deadlocks against its own milestone lease (reentrancy gates key on project_root_realpath, which diverges across worktrees)
+
+### Changed
+- **gsd**: remove unused MEDIUM files and package deps (#1760)
+- **gsd**: drop unused root packaging hoists and @types/picomatch (#1767)
+- **gsd**: un-export unused src CLI symbols after glance (#1768)
+- **gsd**: delete unused studio Electron scaffold
+- **gsd**: delete unused gsd barrels, safe-fs, and interrupted-work
+- **gsd**: delete unused pi-ai shims and mcp-server readers barrel
+
 ### Changed
 - **gsd**: collapse auto-mode onto a single UnitRun — the claimed/running `unit_dispatches` row (ADR-048). `advance()` returns `dispatchId`; `getStatus().activeUnit` reads the database; `settle(dispatchId, outcome)` is the closeout seam.
 
