@@ -29,6 +29,7 @@ import { recordTaskTechnicalVerdict } from "../task-verification-domain-operatio
 import {
   grantTaskWaiver,
   recordTaskRequirementDisposition,
+  reopenTask,
 } from "../task-recovery-domain-operation.ts";
 
 const tempDirs = new Set<string>();
@@ -562,6 +563,41 @@ test("Slice completion rejects pending and running descendants without durable r
     /running attempt|running descendant/i,
   );
   assert.deepEqual(durableSnapshot(), runningBefore, "running-descendant rejection must leave exact zero residue");
+});
+
+test("Slice completion ignores a running Attempt after its owning lease is released", () => {
+  makeBase();
+  const orphanedAttemptId = claimTask("T02");
+  finishTaskWithOptionalEvidence(true);
+  db().prepare(`UPDATE milestone_leases SET status = 'released' WHERE milestone_id = 'M001'`).run();
+
+  const result = completeSlice(validInput("slice-complete/released-lease-attempt"));
+
+  assert.equal(result.status, "committed");
+  assert.deepEqual(row(`
+    SELECT attempt_state, ended_at
+    FROM workflow_execution_attempts WHERE attempt_id = '${orphanedAttemptId}'
+  `), { attempt_state: "running", ended_at: null });
+});
+
+test("Task reopen ignores a running Attempt after its owning lease is released", () => {
+  makeBase();
+  const orphanedAttemptId = claimTask("T02");
+  finishTaskWithOptionalEvidence(true);
+  db().prepare(`UPDATE milestone_leases SET status = 'released' WHERE milestone_id = 'M001'`).run();
+
+  const result = reopenTask({
+    invocation: invocation("task-reopen/released-lease-attempt"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T02" },
+    reason: "The previously omitted work is required again.",
+  });
+
+  assert.equal(result.canonicalStatus, "ready");
+  assert.equal(result.legacyStatus, "pending");
+  assert.deepEqual(row(`
+    SELECT attempt_state, ended_at
+    FROM workflow_execution_attempts WHERE attempt_id = '${orphanedAttemptId}'
+  `), { attempt_state: "running", ended_at: null });
 });
 
 test("Slice completion rejects a deep canonical and legacy mismatch with exact zero residue", () => {

@@ -224,7 +224,11 @@ function requireOpenParents(state: TaskState, action: "reopen" | "cancel"): void
   if (terminalParent) throw new Error("cannot mutate Task under a terminal canonical parent lifecycle");
 }
 
-function currentRunningAttempt(lifecycleId: string): RunningAttempt | null {
+function currentRunningAttempt(
+  lifecycleId: string,
+  options: { requireActiveLease?: boolean } = {},
+): RunningAttempt | null {
+  const requireActiveLease = options.requireActiveLease ?? true;
   const rows = getDb().prepare(`
     SELECT attempt.attempt_id, checkpoint.kernel_checkpoint_id,
            attempt.coordination_dispatch_id, attempt.worker_id,
@@ -237,11 +241,29 @@ function currentRunningAttempt(lifecycleId: string): RunningAttempt | null {
     WHERE attempt.lifecycle_id = :lifecycle_id
       AND attempt.attempt_state = 'running'
       AND checkpoint.next_stage = 'execute'
+      AND (
+        :require_active_lease = 0
+        OR EXISTS (
+          SELECT 1
+          FROM workflow_item_lifecycles lifecycle
+          JOIN milestone_leases lease
+            ON lease.milestone_id = lifecycle.milestone_id
+           AND lease.worker_id = attempt.worker_id
+           AND lease.fencing_token = attempt.milestone_lease_token
+           AND lease.status = 'held'
+           AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE lifecycle.lifecycle_id = attempt.lifecycle_id
+            AND lifecycle.project_id = attempt.project_id
+        )
+      )
       AND NOT EXISTS (
         SELECT 1 FROM workflow_kernel_checkpoints successor
         WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
       )
-  `).all({ ":lifecycle_id": lifecycleId }) as Array<Record<string, unknown>>;
+  `).all({
+    ":lifecycle_id": lifecycleId,
+    ":require_active_lease": requireActiveLease ? 1 : 0,
+  }) as Array<Record<string, unknown>>;
   if (rows.length > 1) throw new Error("Task lifecycle has multiple running Attempts");
   const attempt = rows[0];
   if (!attempt) return null;
@@ -381,7 +403,10 @@ export function cancelTask(input: {
           lifecycleStatus: "cancelled",
           adoptedFromStatus: "pending",
         });
-    const running = currentRunningAttempt(lifecycle.lifecycleId);
+    // Cancellation owns cleanup of abandoned work as well as actively leased
+    // work, so an expired or released lease must not hide the Attempt that
+    // still needs to be settled.
+    const running = currentRunningAttempt(lifecycle.lifecycleId, { requireActiveLease: false });
     let resultId: string | undefined;
     let kernelCheckpointId: string | undefined;
     if (lifecycle.lifecycleStatus === "in_progress") {
