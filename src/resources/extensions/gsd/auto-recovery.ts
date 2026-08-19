@@ -235,31 +235,30 @@ export function refreshRecoveryDbForArtifact(
         message: `Stuck recovery found execute-task ${unitId} artifacts, but its latest canonical Task Attempt has no actionable verify or route Result.`,
       };
     }
-    // #1622: a route-stage Attempt whose agent-owned recovery already aborted is
+    // #1622/#1754: any Attempt whose agent-owned recovery already aborted is
     // NOT recoverable by re-dispatch — the next dispatch breaks instantly with
     // `task-recovery-abort`, orphaning a worktree and leaving auto-mode to
     // silently re-dispatch forever. Fail closed with the operator-actionable
-    // recovery path instead of reporting success.
-    if (readiness === "route") {
-      let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
-      try {
-        terminalAbort = readTerminalTaskRecoveryAbort(mid, sid, tid);
-      } catch (err) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: "execute-task-recovery-route-read-failed",
-          message: `Stuck recovery could not read the canonical Task recovery route for execute-task ${unitId}: ${getErrorMessage(err)}`,
-        };
-      }
-      if (terminalAbort) {
-        return {
-          ok: false,
-          fatal: true,
-          reason: "execute-task-recovery-aborted",
-          message: `Stuck recovery found execute-task ${unitId} artifacts, but its canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}); re-dispatching would break immediately with task-recovery-abort. Resume it with \`gsd_task_recovery_resume\` using recoveryActionId ${terminalAbort.recoveryActionId}, or reconcile the projection drift with \`gsd rebuild markdown\` then \`gsd recover\`.`,
-        };
-      }
+    // recovery path instead of reporting success. A later succeeded Attempt
+    // must not hide a still-operative abort on its predecessor.
+    let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
+    try {
+      terminalAbort = readTerminalTaskRecoveryAbort(mid, sid, tid);
+    } catch (err) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-recovery-route-read-failed",
+        message: `Stuck recovery could not read the canonical Task recovery route for execute-task ${unitId}: ${getErrorMessage(err)}`,
+      };
+    }
+    if (terminalAbort) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-recovery-aborted",
+        message: `Stuck recovery found execute-task ${unitId} artifacts, but its canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}); re-dispatching would break immediately with task-recovery-abort. Resume it with \`gsd_task_recovery_resume\` using recoveryActionId ${terminalAbort.recoveryActionId}, or reconcile the projection drift with \`gsd rebuild markdown\` then \`gsd recover\`.`,
+      };
     }
     // #1622: unlike the plan-slice/complete-milestone branches below, nothing
     // above writes the Task row — this branch only *reads* canonical Attempt
@@ -477,9 +476,14 @@ export function writeBlockerPlaceholder(
   reason: string,
 ): string | null {
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
-  if (!absPath) return null;
-  const dir = dirname(absPath);
+  const canonicalArtifactPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  if (!canonicalArtifactPath) return null;
+  const blockerArtifactPath = unitType === "execute-task"
+    ? canonicalArtifactPath.replace(/-SUMMARY\.md$/u, "-RECOVERY-BLOCKER.md")
+    : canonicalArtifactPath;
+  // A Task blocker must never occupy its canonical completion projection.
+  if (unitType === "execute-task" && blockerArtifactPath === canonicalArtifactPath) return null;
+  const dir = dirname(blockerArtifactPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const recoveryLine = unitType === "research-project"
     ? "This placeholder was written by auto-mode so the project research gate can stop fail-closed."
@@ -494,7 +498,7 @@ export function writeBlockerPlaceholder(
     recoveryLine,
     `Review and replace this file before relying on downstream artifacts.`,
   ].join("\n");
-  atomicWriteSync(absPath, content, "utf-8");
+  atomicWriteSync(blockerArtifactPath, content, "utf-8");
 
   // #4414: Clear caches so subsequent dispatch guards (e.g.
   // resolveMilestoneFile) see the placeholder file. Without this, the

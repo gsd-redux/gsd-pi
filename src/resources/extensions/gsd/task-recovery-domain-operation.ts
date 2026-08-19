@@ -449,7 +449,11 @@ export function readPendingTaskRecoveryContext(
   };
 }
 
-function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAttemptScope {
+function loadRoutedFailureScope(
+  attemptId: string,
+  resultId: string,
+  requireCurrentHead = true,
+): FailedAttemptScope {
   const scope = getDb().prepare(`
     SELECT lifecycle.lifecycle_id, lifecycle.milestone_id, lifecycle.slice_id,
            lifecycle.task_id, attempt.attempt_id, result.result_id,
@@ -474,10 +478,10 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
         (result.outcome = 'succeeded' AND ${CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL})
       )
       AND checkpoint.next_stage = 'route'
-      AND NOT EXISTS (
+      ${requireCurrentHead ? `AND NOT EXISTS (
         SELECT 1 FROM workflow_kernel_checkpoints successor
         WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
-      )
+      )` : ""}
   `).get({ ":attempt_id": attemptId, ":result_id": resultId }) as Record<string, unknown> | undefined;
   if (!scope) throw new Error("Task recovery requires a current execute or verification failure route head");
   return {
@@ -731,11 +735,10 @@ export function readTaskRecoveryResumeEligibility(
   // predates the still-current abort route. Let that durable route be resumed
   // once; ordinary stale or already-consumed actions still fail this guard.
   const supersededResidual = Number(stored["latest_attempt_succeeded"]) === 1
-    && Number(stored["has_route_head"]) === 1
     && Number(stored["already_resumed"]) !== 1;
   if (Number(stored["latest_attempt"]) !== 1 && !supersededResidual) return reject("latest-attempt", "a newer Task Attempt exists");
   if (Number(stored["has_open_blockers"]) === 1) return reject("open-blockers", "Task lifecycle has an open Blocker");
-  if (Number(stored["has_route_head"]) !== 1) return reject("route-head", "Attempt no longer owns the current route Kernel checkpoint");
+  if (Number(stored["has_route_head"]) !== 1 && !supersededResidual) return reject("route-head", "Attempt no longer owns the current route Kernel checkpoint");
   if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
   return { ...base, eligible: true };
 }
@@ -747,7 +750,11 @@ function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScop
       `Task recovery resume rejected by ${eligibility.failedGuard ?? "unknown"} guard: ${eligibility.detail ?? "not eligible"}`,
     );
   }
-  return loadRoutedFailureScope(eligibility.attemptId, eligibility.resultId);
+  return loadRoutedFailureScope(
+    eligibility.attemptId,
+    eligibility.resultId,
+    false,
+  );
 }
 
 function loadTaskRecoveryResumeReceipt(

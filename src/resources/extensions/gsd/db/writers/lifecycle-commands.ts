@@ -345,10 +345,6 @@ export function isTaskRecoveryResumeAuthorized(
      AND kernel.lifecycle_id = attempt.lifecycle_id
      AND kernel.attempt_id = attempt.attempt_id
      AND kernel.next_stage = 'route'
-     AND NOT EXISTS (
-       SELECT 1 FROM workflow_kernel_checkpoints successor
-       WHERE successor.previous_kernel_checkpoint_id = kernel.kernel_checkpoint_id
-     )
     JOIN workflow_work_checkpoints checkpoint
       ON checkpoint.project_id = resumed.project_id
      AND checkpoint.operation_id = resumed.operation_id

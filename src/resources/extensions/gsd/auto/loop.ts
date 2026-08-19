@@ -146,7 +146,10 @@ import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
 } from "../task-recovery-domain-operation.js";
-import { verifyExpectedArtifact } from "../artifact-verification.js";
+import {
+  readTerminalTaskRecoveryAbort,
+  verifyExpectedArtifact,
+} from "../artifact-verification.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -211,6 +214,11 @@ const ORCHESTRATION_MISSING_REASON =
 const TASK_EXECUTION_CUTOVER_DEPS = {
   claimTaskAttempt,
   readLatestTaskAttempt,
+  readTerminalTaskRecoveryAbort: (task: {
+    milestoneId: string;
+    sliceId: string;
+    taskId: string;
+  }) => readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId),
   readTaskAttempt,
   readTaskRecoveryRoute,
   readTaskTechnicalVerdict,
@@ -998,8 +1006,8 @@ export async function autoLoop(
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} after unit break`);
           }
           dispatchSettled = customDispatchSettled;
-          await pauseForTaskRecoveryAbort(breakReason);
           await closeRun("failed", breakReason);
+          await pauseForTaskRecoveryAbort(breakReason);
           finishIncompleteIteration({
             status: "stopped",
             reason: breakReason,

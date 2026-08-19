@@ -422,11 +422,11 @@ test("headless stdio trust fails until persisted interactive approval (#1772)", 
   const config = { ...makeStdioConfig("headless-trust"), env: { CUSTOM_KEY: "placeholder-value" } };
   await assert.rejects(
     _assertTrustedStdioServerForTest(config, { hasUI: false } as any),
-    /project-shared stdio command.*Trust required, run once interactively/s,
+    /project-shared stdio command.*run mcp_discover for "headless-trust" once in an interactive GSD session/s,
   );
   await assert.rejects(
     _assertTrustedStdioServerForTest({ ...config, sourceKind: "project-local" }, { hasUI: false } as any),
-    /project-local stdio command.*Trust required, run once interactively/s,
+    /project-local stdio command.*run mcp_discover for "headless-trust" once in an interactive GSD session/s,
   );
   const harness = createConfirmHarness();
   try {
@@ -444,4 +444,31 @@ test("headless stdio trust fails until persisted interactive approval (#1772)", 
     for (const prompt of harness.prompts) prompt.reject(new Error("test cleanup"));
     await _resetMcpClientStateForTest();
   }
+});
+
+test("stdio trust never prompts in a subagent child (#1772)", async (t) => {
+  const previousSubagentChild = process.env.GSD_SUBAGENT_CHILD;
+  t.after(async () => {
+    if (previousSubagentChild === undefined) delete process.env.GSD_SUBAGENT_CHILD;
+    else process.env.GSD_SUBAGENT_CHILD = previousSubagentChild;
+    await _resetMcpClientStateForTest();
+  });
+  process.env.GSD_SUBAGENT_CHILD = "1";
+  let promptCount = 0;
+  await assert.rejects(
+    _assertTrustedStdioServerForTest({
+      ...makeStdioConfig("untrusted-child"),
+      sourceKind: "project-local",
+    }, {
+      hasUI: true,
+      ui: {
+        confirm: async () => {
+          promptCount += 1;
+          return true;
+        },
+      },
+    } as any),
+    /project-local stdio command.*Trust required/s,
+  );
+  assert.equal(promptCount, 0);
 });

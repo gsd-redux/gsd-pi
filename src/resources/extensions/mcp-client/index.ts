@@ -218,10 +218,10 @@ async function assertTrustedStdioServer(
 		return undefined;
 	}
 
-	if (!ctx?.hasUI) {
+	if (!ctx?.hasUI || process.env.GSD_SUBAGENT_CHILD === "1") {
 		throw new Error(
 			`MCP server "${config.name}" is a ${config.sourceKind} stdio command from ${config.sourcePath}. ` +
-			"Trust required, run once interactively to approve this server before use.",
+			`Trust required; run mcp_discover for "${config.name}" once in an interactive GSD session to approve this server before use.`,
 		);
 	}
 

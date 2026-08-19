@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 import type { DoctorIssue } from "./doctor-types.js";
@@ -34,6 +35,15 @@ import { parseProjectionPlan } from "./schemas/parsers.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { isCanonicalStagedTaskSummaryProjection } from "./task-summary-projection-classification.js";
+import {
+  getWorkflowDatabaseStatus,
+  openExistingWorkflowDatabase,
+  openWorkflowDatabaseIsolated,
+} from "./db-workspace.js";
+import {
+  inspectWorkflowDbLockHolders,
+  terminateDormantWorkflowDbLockHolders,
+} from "./workflow-db-locks.js";
 
 const USER_AUTHORED_ARTIFACT_TYPES = new Set(["CONTEXT", "RESEARCH"]);
 
@@ -499,20 +509,102 @@ export async function checkEngineHealth(
   basePath: string,
   issues: DoctorIssue[],
   fixesApplied: string[],
-  options?: { repair?: boolean },
+  options?: {
+    repair?: boolean;
+    repairDbLock?: boolean;
+    lockRecovery?: {
+      inspectHolders: typeof inspectWorkflowDbLockHolders;
+      terminateHolders: typeof terminateDormantWorkflowDbLockHolders;
+      reopen: typeof openExistingWorkflowDatabase;
+    };
+  },
 ): Promise<void> {
   const dbPath = resolveGsdPathContract(basePath).projectDb;
 
   if (!isDbAvailable() && existsSync(dbPath)) {
-    issues.push({
-      severity: "warning",
-      code: "db_unavailable",
-      scope: "project",
-      unitId: "project",
-      message: "Database unavailable — using filesystem state derivation (degraded mode). State queries may be slower and less reliable.",
-      file: ".gsd/gsd.db",
-      fixable: false,
-    });
+    const status = getWorkflowDatabaseStatus();
+    if (status.lastPhase === "locked") {
+      const readOnly = openWorkflowDatabaseIsolated(dbPath);
+      const staleWorkerStartedAtByPid = new Map<number, number>();
+      if (readOnly) {
+        try {
+          const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
+          const rows = readOnly.prepare(
+            `SELECT pid, started_at FROM workers
+             WHERE host = :host
+               AND status IN ('active', 'stopping')
+               AND last_heartbeat_at < :cutoff`,
+          ).all({ ":host": hostname(), ":cutoff": cutoff });
+          for (const row of rows) {
+            const pid = Number(row["pid"]);
+            const startedAtMs = Date.parse(String(row["started_at"]));
+            if (Number.isSafeInteger(pid) && pid > 0 && Number.isFinite(startedAtMs)) {
+              staleWorkerStartedAtByPid.set(
+                pid,
+                Math.max(staleWorkerStartedAtByPid.get(pid) ?? 0, startedAtMs),
+              );
+            }
+          }
+        } catch {
+          // Older schemas may not have the worker registry; report holders but do not terminate them.
+        }
+      }
+      const readOnlyProbeSucceeded = readOnly !== null;
+      readOnly?.close();
+      const lockRecovery = options?.lockRecovery;
+      const holders = (lockRecovery?.inspectHolders ?? inspectWorkflowDbLockHolders)(dbPath);
+      let repaired = false;
+      let remainingAfterFix: number[] = [];
+      if (options?.repairDbLock && readOnlyProbeSucceeded) {
+        const result = await (lockRecovery?.terminateHolders ?? terminateDormantWorkflowDbLockHolders)(
+          holders,
+          staleWorkerStartedAtByPid,
+        );
+        remainingAfterFix = result.remaining;
+        if (result.signaled.length > 0 && (lockRecovery?.reopen ?? openExistingWorkflowDatabase)(basePath).ok) {
+          fixesApplied.push(`released workflow database lock held by dormant PID(s): ${result.signaled.join(", ")}`);
+          repaired = true;
+        }
+      }
+
+      if (!repaired) {
+        const pids = holders.map((holder) => holder.pid);
+        const killablePids = holders
+          .filter((holder) => holder.sameUser)
+          .map((holder) => holder.pid);
+        const holderDetail = pids.length > 0
+          ? ` Lock-holder PID(s): ${pids.join(", ")}.`
+          : process.platform === "win32"
+            ? " Automatic holder discovery is unavailable on Windows; use Resource Monitor to identify the process using gsd.db."
+            : " No lock-holder PID could be discovered with lsof/fuser.";
+        const killDetail = remainingAfterFix.length > 0
+          ? ` SIGTERM did not stop PID(s) ${remainingAfterFix.join(", ")}; stop them manually: ${remainingAfterFix.map((pid) => `kill ${pid}`).join("; ")}.`
+          : killablePids.length > 0
+            ? ` Stop them manually if active: ${killablePids.map((pid) => `kill ${pid}`).join("; ")}.`
+            : "";
+        issues.push({
+          severity: "error",
+          code: "db_locked",
+          scope: "project",
+          unitId: "project",
+          message:
+            `Workflow database is write-locked by another process; the read-only probe ${readOnlyProbeSucceeded ? "succeeded" : "also failed"}.` +
+            holderDetail + killDetail,
+          file: ".gsd/gsd.db",
+          fixable: process.platform !== "win32",
+        });
+      }
+    } else {
+      issues.push({
+        severity: "warning",
+        code: "db_unavailable",
+        scope: "project",
+        unitId: "project",
+        message: "Database unavailable — using filesystem state derivation (degraded mode). State queries may be slower and less reliable.",
+        file: ".gsd/gsd.db",
+        fixable: false,
+      });
+    }
   }
 
   // ── DB constraint violation detection (full doctor only, not pre-dispatch per D-10) ──
