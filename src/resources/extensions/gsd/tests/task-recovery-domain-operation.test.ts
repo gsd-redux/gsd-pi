@@ -1311,7 +1311,7 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     recentDecisions: [],
     blockers: [],
     nextAction: "Resume recovery",
-    registry: [{ id: "M001", title: "Recovery", status: "active", depends: [] }],
+    registry: [{ id: "M001", title: "Recovery", status: "active", dependsOn: [] }],
   } as GSDState, firstFailure.basePath);
   assert.match(status, new RegExp(`Task recovery: abort ${second.recoveryActionId} — resume eligible`));
 
