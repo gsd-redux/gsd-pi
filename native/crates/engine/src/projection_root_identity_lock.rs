@@ -40,7 +40,7 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
 use std::os::windows::io::IntoRawHandle;
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 use std::path::Path;
 
 #[cfg(unix)]
@@ -1647,7 +1647,7 @@ impl ProjectionRootIdentityLock {
             match fs::symlink_metadata(&path) {
                 Ok(_) => reject_windows_reparse(&path)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(projection_error(error)),
+                Err(error) => return Err(projection_path_error(&path, error)),
             }
             guards.push(open_windows_directory(&path)?);
         }
@@ -1677,7 +1677,7 @@ impl ProjectionRootIdentityLock {
             match fs::symlink_metadata(&path) {
                 Ok(_) => reject_windows_reparse(&path)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-                Err(error) => return Err(projection_error(error)),
+                Err(error) => return Err(projection_path_error(&path, error)),
             }
             if index + 1 < parts.len() {
                 guards.push(open_windows_directory(&path)?);
@@ -1732,7 +1732,7 @@ impl ProjectionRootIdentityLock {
                 Some(file)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(projection_error(error)),
+            Err(error) => return Err(projection_path_error(&target, error)),
         };
         let old_identity = existing
             .as_ref()
@@ -1931,7 +1931,7 @@ fn is_windows_sharing_violation(error: &std::io::Error) -> bool {
 /// exclusively held (share_mode(0)) projection root rejects any by-path re-open
 /// with ERROR_SHARING_VIOLATION (os error 32), and a bare "projection root
 /// operation failed" gives no way to tell which open collided with the hold.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn projection_path_error(path: &Path, error: std::io::Error) -> Error {
     if is_windows_sharing_violation(&error) {
         return projection_error(format!(
@@ -1981,7 +1981,8 @@ fn expected_identity(device: &str, inode: &str) -> Result<(u64, u64)> {
 
 #[cfg(windows)]
 fn reject_windows_reparse(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path).map_err(projection_error)?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| projection_path_error(path, error))?;
     if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(Error::new(
             Status::GenericFailure,
@@ -2140,7 +2141,7 @@ fn open_windows_content_guard(path: &Path) -> Result<File> {
         .share_mode(0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
-        .map_err(projection_error)?;
+        .map_err(|error| projection_path_error(path, error))?;
     if windows_file_information(&file)?.file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(projection_error(
             "projection root contains an unsupported node",
@@ -2285,7 +2286,7 @@ fn restore_windows_quarantined_tree_from_private_claim(
     match fs::create_dir(&claim) {
         Ok(()) => sync_windows_parent(guards, root)?,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(projection_error(error)),
+        Err(error) => return Err(projection_path_error(&claim, error)),
     }
     reject_windows_reparse(&claim)?;
     let claim_handle = open_windows_exclusive_delete_node(&claim)?;
@@ -2345,7 +2346,7 @@ fn restore_windows_quarantined_tree_from_private_claim(
     {
         let changed = payload.join(".gsd-final-publication-fault");
         fs::write(&changed, b"changed at final publication boundary\n")
-            .map_err(projection_error)?;
+            .map_err(|error| projection_path_error(&changed, error))?;
         open_windows_delete_node(&changed)?
             .sync_all()
             .map_err(projection_error)?;
@@ -2380,7 +2381,7 @@ fn open_windows_exclusive_delete_node_if_exists(path: &Path) -> Result<Option<Fi
     match fs::symlink_metadata(path) {
         Ok(_) => open_windows_exclusive_delete_node(path).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(projection_error(error)),
+        Err(error) => Err(projection_path_error(path, error)),
     }
 }
 
@@ -2606,7 +2607,7 @@ fn open_windows_delete_node_if_exists(path: &Path) -> Result<Option<File>> {
     match fs::symlink_metadata(path) {
         Ok(_) => open_windows_delete_node(path).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(projection_error(error)),
+        Err(error) => Err(projection_path_error(path, error)),
     }
 }
 
@@ -2931,10 +2932,13 @@ fn load_or_publish_windows_tree_deletion_manifest(
     let temporary =
         windows_tree_deletion_manifest_temporary_path(root, root_identity, content_digest);
     if committed.exists() {
-        let bytes = fs::read(&committed).map_err(projection_error)?;
+        let bytes =
+            fs::read(&committed).map_err(|error| projection_path_error(&committed, error))?;
         let entries = decode_windows_tree_deletion_manifest(&bytes, root_identity, content_digest)?;
         if prepared.exists() {
-            if fs::read(&prepared).map_err(projection_error)? != bytes {
+            if fs::read(&prepared).map_err(|error| projection_path_error(&prepared, error))?
+                != bytes
+            {
                 return Err(projection_error("projection deletion manifests conflict"));
             }
             delete_windows_handle(open_windows_delete_node(&prepared)?, false)?;
@@ -2943,7 +2947,7 @@ fn load_or_publish_windows_tree_deletion_manifest(
         return Ok(entries);
     }
     if prepared.exists() {
-        let bytes = fs::read(&prepared).map_err(projection_error)?;
+        let bytes = fs::read(&prepared).map_err(|error| projection_path_error(&prepared, error))?;
         let entries = decode_windows_tree_deletion_manifest(&bytes, root_identity, content_digest)?;
         let prepared_handle = open_windows_delete_node(&prepared)?;
         rename_windows_handle(&prepared_handle, &committed, Some(root_handle))?;
@@ -2961,11 +2965,9 @@ fn load_or_publish_windows_tree_deletion_manifest(
         .compare_exchange(14, 0, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok()
     {
-        fs::write(
-            root.join("later-after-consent.md"),
-            b"later accepted work\n",
-        )
-        .map_err(projection_error)?;
+        let later_path = root.join("later-after-consent.md");
+        fs::write(&later_path, b"later accepted work\n")
+            .map_err(|error| projection_path_error(&later_path, error))?;
     }
     if windows_projection_content_digest_open(root, root_handle, true)? != content_digest {
         return Err(projection_error(
@@ -3360,7 +3362,7 @@ fn recover_windows_control_directory(
             for entry in entries {
                 names.push(
                     entry
-                        .map_err(projection_error)?
+                        .map_err(|error| projection_path_error(path, error))?
                         .file_name()
                         .to_string_lossy()
                         .into_owned(),
@@ -3736,7 +3738,9 @@ fn windows_source_has_public_evidence(root: &Path, source: &Path) -> Result<bool
         Err(error) => return Err(projection_path_error(&directory, error)),
     };
     for entry in entries {
-        let path = entry.map_err(projection_error)?.path();
+        let path = entry
+            .map_err(|error| projection_path_error(&directory, error))?
+            .path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
@@ -3744,9 +3748,10 @@ fn windows_source_has_public_evidence(root: &Path, source: &Path) -> Result<bool
             .file_stem()
             .and_then(|value| value.to_str())
             .ok_or_else(|| projection_error("native projection evidence descriptor is invalid"))?;
-        let value: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).map_err(projection_error)?)
-                .map_err(projection_error)?;
+        let value: serde_json::Value = serde_json::from_slice(
+            &fs::read(&path).map_err(|error| projection_path_error(&path, error))?,
+        )
+        .map_err(projection_error)?;
         let field = |key: &str| {
             value
                 .get(key)
@@ -3929,7 +3934,8 @@ fn retain_windows_public_evidence(
     let descriptor_path = descriptor_directory.join(format!("{token}.json"));
     let prepared_path = descriptor_directory.join(format!(".{token}.prepared"));
     if descriptor_path.exists() {
-        let existing = fs::read(&descriptor_path).map_err(projection_error)?;
+        let existing = fs::read(&descriptor_path)
+            .map_err(|error| projection_path_error(&descriptor_path, error))?;
         if existing != descriptor || !evidence_path.exists() {
             return Err(projection_error(
                 "native projection evidence descriptor conflicts",
@@ -3938,7 +3944,8 @@ fn retain_windows_public_evidence(
         return Ok(());
     }
     if prepared_path.exists() {
-        let existing = fs::read(&prepared_path).map_err(projection_error)?;
+        let existing = fs::read(&prepared_path)
+            .map_err(|error| projection_path_error(&prepared_path, error))?;
         if existing != prepared_descriptor && existing != descriptor {
             return Err(projection_error(
                 "native projection evidence descriptor conflicts",
@@ -3979,7 +3986,10 @@ fn publish_windows_retained_descriptor(
     let current_path = directory.join(format!("{token}.json"));
     let directory_handle = open_windows_directory(directory)?;
     let successor = if successor_path.exists() {
-        if fs::read(&successor_path).map_err(projection_error)? != descriptor {
+        if fs::read(&successor_path)
+            .map_err(|error| projection_path_error(&successor_path, error))?
+            != descriptor
+        {
             return Err(projection_error(
                 "native projection evidence descriptor conflicts",
             ));
@@ -3990,7 +4000,9 @@ fn publish_windows_retained_descriptor(
     };
     directory_handle.sync_all().map_err(projection_error)?;
     if current_path.exists() {
-        if fs::read(&current_path).map_err(projection_error)? != descriptor {
+        if fs::read(&current_path).map_err(|error| projection_path_error(&current_path, error))?
+            != descriptor
+        {
             return Err(projection_error(
                 "native projection evidence descriptor conflicts",
             ));
@@ -4212,7 +4224,7 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
     for entry in
         fs::read_dir(&directory).map_err(|error| projection_path_error(&directory, error))?
     {
-        let entry = entry.map_err(projection_error)?;
+        let entry = entry.map_err(|error| projection_path_error(&directory, error))?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(prepared_name) = name.strip_prefix('.') else {
             continue;
@@ -4227,7 +4239,8 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
             };
         let prepared_path = entry.path();
         let value = serde_json::from_slice::<serde_json::Value>(
-            &fs::read(&prepared_path).map_err(projection_error)?,
+            &fs::read(&prepared_path)
+                .map_err(|error| projection_path_error(&prepared_path, error))?,
         )
         .map_err(projection_error)?;
         let field = |key: &str| {
@@ -4291,11 +4304,15 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
             ));
         }
         if retained_successor {
-            let retained = fs::read(&prepared_path).map_err(projection_error)?;
+            let retained = fs::read(&prepared_path)
+                .map_err(|error| projection_path_error(&prepared_path, error))?;
             let prepared = open_windows_delete_node(&prepared_path)?;
             let current_path = directory.join(format!("{token}.json"));
             if current_path.exists() {
-                if fs::read(&current_path).map_err(projection_error)? != retained {
+                if fs::read(&current_path)
+                    .map_err(|error| projection_path_error(&current_path, error))?
+                    != retained
+                {
                     return Err(projection_error(
                         "native projection evidence descriptor conflicts",
                     ));
@@ -4324,8 +4341,10 @@ fn recover_windows_native_evidence_descriptors(root: &Path, root_handle: &File) 
                 evidence_identity,
                 "native projection evidence source identity changed",
             )?;
-            if control_content_digest(&fs::read(&source_path).map_err(projection_error)?)
-                != content_digest
+            if control_content_digest(
+                &fs::read(&source_path)
+                    .map_err(|error| projection_path_error(&source_path, error))?,
+            ) != content_digest
             {
                 return Err(projection_error(
                     "native projection evidence source content changed",
@@ -6375,7 +6394,17 @@ fn rename_relative_between_exclusive(
 
 #[cfg(test)]
 mod sharing_violation_tests {
-    use super::is_windows_sharing_violation;
+    use super::{is_windows_sharing_violation, projection_path_error};
+    use std::path::Path;
+
+    #[cfg(windows)]
+    use super::{open_windows_content_guard, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    #[cfg(windows)]
+    use std::fs::OpenOptions;
+    #[cfg(windows)]
+    use std::os::windows::fs::OpenOptionsExt;
+    #[cfg(windows)]
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn windows_sharing_violation_is_the_only_transient_projection_error() {
@@ -6385,6 +6414,48 @@ mod sharing_violation_tests {
         assert!(!is_windows_sharing_violation(
             &std::io::Error::from_raw_os_error(5)
         ));
+    }
+
+    #[test]
+    fn windows_sharing_violation_names_the_faulting_path_and_holder() {
+        let error = projection_path_error(
+            Path::new(r"C:\repo\.gsd\worktrees\M001"),
+            std::io::Error::from_raw_os_error(32),
+        );
+        let message = error.to_string();
+
+        assert!(message.contains(r"C:\repo\.gsd\worktrees\M001"));
+        assert!(message.contains("another process holds an incompatible handle"));
+        assert!(message.contains("os error 32"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn content_guard_sharing_violation_names_the_faulting_path() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "gsd-projection-content-guard-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("held.txt");
+        std::fs::write(&path, b"held").unwrap();
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(&path)
+            .unwrap();
+
+        let message = open_windows_content_guard(&path).unwrap_err().to_string();
+        assert!(message.contains(path.to_string_lossy().as_ref()));
+        assert!(message.contains("another process holds an incompatible handle"));
+        assert!(message.contains("os error 32"));
+
+        drop(held);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
 
