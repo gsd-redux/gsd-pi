@@ -50,6 +50,7 @@ A small set of call sites legitimately keys on `provider`. These are **not** gat
 - **Model-registry canonical-provider tiebreakers** (`auto-model-selection.ts`). Same canonical model may appear under multiple transports; plain `anthropic` is the tiebreaker.
 - **Default-provider migrations** (`provider-migrations.ts`). Moving persisted settings from the `anthropic` transport to the `claude-code` transport is intentionally provider-id specific.
 - **Display labels / onboarding copy** (`onboarding.ts`). Surface-only, no behavior impact.
+- **Live provider-account catalog state** (`copilot-model-catalog.ts`, `copilot-overlay-writer.ts`, `commands/handlers/copilot-models.ts`). GitHub Copilot's live `/models` sync, its remote-only-model quarantine/registration logic, and the `/gsd copilot-models` command all exist specifically to talk to the `github-copilot` transport's authenticated account state — the check is inherently transport-specific, not API-shape-specific.
 
 These sites are enumerated in the allowlist at `src/tests/provider-equality-allowlist.test.ts`.
 
