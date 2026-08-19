@@ -287,6 +287,101 @@ At startup, models resolve in precedence order (lowest to highest):
 
 This delivers new models, pricing, and context-window updates as they are published, without upgrading GSD itself. The overlay is replaced atomically only after a complete catalog passes validation, so a download, validation, or write failure leaves an existing overlay unchanged. If the overlay is missing or malformed, it is ignored and startup continues with the bundled catalog and `models.json`.
 
+## GitHub Copilot Live Catalog Sync
+
+GitHub Copilot now has a separate live-catalog workflow in addition to `gsd update --models`.
+
+Old workflow:
+
+1. GitHub Copilot exposes or changes a model.
+2. The next published bundled/generated catalog eventually learns about it.
+3. `gsd update --models` or a future GSD release makes it part of the effective local catalog.
+
+New workflow:
+
+1. `/gsd copilot-models sync` fetches the authenticated account's live Copilot `/models` catalog.
+2. The response is normalized into a non-secret local snapshot with last-known-good protection.
+3. `/gsd copilot-models changes`, `pricing`, `promos`, `doctor`, and `why` inspect that accepted snapshot locally.
+4. `/gsd copilot-models sync --register` can add **complete** remote-only GitHub Copilot models to `~/.gsd/agent/models-catalog.json` immediately, without waiting for a published bundled catalog refresh.
+
+This workflow is intentionally extension-first and provider-specific:
+
+- non-Copilot providers do not incur Copilot network traffic;
+- `why`, `changes`, `pricing`, `promos`, and `doctor` do not need a new network request once an accepted snapshot exists;
+- models are never auto-registered from a suspicious or failed sync.
+
+### Effective local catalog precedence
+
+For GitHub Copilot, the effective local catalog still resolves in the same precedence order as every other provider:
+
+1. **Bundled catalog** shipped with the installed GSD version.
+2. **Overlay** from `~/.gsd/agent/models-catalog.json`.
+3. **`models.json`** user overrides and custom models.
+
+That means `/gsd copilot-models sync` is observational by default, while `sync --register` only writes into the same overlay layer that `gsd update --models` already uses. It never edits `models.json`, never rewrites user overrides, and never mutates unrelated providers.
+
+### Complete versus quarantined models
+
+Remote-only Copilot models are classified before any write is attempted.
+
+- **Complete**: the live provider response and existing provider-static compatibility data together prove a usable runtime API/endpoint mapping, tool-call support, context/output limits, and provider-aware token pricing. These models can be registered safely into the local overlay.
+- **Quarantined**: any missing, conflicting, preview-disabled, policy-blocked, or suspicious metadata keeps the model out of the effective local catalog. The model remains visible in `changes`, `doctor`, and `why`, together with its concrete blockers.
+
+Quarantined models are intentionally **not** written as placeholder entries with invented zero pricing, invented limits, or guessed protocols.
+
+### Provider-aware economics precedence
+
+Copilot economics resolve per provider + model identity. The precedence is:
+
+1. explicit user override;
+2. fresh provider-live economics from the accepted Copilot snapshot;
+3. provider-static economics from the current bundled GitHub Copilot catalog entry;
+4. bundled fallback table;
+5. unknown.
+
+`/gsd copilot-models pricing` and `/gsd copilot-models why <model>` show both the resolved value and its source/freshness. Unknown values stay `unknown`; they are never silently rewritten to `$0.0000`.
+
+Request multipliers and promotions are tracked separately from token prices. Promotions are lifecycle metadata, not an instruction to double-discount already-effective live prices.
+
+### Routing-confidence safety
+
+Live Copilot discovery does **not** mean every new model is automatically routed.
+
+- Unprofiled or unknown-confidence models remain manual-only by default.
+- Preview models remain manual-only unless future routing policy explicitly opts into them.
+- Wrong-provider model IDs are rejected locally by `why` before any auth or network path is touched.
+
+`/gsd copilot-models why <model>` reports whether a model is merely visible in the live catalog, present in the effective local catalog, available in the current session, or actually eligible for automatic routing under the current confidence and policy rules.
+
+### Command examples
+
+```bash
+/gsd copilot-models sync
+/gsd copilot-models sync --register
+/gsd copilot-models changes
+/gsd copilot-models pricing
+/gsd copilot-models pricing github-copilot/mai-code-1.1-flash
+/gsd copilot-models promos
+/gsd copilot-models doctor
+/gsd copilot-models why github-copilot/gpt-5.4
+```
+
+### Failure and last-known-good behavior
+
+The live Copilot snapshot is protected by fail-closed rules:
+
+- auth failure, network failure, malformed JSON, or provider errors do not overwrite a known-good snapshot;
+- a suspicious shrink (for example, a known-good catalog collapsing to zero models) is rejected rather than accepted blindly;
+- `doctor` reports whether the accepted snapshot is cached, stale, suspicious, or absent;
+- secrets are never written into the snapshot, overlay, or diagnostics.
+
+### Current limitations
+
+- The live-catalog path is specific to GitHub Copilot; other providers still rely on their own existing catalog/discovery paths.
+- Automatic routing still requires trustworthy GSD capability profiles; live discovery alone is not enough.
+- Quota-aware optimization is not part of the current feature.
+- The longer-term provider-owned live-catalog architecture discussed in the planning docs remains a future direction; the current implementation ships safely within GSD's bundled extension layer.
+
 ## OpenAI Compatibility
 
 For providers with partial OpenAI compatibility, use the `compat` field.
