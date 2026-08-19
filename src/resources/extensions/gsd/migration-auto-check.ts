@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
@@ -29,6 +30,7 @@ export interface MigrationAutoCheckResult {
   afterDb: HierarchyCounts;
   recoveryCommand?: string;
   message?: string;
+  recoveryFingerprint?: string;
 }
 
 interface HierarchyScan {
@@ -88,6 +90,23 @@ function scanHasExtraIdentities(a: HierarchyScan, b: HierarchyScan): boolean {
     hasExtra(a.slices, b.slices) ||
     hasExtra(a.tasks, b.tasks)
   );
+}
+
+function recoveryFingerprint(markdownScan: HierarchyScan, dbScan: HierarchyScan): string {
+  const sorted = (values: ReadonlySet<string>): string[] => [...values].sort();
+  const identities = {
+    markdown: {
+      milestones: sorted(markdownScan.milestones),
+      slices: sorted(markdownScan.slices),
+      tasks: sorted(markdownScan.tasks),
+    },
+    db: {
+      milestones: sorted(dbScan.milestones),
+      slices: sorted(dbScan.slices),
+      tasks: sorted(dbScan.tasks),
+    },
+  };
+  return createHash("sha256").update(JSON.stringify(identities)).digest("hex");
 }
 
 function excludeUnplannedMilestonesFromDbScan(
@@ -305,6 +324,7 @@ export async function checkMarkdownHierarchyAgainstDb(
   // Reserve explicit legacy import for a lost or corrupt DB whose intended
   // source is markdown.
   const dbHasExtra = scanHasExtraIdentities(dbScan, markdownScan);
+  const driftFingerprint = recoveryFingerprint(markdownScan, dbScan);
 
   const countsLine =
     `Markdown planning artifacts (${markdown.milestones}M/${markdown.slices}S/${markdown.tasks}T) ` +
@@ -320,6 +340,7 @@ export async function checkMarkdownHierarchyAgainstDb(
       beforeDb,
       afterDb: beforeDb,
       recoveryCommand: "/gsd rebuild markdown",
+      recoveryFingerprint: driftFingerprint,
       message:
         countsLine +
         "The DB holds rows the markdown lacks, so the markdown projection is stale. " +
@@ -338,6 +359,7 @@ export async function checkMarkdownHierarchyAgainstDb(
     beforeDb,
     afterDb: beforeDb,
     recoveryCommand: "/gsd recover",
+    recoveryFingerprint: driftFingerprint,
     message:
       countsLine +
       "Runtime startup will not import markdown automatically; run `/gsd recover` and approve its exact Preview hash if markdown should repopulate the database.",

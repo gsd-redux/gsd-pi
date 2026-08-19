@@ -148,6 +148,11 @@ export {
 import { logWarning } from "./workflow-logger.js";
 import { deleteRuntimeKv } from "./db/runtime-kv.js";
 import { PAUSED_SESSION_KV_KEY } from "./interrupted-session.js";
+import {
+  clearMarkdownAutoRebuildBackoff,
+  recordMarkdownAutoRebuildFailure,
+  shouldAttemptMarkdownAutoRebuild,
+} from "./markdown-auto-rebuild-backoff.js";
 import { buildWorkflowDispatchContent } from "./workflow-protocol.js";
 import { isFullGsdToolSurfaceRequested, restoreGsdWorkflowTools, scopeGsdWorkflowToolsForDispatch } from "./bootstrap/register-hooks.js";
 import {
@@ -2054,41 +2059,55 @@ export async function showSmartEntry(
       const result = await checkMarkdownHierarchyAgainstDb(basePath);
       if (result.action === "recovery-required") {
         if (result.recoveryCommand === "/gsd rebuild markdown") {
-          try {
-            const { rebuildMarkdownProjectionsFromDb } = await import("./commands-maintenance.js");
-            const rebuild = await rebuildMarkdownProjectionsFromDb(basePath);
-            const after = await checkMarkdownHierarchyAgainstDb(basePath);
-            if (after.action === "none") {
+          if (shouldAttemptMarkdownAutoRebuild(result)) {
+            try {
+              const { rebuildMarkdownProjectionsFromDb } = await import("./commands-maintenance.js");
+              const rebuild = await rebuildMarkdownProjectionsFromDb(basePath);
+              const after = await checkMarkdownHierarchyAgainstDb(basePath);
+              if (after.action === "none") {
+                clearMarkdownAutoRebuildBackoff();
+                ctx.ui.notify(
+                  `Self-heal: rebuilt markdown projections from the authoritative DB ` +
+                    `(${rebuild.rendered} rendered${rebuild.errors.length > 0 ? `, ${rebuild.errors.length} error(s)` : ""}).`,
+                  rebuild.errors.length > 0 ? "warning" : "info",
+                );
+              } else {
+                if (after.recoveryCommand === "/gsd rebuild markdown") {
+                  recordMarkdownAutoRebuildFailure(after);
+                } else {
+                  clearMarkdownAutoRebuildBackoff();
+                }
+                ctx.ui.notify(
+                  (after.message ?? "Markdown planning artifacts still diverge from the DB after auto-rebuild.") +
+                    (rebuild.errors.length > 0
+                      ? `\nAuto-rebuild had ${rebuild.errors.length} projection error(s).`
+                      : "") +
+                    "\nAutomatic rebuild is paused until this drift changes. Run `/gsd rebuild markdown` after review.",
+                  "warning",
+                );
+              }
+            } catch (rebuildErr) {
+              const rebuildMessage = rebuildErr instanceof Error ? rebuildErr.message : String(rebuildErr);
+              logWarning("guided", `markdown auto-rebuild failed: ${rebuildMessage}`, { file: "guided-flow.ts" });
+              recordMarkdownAutoRebuildFailure(result);
               ctx.ui.notify(
-                `Self-heal: rebuilt markdown projections from the authoritative DB ` +
-                  `(${rebuild.rendered} rendered${rebuild.errors.length > 0 ? `, ${rebuild.errors.length} error(s)` : ""}).`,
-                rebuild.errors.length > 0 ? "warning" : "info",
-              );
-            } else {
-              ctx.ui.notify(
-                (result.message ?? "Markdown planning artifacts still diverge from the DB after auto-rebuild.") +
-                  (rebuild.errors.length > 0
-                    ? `\nAuto-rebuild had ${rebuild.errors.length} projection error(s). Run \`/gsd rebuild markdown\` after review.`
-                    : ""),
+                (result.message ??
+                  `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd rebuild markdown"}\` to re-project from the DB.`) +
+                  "\nAutomatic rebuild is paused until this drift changes.",
                 "warning",
               );
             }
-          } catch (rebuildErr) {
-            const rebuildMessage = rebuildErr instanceof Error ? rebuildErr.message : String(rebuildErr);
-            logWarning("guided", `markdown auto-rebuild failed: ${rebuildMessage}`, { file: "guided-flow.ts" });
-            ctx.ui.notify(
-              result.message ??
-                `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd rebuild markdown"}\` to re-project from the DB.`,
-              "warning",
-            );
           }
         } else {
+          clearMarkdownAutoRebuildBackoff();
           ctx.ui.notify(
             result.message ??
               `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd recover"}\` to preview an explicit markdown import.`,
             "warning",
           );
         }
+      } else {
+        clearMarkdownAutoRebuildBackoff();
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
