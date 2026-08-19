@@ -43,6 +43,7 @@ import { crashResumeHint } from "./guidance.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { effectiveLockFile } from "./session-lock.js";
 import { isInFlightRuntimePhase, listUnitRuntimeRecords, type AutoUnitRuntimeRecord } from "./unit-runtime.js";
+import { settleRunningAttemptsForWorker } from "./task-execution-domain-operation.js";
 
 export interface LockData {
   pid: number;
@@ -273,8 +274,12 @@ export function clearStaleWorkerLock(basePath: string): void {
     if (!worker) return;
     markActiveForWorkerCanceled(worker.worker_id, "crash-recovered");
     markWorkerStopping(worker.worker_id);
-    forceReleaseLeasesForWorker(worker.worker_id);
-    deleteRuntimeKv("worker", worker.worker_id, SESSION_FILE_KV_KEY);
+    try {
+      settleRunningAttemptsForWorker(worker.worker_id);
+    } finally {
+      forceReleaseLeasesForWorker(worker.worker_id);
+      deleteRuntimeKv("worker", worker.worker_id, SESSION_FILE_KV_KEY);
+    }
   } catch {
     // Best-effort.
   }

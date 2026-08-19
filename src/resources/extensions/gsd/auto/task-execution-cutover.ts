@@ -185,42 +185,16 @@ function interruptStaleAttempt(
     // session; this stale session must not settle it, only refuse.
     throw new Error("execute-task cannot replace an active running Attempt without a newer milestone lease");
   }
-  if (identity.milestoneLeaseToken === predecessor.milestoneLeaseToken) {
-    // Settle-before-throw (#1740): same-session re-dispatch must never strand
-    // the running Attempt. A strictly newer replacement lease would use the
-    // fenced attempt.interrupt path below, but an equal token cannot — so this
-    // settles through a plain attempt.settle, which the same-session worker's
-    // own held lease authorizes (V47 dispatch-scope trigger). The throw lands
-    // in runWithTaskExecutionAttempt's settlement-guaranteeing catch, which
-    // routes the interrupted Result through durable recovery.
-    const summary = "execute-task cannot replace an active running Attempt without a newer milestone lease";
-    deps.settleTaskAttempt({
-      invocation: internalExecutionInvocation(
-        `internal:auto:attempt.settle:${predecessor.attemptId}:lease-guard`,
-        { actorId: identity.workerId },
-      ),
-      attemptId: predecessor.attemptId,
-      outcome: "interrupted",
-      failureClass: "stale-worker",
-      summary,
-      output: {
-        unitType: input.unitType,
-        unitId: input.unitId,
-        staleDispatchId: predecessor.coordinationDispatchId,
-        staleWorkerId: predecessor.workerId,
-        staleMilestoneLeaseToken: predecessor.milestoneLeaseToken,
-        rejectedDispatchId: identity.dispatchId,
-        rejectedWorkerId: identity.workerId,
-        rejectedMilestoneLeaseToken: identity.milestoneLeaseToken,
-      },
-    });
-    throw new Error(summary);
-  }
-  const summary = "Replaced stale Task Attempt after milestone lease takeover";
+  const sameSession = identity.milestoneLeaseToken === predecessor.milestoneLeaseToken;
+  const summary = sameSession
+    ? "Replaced stale Task Attempt during same-session re-dispatch"
+    : "Replaced stale Task Attempt after milestone lease takeover";
   const recovery = taskRecoveryClassification(input, "stale-worker", new Error(summary));
   const settlement = deps.settleTaskAttempt({
     invocation: internalExecutionInvocation(
-      `internal:auto:attempt.interrupt:${predecessor.attemptId}:${identity.workerId}:${identity.milestoneLeaseToken}`,
+      sameSession
+        ? `internal:auto:attempt.settle:${predecessor.attemptId}:same-session`
+        : `internal:auto:attempt.interrupt:${predecessor.attemptId}:${identity.workerId}:${identity.milestoneLeaseToken}`,
       { actorId: identity.workerId },
     ),
     attemptId: predecessor.attemptId,
@@ -242,10 +216,14 @@ function interruptStaleAttempt(
         rationale: recovery.rationale,
       },
     },
-    recovery: {
-      workerId: identity.workerId,
-      milestoneLeaseToken: identity.milestoneLeaseToken,
-    },
+    ...(sameSession
+      ? {}
+      : {
+          recovery: {
+            workerId: identity.workerId,
+            milestoneLeaseToken: identity.milestoneLeaseToken,
+          },
+        }),
   });
   return routeTaskFailure(
     input,
@@ -534,13 +512,12 @@ export async function runWithTaskExecutionAttempt(
     result = await run();
   } catch (error) {
     const summary = error instanceof Error ? error.message : String(error);
-    // Settlement guarantee (#1740): the stale-attempt guard settles the running
-    // predecessor before it throws, so when no replacement claim exists yet the
-    // catch owes that predecessor its durable failure route; otherwise the just
-    // claimed Attempt is settled as before. Failures with no running Attempt to
-    // settle (identity parsing, claim rejection) keep propagating untouched.
+    // Once an Attempt is claimed, every executor failure must settle it before
+    // returning. Failures before a claim exists keep propagating untouched.
     const attemptId = claim?.attemptId
-      ?? (predecessor?.state === "running" ? predecessor.attemptId : undefined);
+      ?? (predecessor?.state === "running" && isClaimReplay(predecessor, identity)
+        ? predecessor.attemptId
+        : undefined);
     if (!attemptId) throw error;
     return applyRecoveryDecision(
       settleRunningAttempt(input, attemptId, "executor-error", summary, deps, error),
