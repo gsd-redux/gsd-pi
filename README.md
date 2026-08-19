@@ -28,16 +28,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for release-by-release fixes and [Legacy Rele
 ## Latest Release Highlights
 
 <!-- release-highlights:start -->
-Latest release: **v1.15.0**
+Latest release: **v1.16.0**
 
-- **model-router:** Add claude-sonnet-5 to model capability registries.
-- **tools:** Add gsd_requirement_list/get and gsd_decision_list/get (#1608).
-- **pi-ai:** Add missing kimi-coding subscription models to catalog.
-- **pi-ai:** Add Kimi Code (subscription) OAuth provider.
-- **ci:** Retrigger PR checks.
-- **gsd:** Deepen projection delivery ownership.
-- **gsd:** Own slice companion gate lifecycle.
-- **gsd:** Register required schema features once.
+- **gsd:** Verify-after-write receipts for save-tool units (#1802).
+- **gsd:** Settle orphaned task attempts and add gsd_task_settle operator tool (#1777).
+- **gsd:** Collapse auto-mode onto the unit_dispatches UnitRun (ADR-048).
+- **pi-ai:** Add MAI Code 1.1 Flash routing.
+- **models:** Add Claude Opus 5 across catalogs and registries.
+- **gsd:** Delete leftover filesystem-state read path.
+- **gsd:** Remove unused MEDIUM files and package deps (#1760).
+- **gsd:** Drop unused root packaging hoists and @types/picomatch (#1767).
 
 <!-- release-highlights:end -->
 

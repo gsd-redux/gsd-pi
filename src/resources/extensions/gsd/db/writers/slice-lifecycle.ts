@@ -208,6 +208,15 @@ function runningAttempt(lifecycleId: string): RunningAttempt | null {
     SELECT attempt.attempt_id, attempt.coordination_dispatch_id,
            attempt.worker_id, attempt.milestone_lease_token
     FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    JOIN milestone_leases lease
+      ON lease.milestone_id = lifecycle.milestone_id
+     AND lease.worker_id = attempt.worker_id
+     AND lease.fencing_token = attempt.milestone_lease_token
+     AND lease.status = 'held'
+     AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE attempt.lifecycle_id = :lifecycle_id
       AND attempt.attempt_state = 'running'
   `).all({ ":lifecycle_id": lifecycleId }) as Array<Record<string, unknown>>;
@@ -355,11 +364,6 @@ function currentCompletionProof(lifecycleId: string, taskId: string): SliceCompl
     WHERE lifecycle.lifecycle_id = :lifecycle_id
       AND lifecycle.item_kind = 'task'
       AND lifecycle.lifecycle_status = 'completed'
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_execution_attempts running
-        WHERE running.lifecycle_id = lifecycle.lifecycle_id
-          AND running.attempt_state = 'running'
-      )
   `).get({ ":lifecycle_id": lifecycleId }) as Record<string, unknown> | undefined;
   if (!proof) return null;
   return {
