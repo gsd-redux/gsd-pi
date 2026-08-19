@@ -3,9 +3,21 @@
 // Discovery order (D003): task plan verify → preference → package.json scripts.
 // First non-empty source wins.
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  type Dirent,
+} from "node:fs";
 import { join, basename, delimiter } from "node:path";
+import { tmpdir } from "node:os";
 import type { AuditWarning, RuntimeError, VerificationCheck, VerificationResult } from "./types.js";
 import { DEFAULT_COMMAND_TIMEOUT_MS } from "./constants.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
@@ -27,6 +39,26 @@ function truncate(value: string | null | undefined, maxBytes: number): string {
   // Slice conservatively then trim to last full character
   const buf = Buffer.from(value, "utf-8").subarray(0, maxBytes);
   return buf.toString("utf-8") + "\n…[truncated]";
+}
+
+function readBoundedCommandOutput(path: string): string {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= MAX_OUTPUT_BYTES) return readFileSync(path, "utf-8");
+
+    const marker = Buffer.from("\n…[truncated]\n", "utf-8");
+    const retainedBytes = MAX_OUTPUT_BYTES - marker.byteLength;
+    const headBytes = Math.floor(retainedBytes / 2);
+    const tailBytes = retainedBytes - headBytes;
+    const head = Buffer.allocUnsafe(headBytes);
+    const tail = Buffer.allocUnsafe(tailBytes);
+    readSync(fd, head, 0, headBytes, 0);
+    readSync(fd, tail, 0, tailBytes, size - tailBytes);
+    return Buffer.concat([head, marker, tail]).toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // ─── Command Discovery ──────────────────────────────────────────────────────
@@ -724,7 +756,7 @@ function mergeDiscoverySource(
 }
 
 function isSpawnTimeout(
-  result: SpawnSyncReturns<string>,
+  result: { signal: NodeJS.Signals | null },
   error: NodeJS.ErrnoException & { killed?: boolean },
 ): boolean {
   if (error.code === "ETIMEDOUT") return true;
@@ -780,13 +812,28 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
           "verification-gate",
           rewrittenCommand,
         ];
-    const result: SpawnSyncReturns<string> = spawnSync(shellBin, shellArgs, {
-      cwd: options.cwd,
-      env: verificationChildEnvironment(options.cwd),
-      stdio: "pipe",
-      encoding: "utf-8",
-      timeout: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
-    });
+    const outputDir = mkdtempSync(join(tmpdir(), "gsd-verification-"));
+    const stdoutPath = join(outputDir, "stdout");
+    const stderrPath = join(outputDir, "stderr");
+    const stdoutFd = openSync(stdoutPath, "w");
+    const stderrFd = openSync(stderrPath, "w");
+    let result: ReturnType<typeof spawnSync>;
+    let stdout: string;
+    let capturedStderr: string;
+    try {
+      result = spawnSync(shellBin, shellArgs, {
+        cwd: options.cwd,
+        env: verificationChildEnvironment(options.cwd),
+        stdio: ["ignore", stdoutFd, stderrFd],
+        timeout: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+      });
+      stdout = readBoundedCommandOutput(stdoutPath);
+      capturedStderr = readBoundedCommandOutput(stderrPath);
+    } finally {
+      closeSync(stdoutFd);
+      closeSync(stderrFd);
+      rmSync(outputDir, { recursive: true, force: true });
+    }
     const durationMs = Date.now() - start;
 
     let exitCode: number;
@@ -800,26 +847,26 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
         exitCode = 124;
         failureClass = "timeout";
         stderr = truncate(
-          `${result.stderr || ""}\ntimed out after ${limitMs}ms. Raise verification_timeout_ms if this command is expected to run longer.`.trim(),
+          `${capturedStderr}\ntimed out after ${limitMs}ms. Raise verification_timeout_ms if this command is expected to run longer.`.trim(),
           MAX_OUTPUT_BYTES,
         );
       } else if (isCommandNotFound(spawnError)) {
         exitCode = 127;
         stderr = truncate(
-          (result.stderr || "") + "\n" + spawnError.message,
+          capturedStderr + "\n" + spawnError.message,
           MAX_OUTPUT_BYTES,
         );
       } else {
         exitCode = result.status ?? 1;
         stderr = truncate(
-          (result.stderr || "") + "\n" + spawnError.message,
+          capturedStderr + "\n" + spawnError.message,
           MAX_OUTPUT_BYTES,
         );
       }
     } else {
       // status is null when killed by signal — treat as failure
       exitCode = result.status ?? 1;
-      stderr = truncate(result.stderr, MAX_OUTPUT_BYTES);
+      stderr = capturedStderr;
     }
 
     const warning = countSearchWarning(command, exitCode);
@@ -827,7 +874,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
     checks.push({
       command,
       exitCode,
-      stdout: truncate(result.stdout, MAX_OUTPUT_BYTES),
+      stdout,
       stderr: truncate(appendStderrWarning(stderr, warning), MAX_OUTPUT_BYTES),
       durationMs,
       ...(failureClass ? { failureClass } : {}),

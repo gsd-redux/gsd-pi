@@ -762,6 +762,26 @@ describe("verification-gate: execution", () => {
     assert.ok(result.checks[2].stdout.includes("third"));
   });
 
+  test("large failure output preserves the exit code and trailing test summary", () => {
+    const scriptPath = join(tmp, "large-failure.cjs");
+    writeFileSync(scriptPath, [
+      'process.stdout.write("failure details\\n");',
+      'process.stdout.write("x".repeat(2 * 1024 * 1024));',
+      'process.stdout.write("\\n=== short test summary info ===\\nFAILED tests/test_example.py::test_failure\\n");',
+      "process.exitCode = 1;",
+    ].join("\n"));
+
+    const result = withRtkDisabled(() => runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: [`${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)}`],
+    }));
+
+    assert.equal(result.passed, false);
+    assert.equal(result.checks[0].exitCode, 1);
+    assert.match(result.checks[0].stdout, /FAILED tests\/test_example\.py::test_failure/);
+    assert.doesNotMatch(result.checks[0].stderr, /ENOBUFS/);
+  });
+
 test("gate execution uses cwd for spawnSync", () => {
     // pwd should report the temp dir
     const result = runVerificationGate({
