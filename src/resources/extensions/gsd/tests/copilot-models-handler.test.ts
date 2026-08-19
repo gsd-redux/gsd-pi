@@ -710,6 +710,23 @@ test("handleCopilotModels: changes reports the last accepted diff without anothe
   assert.match(notifications[2].message, /github-copilot\/mai-code-1\.1-flash/);
 });
 
+test("handleCopilotModels: pricing rejects non-GitHub-Copilot provider-qualified model IDs before touching auth", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  let apiKeyCalled = false;
+  ctx.modelRegistry.getApiKey = async () => { apiKeyCalled = true; return "token-abc"; };
+
+  await handleCopilotModels("pricing anthropic/claude-sonnet-5", ctx, {});
+
+  assert.equal(apiKeyCalled, false, "wrong-provider pricing requests must be rejected before resolving auth");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /github copilot.*anthropic|only accepts github-copilot|wrong provider/i);
+});
+
 test("handleCopilotModels: pricing explains provider-aware economics locally", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({

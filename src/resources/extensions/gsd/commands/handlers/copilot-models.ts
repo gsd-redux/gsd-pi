@@ -758,13 +758,14 @@ export async function handleCopilotModels(
   }
 
   if (command === "pricing") {
-    const current = await resolveCurrentAccountView(ctx);
-    const currentSnapshot = current.state?.lastKnownGoodSnapshot ?? null;
     const parsed = parseProviderModelArgument("pricing", args, false);
     if (!parsed.valid) {
       ctx.ui.notify(parsed.error ?? "Usage: /gsd copilot-models pricing <model>", "warning");
       return;
     }
+
+    const current = await resolveCurrentAccountView(ctx);
+    const currentSnapshot = current.state?.lastKnownGoodSnapshot ?? null;
 
     if (parsed.target) {
       const bareId = parsed.target;
