@@ -15,6 +15,7 @@ import {
   handleCopilotModels,
 } from "../commands/handlers/copilot-models.js";
 import { readModelsCatalogOverlay } from "../copilot-overlay-writer.js";
+import { getGsdArgumentCompletions } from "../commands/catalog.js";
 
 interface FakeModel {
   id: string;
@@ -201,32 +202,69 @@ test("handleCopilotModels: failure with no cached catalog yet reports clearly", 
   assert.match(notifications[0].message, /no cached catalog yet/);
 });
 
-test("handleCopilotModels: why <model> is local-first and never touches auth or network", async () => {
-  _resetCopilotModelsSessionStateForTests();
-  const { ctx, notifications } = createFakeCtx({
-    models: [],
-    apiKey: undefined,
-  });
+// ─── why <model>: strict parsing, registry analysis, routing eligibility ────
 
+test("handleCopilotModels: why with no model argument reports usage and never touches auth or network", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
   let fetchCalled = false;
   let apiKeyCalled = false;
-  ctx.modelRegistry.getApiKey = async () => {
-    apiKeyCalled = true;
-    return "token-abc";
-  };
+  ctx.modelRegistry.getApiKey = async () => { apiKeyCalled = true; return "token-abc"; };
 
-  await handleCopilotModels("why gpt-5.4", ctx, {
-    fetchImpl: (async () => {
-      fetchCalled = true;
-      return jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }])() as unknown as Response;
-    }) as unknown as typeof fetch,
+  await handleCopilotModels("why", ctx, {
+    fetchImpl: (async () => { fetchCalled = true; throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("why   ", ctx, {
+    fetchImpl: (async () => { fetchCalled = true; throw new Error("must not be called"); }) as unknown as typeof fetch,
   });
 
-  assert.equal(fetchCalled, false, "why must never call the network");
-  assert.equal(apiKeyCalled, false, "why must never resolve a Copilot token");
-  assert.equal(notifications.length, 1);
-  assert.match(notifications[0].message, /gpt-5\.4/i);
-  assert.match(notifications[0].message, /pricing|tier|profile|manual selection|automatic routing/i);
+  assert.equal(fetchCalled, false);
+  assert.equal(apiKeyCalled, false);
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[0].message, "Usage: /gsd copilot-models why <model>");
+  assert.equal(notifications[0].level, "warning");
+  assert.equal(notifications[1].message, "Usage: /gsd copilot-models why <model>");
+});
+
+test("handleCopilotModels: 'whywhatever' and 'why-gpt-5.4' are not recognized as the why command", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
+
+  await handleCopilotModels("whywhatever", ctx, {});
+  await handleCopilotModels("why-gpt-5.4", ctx, {});
+
+  // Both fall through to the normal sync path (no configured Copilot model
+  // here), proving neither string was strictly parsed as "why".
+  assert.equal(notifications.length, 2);
+  assert.match(notifications[0].message, /not configured/);
+  assert.match(notifications[1].message, /not configured/);
+});
+
+test("handleCopilotModels: why accepts a bare Copilot model ID", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {
+    fetchImpl: (async () => { throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+
+  assert.match(notifications[0].message, /^GitHub Copilot: why github-copilot\/gpt-5\.4$/m);
+  assert.match(notifications[0].message, /^- identity: github-copilot\/gpt-5\.4$/m);
+});
+
+test("handleCopilotModels: why accepts a provider-qualified Copilot model ID", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("why github-copilot/gpt-5.4", ctx, {});
+
+  assert.match(notifications[0].message, /^- identity: github-copilot\/gpt-5\.4$/m);
 });
 
 test("handleCopilotModels: why rejects non-GitHub-Copilot provider-qualified model IDs", async () => {
@@ -247,6 +285,257 @@ test("handleCopilotModels: why rejects non-GitHub-Copilot provider-qualified mod
   assert.equal(fetchCalled, false, "wrong-provider why requests must not trigger fetches");
   assert.equal(notifications.length, 1);
   assert.match(notifications[0].message, /github copilot.*anthropic|only accepts github-copilot|wrong provider/i);
+});
+
+test("handleCopilotModels: why never matches a bare ID that only exists under a different provider", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "claude-sonnet-5", provider: "anthropic" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why claude-sonnet-5", ctx, {});
+
+  assert.match(notifications[0].message, /^- effective local: no$/m);
+  assert.match(notifications[0].message, /^- session available: no$/m);
+  assert.match(notifications[0].message, /^- last known live catalog: unknown$/m);
+});
+
+test("handleCopilotModels: why reports effective-local and session-available as yes when both hold", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[0].message, /^- effective local: yes$/m);
+  assert.match(notifications[0].message, /^- session available: yes$/m);
+});
+
+test("handleCopilotModels: why reports session-available as no when the model is local but not session-ready", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+  ctx.modelRegistry.getAvailable = () => [];
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[0].message, /^- effective local: yes$/m);
+  assert.match(notifications[0].message, /^- session available: no$/m);
+  assert.match(notifications[0].message, /^- automatic routing eligible: no$/m);
+  assert.match(notifications[0].message, /^- reason: unavailable in this session$/m);
+});
+
+test("handleCopilotModels: why flags a remote-only snapshot model as quarantined and non-routable", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  // Establish a live snapshot that includes a model absent from the local registry.
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "remote-only-model", name: "Remote Only Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why remote-only-model", ctx, {
+    fetchImpl: (async () => { throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+
+  const explanation = notifications[notifications.length - 1].message;
+  assert.match(explanation, /^- effective local: no$/m);
+  assert.match(explanation, /^- last known live catalog: yes$/m);
+  assert.match(explanation, /^- automatic routing eligible: no$/m);
+  assert.match(explanation, /^- reason: remote-only and quarantined$/m);
+});
+
+test("handleCopilotModels: why reports last known live catalog as yes when the snapshot contains the model", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[1].message, /^- last known live catalog: yes$/m);
+});
+
+test("handleCopilotModels: why reports last known live catalog as no when the snapshot exists but omits the model", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("why totally-different-model", ctx, {});
+
+  assert.match(notifications[1].message, /^- last known live catalog: no$/m);
+});
+
+test("handleCopilotModels: why reports last known live catalog as unknown when no snapshot exists yet", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[0].message, /^- last known live catalog: unknown$/m);
+});
+
+test("handleCopilotModels: why marks an unknown capability tier/confidence as not routing-eligible", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "totally-custom-model-x", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why totally-custom-model-x", ctx, {});
+
+  assert.match(notifications[0].message, /^- capability tier: unknown$/m);
+  assert.match(notifications[0].message, /^- profile confidence: unknown$/m);
+  assert.match(notifications[0].message, /^- automatic routing eligible: no$/m);
+  assert.match(notifications[0].message, /^- reason: capability profile unknown$/m);
+});
+
+test("handleCopilotModels: why reports known economics with source and freshness", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "mai-code-1.1-flash", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why mai-code-1.1-flash", ctx, {});
+
+  assert.match(notifications[0].message, /^- economics: \$0\.0002 per 1K input \/ \$0\.0012 per 1K output$/m);
+  assert.match(notifications[0].message, /^- source: bundled-fallback$/m);
+  assert.match(notifications[0].message, /^- freshness: stale$/m);
+});
+
+test("handleCopilotModels: why reports unknown economics without a synthetic zero placeholder", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "totally-custom-model-x", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why totally-custom-model-x", ctx, {});
+
+  assert.match(notifications[0].message, /^- economics: unknown$/m);
+  assert.match(notifications[0].message, /^- source: unknown$/m);
+  assert.match(notifications[0].message, /^- freshness: unknown$/m);
+  assert.doesNotMatch(notifications[0].message, /\$0\.0000/);
+  assert.doesNotMatch(notifications[0].message, /\bstandard\b/);
+});
+
+test("handleCopilotModels: why succeeds even when getApiKey() throws", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+  ctx.modelRegistry.getApiKey = async () => { throw new Error("token resolution boom"); };
+
+  await assert.doesNotReject(handleCopilotModels("why gpt-5.4", ctx, {}));
+  assert.match(notifications[0].message, /^GitHub Copilot: why github-copilot\/gpt-5\.4$/m);
+});
+
+test("handleCopilotModels: why succeeds even when fetchImpl throws", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await assert.doesNotReject(handleCopilotModels("why gpt-5.4", ctx, {
+    fetchImpl: (async () => { throw new Error("network boom"); }) as unknown as typeof fetch,
+  }));
+  assert.match(notifications[0].message, /^GitHub Copilot: why github-copilot\/gpt-5\.4$/m);
+});
+
+test("handleCopilotModels: why never writes to the models-catalog.json overlay", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-why-overlay-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, { overlayPath });
+
+  assert.equal(readModelsCatalogOverlay(overlayPath), null, "why must never write the overlay");
+});
+
+test("handleCopilotModels: why output never includes a token or API key", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.doesNotMatch(notifications[0].message, /token-abc/);
+});
+
+test("handleCopilotModels: sync still works unaffected by the stricter why parser", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+
+  assert.equal(notifications[0].level, "info");
+  assert.match(notifications[0].message, /1 model\(s\) available/);
+});
+
+test("handleCopilotModels: --register quarantine still works unaffected by the stricter why parser", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-register-still-works-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+  await handleCopilotModels("--register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "another-remote-model", name: "Another Remote Model", tool_call: true },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  assert.equal(readModelsCatalogOverlay(overlayPath), null);
+  assert.match(notifications[1].message, /quarantined|remote-only|not persisted/i);
 });
 
 test("handleCopilotModels: newly added model with a known GSD capability tier is annotated", async () => {
@@ -395,4 +684,12 @@ test("handleCopilotModels: --register keeps remote-only models quarantined and n
 
   assert.equal(readModelsCatalogOverlay(overlayPath), null, "no placeholder metadata may be persisted for remote-only models");
   assert.match(notifications[1].message, /quarantined.*brand-new-model|remote-only.*quarantined|not persisted/i);
+});
+
+test("getGsdArgumentCompletions: /gsd copilot-models completions include why <model>", () => {
+  const completions = getGsdArgumentCompletions("copilot-models ");
+  assert.ok(
+    completions.some((entry) => entry.label === "why <model>"),
+    "completion list must include the why <model> subcommand",
+  );
 });

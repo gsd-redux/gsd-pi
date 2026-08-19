@@ -53,7 +53,7 @@ import {
   registerCopilotModelsInOverlay,
   resolveGsdModelsCatalogPath,
 } from "../../copilot-overlay-writer.js";
-import { resolveModelEconomics } from "../../model-cost-table.js";
+import { lookupModelCost, resolveModelEconomics } from "../../model-cost-table.js";
 // Read-only cross-reference against the existing static capability-tier
 // table (MODEL_CAPABILITY_TIER, defined in model-router.ts and consumed by
 // the dynamic-routing decisions in that same file). This never assigns or
@@ -109,10 +109,14 @@ function hasRegisterFlag(args: string): boolean {
   return args.split(/\s+/).includes("--register");
 }
 
+// Strict parser: only an exact "why" first token is ever recognized as the
+// why route ("whywhatever", "why-gpt-5.4" fall through to the normal sync
+// path unchanged — see tests for the word-boundary regression this fixes).
 function normalizeCommandArgs(args: string): string {
   const trimmed = (args ?? "").trim();
-  if (!trimmed || trimmed === "sync" || trimmed === "changes") return "sync";
-  if (trimmed.startsWith("why")) return "why";
+  if (!trimmed) return "sync";
+  const firstToken = trimmed.split(/\s+/)[0] ?? "";
+  if (firstToken === "why") return "why";
   return "sync";
 }
 
@@ -122,18 +126,35 @@ function normalizeBareModelId(modelId: string): string {
   return trimmed.includes("/") ? trimmed.split("/").pop() ?? trimmed : trimmed;
 }
 
-function parseWhyArgument(args: string): { target: string; valid: boolean; error?: string } {
+interface ParsedWhyArgument {
+  target: string;
+  valid: boolean;
+  kind?: "usage" | "wrong-provider";
+  error?: string;
+}
+
+function parseWhyArgument(args: string): ParsedWhyArgument {
   const trimmed = (args ?? "").trim();
-  const rawTarget = trimmed.replace(/^why\s+/i, "").trim();
-  if (!rawTarget) {
-    return { target: "", valid: false, error: "No model ID was provided for /gsd copilot-models why." };
+  // normalizeCommandArgs already guarantees the first token here is "why".
+  const rest = trimmed.slice("why".length).trim();
+  if (!rest) {
+    return {
+      target: "",
+      valid: false,
+      kind: "usage",
+      error: "Usage: /gsd copilot-models why <model>",
+    };
   }
 
+  // Only the first token is the model ID; anything after it is ignored
+  // rather than folded into a bogus multi-word model identifier.
+  const rawTarget = rest.split(/\s+/)[0] ?? "";
   const provider = rawTarget.includes("/") ? rawTarget.split("/")[0]?.toLowerCase() : "";
   if (provider && provider !== "github-copilot") {
     return {
       target: rawTarget,
       valid: false,
+      kind: "wrong-provider",
       error: `GitHub Copilot only accepts GitHub Copilot model IDs for why; '${rawTarget}' is not a GitHub Copilot model.`,
     };
   }
@@ -141,33 +162,128 @@ function parseWhyArgument(args: string): { target: string; valid: boolean; error
   return { target: normalizeBareModelId(rawTarget), valid: true };
 }
 
-function formatModelWhy(modelId: string, snapshot: CopilotModelSnapshot | null): string {
-  const bareId = normalizeBareModelId(modelId);
-  const tier = MODEL_CAPABILITY_TIER[bareId] ?? "unknown";
+/** Structured, field-by-field result of the local-only `why` registry analysis. */
+interface CopilotModelWhyExplanation {
+  providerQualifiedId: string;
+  bareModelId: string;
+  effectiveLocal: boolean;
+  sessionAvailable: boolean;
+  liveCatalogStatus: "yes" | "no" | "unknown";
+  capabilityTier: string;
+  profileConfidence: ReturnType<typeof getModelProfileConfidence>;
+  economicsKnown: boolean;
+  economicsSummary: string;
+  economicsSource: string;
+  economicsFreshness: string;
+  routingEligible: boolean;
+  routingReason: string;
+  guidance: string;
+}
+
+/**
+ * Local-only registry analysis for `why <model>`. Never calls
+ * ctx.modelRegistry.getApiKey() and never touches fetchImpl — only
+ * ctx.modelRegistry.getAll()/getAvailable() and the in-memory
+ * last-known-good snapshot are consulted.
+ */
+function buildModelWhyExplanation(
+  bareId: string,
+  ctx: ExtensionCommandContext,
+  snapshot: CopilotModelSnapshot | null,
+): CopilotModelWhyExplanation {
+  const providerQualifiedId = `github-copilot/${bareId}`;
+
+  // Scoped to provider === "github-copilot" so a bare ID that only exists
+  // under a different provider is never treated as a match (ADR-012).
+  const localCopilotModels = ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
+  const availableCopilotModels = ctx.modelRegistry.getAvailable().filter((model) => model.provider === "github-copilot");
+
+  const effectiveLocal = localCopilotModels.some((model) => normalizeBareModelId(model.id) === bareId);
+  const sessionAvailable = availableCopilotModels.some((model) => normalizeBareModelId(model.id) === bareId);
+
+  const liveCatalogStatus: "yes" | "no" | "unknown" = !snapshot
+    ? "unknown"
+    : snapshot.models.some((model) => normalizeBareModelId(model.id) === bareId)
+      ? "yes"
+      : "no";
+
+  const tier = MODEL_CAPABILITY_TIER[bareId];
   const confidence = getModelProfileConfidence(bareId);
+
+  const bundledCost = lookupModelCost(bareId);
   const economics = resolveModelEconomics({
     provider: "github-copilot",
     modelId: bareId,
+    // resolveModelEconomics only reports a non-"unknown" source when at
+    // least one economics input was supplied; the why route has no
+    // live/user/static economics available, so we explicitly surface the
+    // bundled cost table entry (when one exists) as the fallback input.
+    fallbackEconomics: bundledCost ? { modelId: bareId } : undefined,
   });
-  const prices = economics.tokenPrices?.default;
-  const pricing = prices
-    ? `$${Number(prices.inputPer1k).toFixed(4)} per 1K input / $${Number(prices.outputPer1k).toFixed(4)} per 1K output`
-    : "pricing unavailable";
-  const catalogStatus = snapshot?.models.some((candidate) => normalizeBareModelId(candidate.id) === bareId)
-    ? "available in the last live catalog snapshot"
-    : "not currently in the last live catalog snapshot";
-  const routingNote = confidence === "unknown"
-    ? "manual selection only; no curated auto-routing profile is known."
-    : "profile-backed and eligible for automatic routing when the tier remains suitable.";
+  const economicsKnown = economics.source !== "unknown" && !!economics.tokenPrices?.default;
+  const economicsSummary = economicsKnown
+    ? `$${Number(economics.tokenPrices!.default.inputPer1k).toFixed(4)} per 1K input / $${Number(economics.tokenPrices!.default.outputPer1k).toFixed(4)} per 1K output`
+    : "unknown";
+  const economicsSource = economicsKnown ? economics.source : "unknown";
+  const economicsFreshness = economicsKnown ? (economics.stale ? "stale" : "fresh") : "unknown";
 
+  let routingEligible = false;
+  let routingReason: string;
+  let guidance: string;
+
+  if (!effectiveLocal) {
+    if (liveCatalogStatus === "yes") {
+      routingReason = "remote-only and quarantined";
+      guidance = "Remote-only live catalog entry — quarantined and kept out of the effective local catalog; use --register to review, never auto-routed.";
+    } else {
+      routingReason = "not in effective local catalog";
+      guidance = "Not present in the effective local catalog — add it to models.json for manual selection.";
+    }
+  } else if (!sessionAvailable) {
+    routingReason = "unavailable in this session";
+    guidance = "Present in the effective local catalog but not available in this session — check provider configuration/credentials.";
+  } else if (!tier || confidence === "unknown") {
+    routingReason = "capability profile unknown";
+    guidance = "No GSD capability profile yet — manual selection only, not auto-routed.";
+  } else {
+    routingEligible = true;
+    routingReason = "profiled and available for automatic routing";
+    guidance = "Available for manual selection and eligible for automatic routing.";
+  }
+
+  return {
+    providerQualifiedId,
+    bareModelId: bareId,
+    effectiveLocal,
+    sessionAvailable,
+    liveCatalogStatus,
+    capabilityTier: tier ?? "unknown",
+    profileConfidence: confidence,
+    economicsKnown,
+    economicsSummary,
+    economicsSource,
+    economicsFreshness,
+    routingEligible,
+    routingReason,
+    guidance,
+  };
+}
+
+function formatModelWhyExplanation(explanation: CopilotModelWhyExplanation): string {
   return [
-    `GitHub Copilot: why ${modelId}`,
-    `- model: ${bareId}`,
-    `- tier: ${tier}`,
-    `- capability profile: ${confidence}`,
-    `- pricing: ${pricing}`,
-    `- status: ${catalogStatus}`,
-    `- routing note: ${routingNote}`,
+    `GitHub Copilot: why ${explanation.providerQualifiedId}`,
+    `- identity: ${explanation.providerQualifiedId}`,
+    `- effective local: ${explanation.effectiveLocal ? "yes" : "no"}`,
+    `- session available: ${explanation.sessionAvailable ? "yes" : "no"}`,
+    `- last known live catalog: ${explanation.liveCatalogStatus}`,
+    `- capability tier: ${explanation.capabilityTier}`,
+    `- profile confidence: ${explanation.profileConfidence}`,
+    `- economics: ${explanation.economicsSummary}`,
+    `- source: ${explanation.economicsSource}`,
+    `- freshness: ${explanation.economicsFreshness}`,
+    `- automatic routing eligible: ${explanation.routingEligible ? "yes" : "no"}`,
+    `- reason: ${explanation.routingReason}`,
+    `- guidance: ${explanation.guidance}`,
   ].join("\n");
 }
 
@@ -181,12 +297,17 @@ export async function handleCopilotModels(
   if (command === "why") {
     const parsed = parseWhyArgument(_args);
     if (!parsed.valid) {
-      ctx.ui.notify(`GitHub Copilot: why request rejected — ${parsed.error ?? "unknown error"}`, "warning");
+      if (parsed.kind === "usage") {
+        ctx.ui.notify(parsed.error ?? "Usage: /gsd copilot-models why <model>", "warning");
+      } else {
+        ctx.ui.notify(`GitHub Copilot: why request rejected — ${parsed.error ?? "unknown error"}`, "warning");
+      }
       return;
     }
 
-    const targetModel = parsed.target || lastKnownGoodSnapshot?.models[0]?.id || "gpt-5.4";
-    ctx.ui.notify(formatModelWhy(targetModel, lastKnownGoodSnapshot), "info");
+    // Local-only: never resolves an API key and never calls fetchImpl.
+    const explanation = buildModelWhyExplanation(parsed.target, ctx, lastKnownGoodSnapshot);
+    ctx.ui.notify(formatModelWhyExplanation(explanation), "info");
     return;
   }
 

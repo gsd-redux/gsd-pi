@@ -375,6 +375,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "clean",  desc: "Remove all merged/empty worktrees" },
     { cmd: "remove", desc: "Remove a worktree (--force to skip safety checks)" },
   ],
+  "copilot-models": [
+    { cmd: "why <model>", desc: "Explain a GitHub Copilot model's local status, routing eligibility, and economics (local-only, no network)" },
+    { cmd: "--register", desc: "Register newly-discovered models into the local models-catalog.json overlay" },
+  ],
 };
 
 function filterOptions(
