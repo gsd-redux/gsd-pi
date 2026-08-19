@@ -23,6 +23,13 @@ import type { UnifiedRule } from "../rule-types.ts";
 import type { DispatchAction, DispatchContext } from "../auto-dispatch.ts";
 import { DISPATCH_RULES, getDispatchRuleNames } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
 
 // ─── Mock Rule Factories ──────────────────────────────────────────────────
 
@@ -415,6 +422,53 @@ describe("RuleRegistry", () => {
     const registry = new RuleRegistry([]);
     const result = registry.evaluatePostUnit("quick-task", "M001/S01/T01", "/tmp/test");
     assert.deepStrictEqual(result, null, "quick-task skipped");
+  });
+
+  test("evaluatePostUnit does not dispatch execute-task hooks before canonical completion", (t) => {
+    const originalGsdHome = process.env.GSD_HOME;
+    const projectRoot = mkdtempSync(join(tmpdir(), "gsd-hook-staged-task-"));
+    const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-hook-home-"));
+
+    t.after(() => {
+      closeDatabase();
+      if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = originalGsdHome;
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(tempGsdHome, { recursive: true, force: true });
+    });
+
+    mkdirSync(join(projectRoot, ".gsd"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "version: 1",
+        "post_unit_hooks:",
+        "  - name: review-after-task",
+        "    after: [execute-task]",
+        "    prompt: Review {taskId}",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+    process.env.GSD_HOME = tempGsdHome;
+    openDatabase(join(projectRoot, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Staged Task",
+      status: "pending",
+    });
+
+    const registry = new RuleRegistry([]);
+    assert.equal(
+      registry.evaluatePostUnit("execute-task", "M001/S01/T01", projectRoot),
+      null,
+      "verify-staged Tasks must fail closed without dispatching hooks",
+    );
   });
 
   test("evaluatePreDispatch bypasses hook units", () => {

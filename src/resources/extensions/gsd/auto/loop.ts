@@ -1912,7 +1912,16 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       try {
-        finalizeResult = await runFinalize(ic, iterData, loopState, sidecarItem);
+        finalizeResult = await runFinalize(ic, iterData, loopState, sidecarItem, async () => {
+          await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
+            unitType: unitIterData.unitType,
+            unitId: unitIterData.unitId,
+            workerId: s.workerId,
+            traceId: flowId,
+            turnId,
+            basePath: s.basePath,
+          }, VERIFIED_TASK_PUBLICATION_DEPS);
+        });
       } catch (err) {
         const error = formatDispatchExceptionSummary({ error: err });
         journalReporter.emit("post-unit-finalize-end", {
@@ -1998,33 +2007,6 @@ export async function autoLoop(
         });
         finishTurn("retry", "closeout", finalizeDecision.ledgerErrorSummary, "finalize-retry");
         continue;
-      }
-
-      if (iterData.unitType === "execute-task") {
-        try {
-          await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
-            unitType: iterData.unitType,
-            unitId: iterData.unitId,
-            workerId: s.workerId,
-            traceId: flowId,
-            turnId,
-            basePath: s.basePath,
-          }, VERIFIED_TASK_PUBLICATION_DEPS);
-        } catch (publishErr) {
-          const publishReason = publishErr instanceof Error ? publishErr.message : String(publishErr);
-          await closeRun("failed", publishReason);
-          ctx.ui.notify(publishReason, "error");
-          finishIncompleteIteration({
-            status: "stopped",
-            reason: publishReason,
-            unitType: iterData.unitType,
-            unitId: iterData.unitId,
-            failureClass: "closeout",
-          });
-          finishTurn("stopped", "closeout", publishReason, "task-publication-failed");
-          await deferStopAuto(ctx, pi, publishReason);
-          break;
-        }
       }
 
       await closeRun("completed", "iteration-complete");

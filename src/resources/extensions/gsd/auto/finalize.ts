@@ -99,6 +99,7 @@ export async function runFinalize(
   iterData: IterationData,
   loopState: LoopState,
   sidecarItem?: SidecarItem,
+  publishVerifiedTask?: () => Promise<void>,
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps } = ic;
   const { pauseAfterUatDispatch } = iterData;
@@ -306,6 +307,22 @@ export async function runFinalize(
         debugLog("autoLoop", { phase: "verification-retry", iteration: ic.iteration });
         clearFinalizingUnit();
         return { action: "continue" };
+      }
+    }
+
+    if (
+      verificationResult === "continue"
+      && iterData.unitType === "execute-task"
+      && publishVerifiedTask
+    ) {
+      try {
+        await publishVerifiedTask();
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(reason, "error");
+        await deps.stopAuto(ctx, pi, reason);
+        clearFinalizingUnit();
+        return { action: "break", reason };
       }
     }
   }

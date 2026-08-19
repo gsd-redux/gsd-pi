@@ -174,7 +174,7 @@ export interface RetryTrigger {
 function captureTaskCompletionIdentity(trigger: HookTriggerRef): Pick<
   RetryTrigger,
   "completionOperationId" | "legacyCompletedAt"
-> {
+> | null {
   if (trigger.triggerUnitType !== "execute-task") return {};
   const { milestone, slice, task } = parseUnitId(trigger.triggerUnitId);
   if (!milestone || !slice || !task) {
@@ -210,7 +210,7 @@ function captureTaskCompletionIdentity(trigger: HookTriggerRef): Pick<
     );
   }
   if (!row || row["status"] !== "complete") {
-    throw new Error(`Cannot dispatch execute-task hook for ${trigger.triggerUnitId}: Task is not complete`);
+    return null;
   }
   if (
     row["lifecycle_status"] === "completed"
@@ -387,6 +387,7 @@ export class RuleRegistry {
       triggerUnitType: completedUnitType,
       triggerUnitId: completedUnitId,
     });
+    if (!completionIdentity) return null;
 
     // Build hook queue for this trigger
     this.hookQueue = hooks.map(config => ({
@@ -1288,6 +1289,7 @@ export class RuleRegistry {
       triggerUnitType: unitType,
       triggerUnitId: unitId,
     });
+    if (!completionIdentity) return null;
 
     this.activeHook = {
       hookName: hook.name,

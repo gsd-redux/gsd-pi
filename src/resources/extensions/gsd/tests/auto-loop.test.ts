@@ -3240,10 +3240,13 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
       deps.callLog.push("resolveDispatch");
       return {
         action: "dispatch" as const,
-        unitType: "plan-slice",
-        unitId: "M001/S01",
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
         prompt: "do the thing",
       };
+    },
+    taskPublicationBoundary: async () => {
+      deps.callLog.push("publishVerifiedTaskExecution");
     },
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
@@ -3270,6 +3273,7 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
   const dispatchIdx = deps.callLog.indexOf("resolveDispatch");
   const preVerIdx = deps.callLog.indexOf("postUnitPreVerification");
   const verIdx = deps.callLog.indexOf("runPostUnitVerification");
+  const publishIdx = deps.callLog.indexOf("publishVerifiedTaskExecution");
   const postVerIdx = deps.callLog.indexOf("postUnitPostVerification");
 
   assert.ok(deriveIdx >= 0, "deriveState should have been called");
@@ -3286,8 +3290,12 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
     "runPostUnitVerification should come after pre-verification",
   );
   assert.ok(
-    postVerIdx > verIdx,
-    "postUnitPostVerification should come after verification",
+    publishIdx > verIdx,
+    "verified Task publication should come after verification",
+  );
+  assert.ok(
+    postVerIdx > publishIdx,
+    "postUnitPostVerification should observe the published Task",
   );
 });
 
