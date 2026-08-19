@@ -1518,22 +1518,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const unitId = `${mid}/${sid}`;
       let priorPreExecFailure: { blockingFindings: string[]; verdictExcerpt: string } | undefined;
       if (session?.lastPreExecFailure?.unitId === unitId) {
-        // Circuit breaker: stop re-dispatching after 2 failed retries. The
-        // planner has had multiple attempts with injected failure context and
-        // still cannot produce a valid plan — human review is required.
-        const MAX_PRE_EXEC_RETRIES = 2;
-        const retryCount = session.preExecRetryCount?.get(unitId) ?? 0;
-        if (retryCount >= MAX_PRE_EXEC_RETRIES) {
-          const findings = session.lastPreExecFailure.blockingFindings.join("; ");
-          session.lastPreExecFailure = null;
-          session.preExecRetryCount?.delete(unitId);
-          return {
-            action: "stop",
-            reason: `Pre-execution checks failed ${retryCount} times for ${unitId} — manual intervention required. Blocking findings: ${findings}. Fix the plan manually, then run /gsd auto to resume.`,
-            level: "error",
-            matchedRule: "planning → plan-slice",
-          };
-        }
+        // beginPreExecRepair owns the retry cap and pauses for human review.
+        // If the user resumes, always give the planner the persisted findings;
+        // stopping here would discard the exact repair signal pause preserved.
         priorPreExecFailure = {
           blockingFindings: session.lastPreExecFailure.blockingFindings,
           verdictExcerpt: session.lastPreExecFailure.verdictExcerpt,

@@ -232,19 +232,23 @@ async function reassess(
 test("reassessment preserves its response and adopts added slices with progressive readiness", async () => {
   const { base } = fixture();
   const existingBefore = lifecycle("S02");
+  const sliceAssessmentPath = join(base, ".gsd", "phases", "01-test-milestone", "01-01-ASSESSMENT.md");
+  const uatAssessment = "---\nuatType: browser-executable\nverdict: PASS\n---\n# Runtime UAT evidence\n";
+  writeFileSync(sliceAssessmentPath, uatAssessment, "utf8");
 
   const result = await reassess(params(), base, invocation("reassess/first"));
   assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
   assert.deepEqual(result, {
     milestoneId: "M001",
     completedSliceId: "S01",
-    assessmentPath: join(base, ".gsd", "phases", "01-test-milestone", "01-01-ASSESSMENT.md"),
+    assessmentPath: join(base, ".gsd", "phases", "01-test-milestone", "01-ROADMAP-ASSESSMENT.md"),
     roadmapPath: join(base, ".gsd", "phases", "01-test-milestone", "01-ROADMAP.md"),
   });
   assert.deepEqual(lifecycle("S02"), existingBefore, "metadata reassessment must preserve existing lifecycle provenance");
   assert.equal(lifecycle("S03")["lifecycle_status"], "ready");
   assert.equal(lifecycle("S04")["lifecycle_status"], "pending");
-  assert.ok(getAssessment(".gsd/phases/01-test-milestone/01-01-ASSESSMENT.md"));
+  assert.equal(readFileSync(sliceAssessmentPath, "utf8"), uatAssessment, "roadmap reassessment must preserve slice UAT evidence");
+  assert.ok(getAssessment(".gsd/phases/01-test-milestone/01-ROADMAP-ASSESSMENT.md"));
   assert.equal(count("workflow_operations"), 2, "seed plus reassessment operations");
   assert.equal(count("workflow_domain_events"), 2);
   assert.equal(eventLines(base).filter((line) => line.includes('"cmd":"reassess-roadmap"')).length, 1);
@@ -329,7 +333,7 @@ test("same reassessment invocation rejects changed semantics with no residue", a
     projections: count("workflow_projection_work"),
     s03: getSlice("M001", "S03"),
     s04: getSlice("M001", "S04"),
-    assessment: getAssessment(".gsd/phases/01-test-milestone/01-01-ASSESSMENT.md"),
+    assessment: getAssessment(".gsd/phases/01-test-milestone/01-ROADMAP-ASSESSMENT.md"),
   };
   const changed = params();
   changed.assessment = "Changed planning semantics under the same invocation.";
@@ -343,7 +347,7 @@ test("same reassessment invocation rejects changed semantics with no residue", a
     projections: count("workflow_projection_work"),
     s03: getSlice("M001", "S03"),
     s04: getSlice("M001", "S04"),
-    assessment: getAssessment(".gsd/phases/01-test-milestone/01-01-ASSESSMENT.md"),
+    assessment: getAssessment(".gsd/phases/01-test-milestone/01-ROADMAP-ASSESSMENT.md"),
   }, before);
 });
 

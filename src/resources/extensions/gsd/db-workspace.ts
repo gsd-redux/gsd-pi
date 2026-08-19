@@ -76,6 +76,7 @@ export {
 import { resolveGsdPathContract, gsdRoot } from "./paths.js";
 import { logWarning, setLogBasePath } from "./workflow-logger.js";
 import { parseDecisionsTable } from "./decision-markdown-parser.js";
+import { isSqliteBusyError } from "./sqlite-errors.js";
 
 export interface WorkflowDatabaseLocation {
   projectRoot: string;
@@ -88,6 +89,7 @@ export type WorkflowDatabaseOpenReason =
   | "created-empty"
   | "missing-database"
   | "missing-gsd-dir"
+  | "locked"
   | "open-failed"
   | "schema-too-new";
 
@@ -99,7 +101,7 @@ export type WorkflowDatabaseOpenResult =
     }
   | {
       ok: false;
-      reason: "missing-database" | "missing-gsd-dir" | "open-failed";
+      reason: "missing-database" | "missing-gsd-dir" | "locked" | "open-failed";
       location: WorkflowDatabaseLocation;
       error?: Error;
     }
@@ -174,6 +176,14 @@ export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResu
       return {
         ok: false,
         reason: "schema-too-new",
+        location,
+        error,
+      };
+    }
+    if (isSqliteBusyError(error)) {
+      return {
+        ok: false,
+        reason: "locked",
         location,
         error,
       };

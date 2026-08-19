@@ -42,6 +42,7 @@ import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-i
 import { handleReplanTask } from "../tools/replan-task.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import { verifyExpectedArtifact, readTerminalTaskRecoveryAbort } from "../artifact-verification.ts";
+import { refreshRecoveryDbForArtifact } from "../auto-recovery.ts";
 
 const tempDirs = new Set<string>();
 
@@ -1410,6 +1411,8 @@ test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754
   db().exec(`
     DROP TRIGGER trg_workflow_attempt_route_authority_v39;
     DROP TRIGGER trg_workflow_attempt_settlement_insert_shape_v36;
+    DROP TRIGGER trg_workflow_kernel_checkpoint_chain;
+    DROP TRIGGER trg_workflow_kernel_checkpoint_attempt_claim;
   `);
   const secondOperation = row(`
     SELECT project_id, settle_operation_id, settle_project_revision, settle_authority_epoch
@@ -1438,6 +1441,51 @@ test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754
     ":project_revision": secondOperation.settle_project_revision,
     ":authority_epoch": secondOperation.settle_authority_epoch,
   });
+  const routeHead = row(`
+    SELECT kernel_checkpoint_id, sequence
+    FROM workflow_kernel_checkpoints
+    WHERE lifecycle_id = :lifecycle_id
+    ORDER BY sequence DESC LIMIT 1
+  `, { ":lifecycle_id": firstFailure.lifecycleId });
+  db().prepare(`
+    INSERT INTO workflow_attempt_results (
+      result_id, project_id, lifecycle_id, attempt_id, outcome,
+      failure_class, summary, output_json, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (
+      'result-superseding', :project_id, :lifecycle_id, 'attempt-superseding',
+      'succeeded', 'none', 'Superseding execution succeeded', '{}',
+      '2026-07-13T00:04:00.000Z', :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":project_id": secondOperation.project_id,
+    ":lifecycle_id": firstFailure.lifecycleId,
+    ":operation_id": secondOperation.settle_operation_id,
+    ":project_revision": secondOperation.settle_project_revision,
+    ":authority_epoch": secondOperation.settle_authority_epoch,
+  });
+  db().prepare(`
+    INSERT INTO workflow_kernel_checkpoints (
+      kernel_checkpoint_id, project_id, lifecycle_id, attempt_id,
+      next_stage, sequence, previous_kernel_checkpoint_id, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES
+      ('kernel-superseding-execute', :project_id, :lifecycle_id, 'attempt-superseding',
+       'execute', :execute_sequence, :route_head, '2026-07-13T00:03:00.000Z',
+       :operation_id, :project_revision, :authority_epoch),
+      ('kernel-superseding-verify', :project_id, :lifecycle_id, 'attempt-superseding',
+       'verify', :verify_sequence, 'kernel-superseding-execute', '2026-07-13T00:04:00.000Z',
+       :operation_id, :project_revision, :authority_epoch)
+  `).run({
+    ":project_id": secondOperation.project_id,
+    ":lifecycle_id": firstFailure.lifecycleId,
+    ":execute_sequence": Number(routeHead.sequence) + 1,
+    ":verify_sequence": Number(routeHead.sequence) + 2,
+    ":route_head": routeHead.kernel_checkpoint_id,
+    ":operation_id": secondOperation.settle_operation_id,
+    ":project_revision": secondOperation.settle_project_revision,
+    ":authority_epoch": secondOperation.settle_authority_epoch,
+  });
   assert.equal(
     row("SELECT attempt_id AS id FROM workflow_execution_attempts ORDER BY attempt_number DESC LIMIT 1").id,
     "attempt-superseding",
@@ -1448,6 +1496,9 @@ test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754
   // resume predicate accepts it instead of throwing (#1754 residual).
   const terminal = readTerminalTaskRecoveryAbort("M001", "S01", "T01");
   assert.equal(terminal?.recoveryActionId, aborted.recoveryActionId);
+  const recovery = refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", firstFailure.basePath);
+  assert.equal(recovery.ok, false);
+  assert.equal(recovery.ok ? undefined : recovery.reason, "execute-task-recovery-aborted");
   const resumed = resumeTaskRecovery({
     invocation: invocation("recovery/superseded/resume"),
     recoveryActionId: aborted.recoveryActionId,

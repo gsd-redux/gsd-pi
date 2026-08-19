@@ -1367,6 +1367,60 @@ describe("legacy .gsd captured-byte interpretation", () => {
     )));
   });
 
+  test("models lifecycle artifacts in the flat-phase layout", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "state-manifest.json": JSON.stringify({
+        milestones: [{ id: "M001", status: "active" }],
+        slices: [{ milestone_id: "M001", id: "S01", status: "active" }],
+        tasks: [{ milestone_id: "M001", slice_id: "S01", id: "T01", status: "active" }],
+      }),
+      "phases/01-recovery/01-01-PLAN.md": "# S01: Recovery\n\n- [ ] T01: Repair drift\n",
+      "phases/01-recovery/S01-T01-SUMMARY.md": "# T01 Summary\n\nThe repair passed verification.\n",
+    }));
+
+    assert.deepEqual(
+      interpretation.sources.map((source) => [source.path, source.parser_id, source.outcome]),
+      [
+        [".gsd/phases/01-recovery/01-01-PLAN.md", "gsd-lifecycle-truth", "mapped"],
+        [".gsd/phases/01-recovery/S01-T01-SUMMARY.md", "gsd-lifecycle-truth", "mapped"],
+        [".gsd/state-manifest.json", "gsd-lifecycle-truth", "mapped"],
+      ],
+    );
+    assert.ok(interpretation.candidates.some((candidate) => (
+      candidate.target.kind === "task-status"
+      && candidate.target.key === "M001/S01/T01"
+      && candidate.normalized === "complete"
+    )));
+  });
+
+  test("models compatibility and team-mode flat-phase lifecycle paths", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "state-manifest.json": JSON.stringify({
+        milestones: [{ id: "M002-abc123", status: "active" }],
+        slices: [{ milestone_id: "M002-abc123", id: "S01", status: "active" }],
+        tasks: [{ milestone_id: "M002-abc123", slice_id: "S01", id: "T01", status: "active" }],
+      }),
+      "phases/02-abc123-recovery/01-PLAN.md": "# S01: Recovery\n\n- [ ] T01: Repair drift\n",
+      "phases/02-abc123-recovery/T01-SUMMARY.md": [
+        "---",
+        "parent: S01",
+        "---",
+        "# T01 Summary",
+        "",
+        "The repair passed verification.",
+      ].join("\n"),
+    }));
+
+    assert.ok(interpretation.sources.every((source) => (
+      source.parser_id === "gsd-lifecycle-truth" && source.outcome === "mapped"
+    )));
+    assert.ok(interpretation.candidates.some((candidate) => (
+      candidate.target.kind === "task-status"
+      && candidate.target.key === "M002-abc123/S01/T01"
+      && candidate.normalized === "complete"
+    )));
+  });
+
   test("does not fabricate a dependency conflict from complete zero-row evidence", (t) => {
     const captured = captureCase(t, "lifecycle-truth-matrix");
     const evidence = captured.databaseEvidence[0]!;

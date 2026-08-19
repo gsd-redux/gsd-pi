@@ -20,6 +20,7 @@ import {
 	toActionParamsSummary,
 	registryListPages,
 } from "./core.js";
+import type { PersistedBatchStep } from "./core.js";
 import {
 	getActiveFrame,
 	getArtifactRoot,
@@ -500,6 +501,7 @@ export function finishTrackedAction(
 		diffSummary?: string;
 		changed?: boolean;
 		error?: string;
+		batchSteps?: PersistedBatchStep[];
 		beforeState?: CompactPageState;
 		afterState?: CompactPageState;
 	},

@@ -292,6 +292,10 @@ export function checkCloseoutConsistencyGate(
     ? inspectQualityGatesFromEvidence(milestoneId, gateClosureOptions)
     : { repaired: [], unresolved: [] };
 
+  if (!adoptedMilestone && gateClosureOptions) {
+    closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
+  }
+
   for (const slice of slices) {
     if (isDeferredStatus(slice.status)) continue;
     if (!isClosedStatus(slice.status)) {
@@ -323,10 +327,6 @@ export function checkCloseoutConsistencyGate(
         `Closeout consistency blocked for ${milestoneId}: quality gate ${pendingGate.gate_id} is still pending for ${slice.id}.`,
       );
     }
-  }
-
-  if (!adoptedMilestone && gateClosureOptions) {
-    closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
   }
 
   return { ok: true };

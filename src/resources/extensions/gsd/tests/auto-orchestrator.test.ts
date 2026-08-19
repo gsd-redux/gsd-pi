@@ -855,6 +855,32 @@ test("retryActiveUnit clears in-flight idempotency without marking the unit fina
   assert.ok(f.journalNames().includes("unit-retry"));
 });
 
+test("retryActiveUnit stops explicitly when finalize-retry trips the liveness backstop", async (t) => {
+  const notifications: Array<[string, string]> = [];
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  (f.ctx.ctx as any).ui.notify = (message: string, level: string) => {
+    notifications.push([message, level]);
+  };
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  await f.orchestrator.retryActiveUnit(first.unit);
+
+  const second = await f.orchestrator.advance();
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected retry advance");
+  await f.orchestrator.retryActiveUnit(second.unit);
+
+  assert.equal(f.orchestrator.getStatus().phase, "stopped");
+  assert.ok(notifications.some(([message, level]) => level === "error" && /liveness backstop tripped/.test(message)));
+  const wedge = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(wedge.ok, true);
+  assert.equal(wedge.ok ? wedge.wedge?.guardId : null, "finalize-retry");
+  assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
+});
+
 test("settle canceled clears a deferred dispatch claim without finalizing the unit", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());

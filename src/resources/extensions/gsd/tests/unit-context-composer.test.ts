@@ -418,6 +418,8 @@ test("Tool Surface composer: planning-dispatch lists allowed subagents", () => {
   const out = composeToolSurfaceInstructions("plan-slice", { renderMode: "standalone" });
   assert.match(out, /\*\*scout\*\*/);
   assert.match(out, /\*\*planner\*\*/);
+  assert.match(out, /`gsd_exec`/);
+  assert.match(out, /active worktree/);
 });
 
 test("Tool Surface composer: planning_subagents updates plan-milestone dispatch guidance", (t) => {

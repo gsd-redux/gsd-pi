@@ -38,6 +38,9 @@ export interface TaskExecutionCutoverInput {
 
 export interface TaskExecutionCutoverDeps {
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
+  readTerminalTaskRecoveryAbort(
+    task: ClaimTaskAttemptInput["task"],
+  ): { recoveryActionId: string } | null;
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): Pick<
     TaskRecoveryRouteSnapshot,
@@ -434,6 +437,8 @@ export async function runWithTaskExecutionAttempt(
   const task = parseTaskIdentity(input.unitId);
   const identity = requireTaskClaimIdentity(input);
   const predecessor = deps.readLatestTaskAttempt(task);
+  const terminalAbort = deps.readTerminalTaskRecoveryAbort(task);
+  if (terminalAbort) return taskRecoveryAbortResult(terminalAbort.recoveryActionId);
   let claim: ClaimTaskAttemptReceipt | undefined;
   let result: UnitPhaseResult;
   try {
