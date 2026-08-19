@@ -17,6 +17,7 @@ import {
 	createBoundedLogPusher,
 	createPageRegistry,
 } from "./core.js";
+import type { PersistedBatchStep } from "./core.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -385,6 +386,7 @@ export interface ToolDeps {
 			diffSummary?: string;
 			changed?: boolean;
 			error?: string;
+			batchSteps?: PersistedBatchStep[];
 			beforeState?: CompactPageState;
 			afterState?: CompactPageState;
 		}

@@ -32,8 +32,8 @@ import {
 import { invalidateStateCache } from "../state.js";
 import {
   renderRoadmapFromDb,
-  renderAssessmentFromDb,
-  resolveAssessmentProjectionPath,
+  renderRoadmapAssessmentFromDb,
+  resolveRoadmapAssessmentProjectionPath,
 } from "../markdown-renderer.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifestAndFlush } from "../workflow-manifest.js";
@@ -178,10 +178,9 @@ export async function handleReassessRoadmap(
     params.sliceChanges.modified.length > 0 ||
     params.sliceChanges.removed.length > 0;
 
-  const assessmentPath = resolveAssessmentProjectionPath(
+  const assessmentPath = resolveRoadmapAssessmentProjectionPath(
     basePath,
     params.milestoneId,
-    params.completedSliceId,
   );
   let operationStatus: "committed" | "replayed";
   try {
@@ -485,7 +484,7 @@ export async function handleReassessRoadmap(
       assessmentDbPathForRenderedFile(basePath, assessmentPath),
     );
     if (!durableAssessment) throw new Error("durable roadmap assessment not found");
-    const assessmentResult = await renderAssessmentFromDb(basePath, params.milestoneId, params.completedSliceId, {
+    const assessmentResult = await renderRoadmapAssessmentFromDb(basePath, params.milestoneId, {
       verdict: String(durableAssessment["status"]),
       assessment: String(durableAssessment["full_content"]),
       completedSliceId: params.completedSliceId,

@@ -49,16 +49,21 @@ test("buildCursorPrompt preserves system, message, and tool context", () => {
 	assert.match(prompt, /System instructions:\nBe concise\./);
 	assert.match(prompt, /User:\nHello/);
 	assert.match(prompt, /Requested GSD tools: gsd_plan_slice/);
-	assert.match(prompt, /GSD lifecycle tools executed locally: \(none\)/);
+	assert.match(prompt, /GSD lifecycle tools bridged to the local host: \(none\)/);
 });
 
-test("buildCursorPrompt names bridged GSD lifecycle tools as locally executed (#1764)", () => {
+test("buildCursorPrompt explains the local GSD lifecycle bridge (#1764)", () => {
 	const prompt = buildCursorPrompt({
 		...context,
-		tools: [{ name: "gsd_task_complete" }, { name: "gsd_plan_slice" }],
+		tools: [
+			{ name: "gsd_task_complete" },
+			{ name: "gsd_task_recovery_resume" },
+			{ name: "gsd_plan_slice" },
+		],
 	} as Context);
-	assert.match(prompt, /GSD lifecycle tools executed locally: gsd_task_complete/);
-	assert.match(prompt, /Requested GSD tools: gsd_task_complete, gsd_plan_slice/);
+	assert.match(prompt, /GSD lifecycle tools bridged to the local host: gsd_task_complete, gsd_task_recovery_resume/);
+	assert.match(prompt, /<gsd_tool_call>\{"name":"gsd_task_complete","arguments":\{\.\.\.\}\}<\/gsd_tool_call>/);
+	assert.match(prompt, /Requested GSD tools: gsd_task_complete, gsd_task_recovery_resume, gsd_plan_slice/);
 });
 
 test("parseCursorAgentLine maps text, legacy tool, result, usage, and errors", () => {
@@ -284,11 +289,10 @@ test("streamViaCursorAgent turns NDJSON into assistant events with external tool
 	assert.equal(done.message.usage.output, 4);
 });
 
-test("cursor adapter bridges gsd_task_complete for local host execution (#1764)", async () => {
+test("cursor adapter bridges a streamed gsd_task_complete envelope for local host execution (#1764)", async () => {
 	const lines = [
-		'{"type":"assistant","message":{"content":[{"type":"text","text":"Completing"}]}}',
-		'{"type":"tool_call","id":"tool_1","name":"gsd_task_complete","input":{"milestoneId":"M001"}}',
-		'{"type":"tool_result","tool_call_id":"tool_1","content":"ignored","is_error":false}',
+		'{"type":"assistant","message":{"content":[{"type":"text","text":"Implemented and verified.\\n<gsd_tool_"}]}}',
+		'{"type":"assistant","message":{"content":[{"type":"text","text":"call>{\\"name\\":\\"gsd_task_complete\\",\\"arguments\\":{\\"milestoneId\\":\\"M001\\",\\"sliceId\\":\\"S01\\",\\"taskId\\":\\"T03\\"}}</gsd_tool_call>"}]}}',
 	];
 	const stream = streamViaCursorAgent(model, context, {
 		_cursorAgentRunnerForTest: async () => ({ stdout: `${lines.join("\n")}\n`, stderr: "", code: 0, signal: null }),
@@ -300,7 +304,74 @@ test("cursor adapter bridges gsd_task_complete for local host execution (#1764)"
 	const toolCall = done.message.content.find((block) => block.type === "toolCall");
 	assert.ok(toolCall && toolCall.type === "toolCall");
 	assert.equal(toolCall.name, "gsd_task_complete");
+	assert.deepEqual(toolCall.arguments, { milestoneId: "M001", sliceId: "S01", taskId: "T03" });
 	assert.equal(toolCall.externalResult, undefined);
+	const finalText = done.message.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("");
+	assert.equal(finalText, "Implemented and verified.\n");
+	assert.doesNotMatch(finalText, /gsd_tool_call/);
+});
+
+test("cursor adapter bridges gsd_task_recovery_resume envelopes (#1764)", async () => {
+	const line = '{"type":"assistant","message":{"content":[{"type":"text","text":"<gsd_tool_call>{\\"name\\":\\"gsd_task_recovery_resume\\",\\"arguments\\":{\\"recoveryActionId\\":\\"R001\\",\\"repairSummary\\":\\"Fixed\\",\\"evidence\\":{\\"tests\\":[\\"pass\\"]}}}</gsd_tool_call>"}]}}';
+	const stream = streamViaCursorAgent(model, context, {
+		_cursorAgentRunnerForTest: async () => ({ stdout: `${line}\n`, stderr: "", code: 0, signal: null }),
+	});
+	const events = [];
+	for await (const event of stream) events.push(event);
+	const done = events.find((event) => event.type === "done");
+	assert.ok(done && done.type === "done");
+	const toolCall = done.message.content.find((block) => block.type === "toolCall");
+	assert.ok(toolCall && toolCall.type === "toolCall");
+	assert.equal(toolCall.name, "gsd_task_recovery_resume");
+});
+
+test("cursor lifecycle envelope executes gsd_task_complete through the host agent loop (#1764)", async () => {
+	let executedArgs: Record<string, unknown> | undefined;
+	const completionTool = {
+		name: "gsd_task_complete",
+		label: "Complete task",
+		description: "Complete the active task",
+		parameters: {
+			type: "object",
+			properties: {
+				milestoneId: { type: "string" },
+				sliceId: { type: "string" },
+				taskId: { type: "string" },
+			},
+			required: ["milestoneId", "sliceId", "taskId"],
+		},
+		async execute(_toolCallId: string, args: Record<string, unknown>) {
+			executedArgs = args;
+			return {
+				content: [{ type: "text", text: "Staged task T03; awaiting host verification" }],
+				details: {},
+				terminate: true,
+			};
+		},
+	};
+	const prompt: AgentMessage = { role: "user", content: "Implement T03.", timestamp: Date.now() };
+	const stream = agentLoop(
+		[prompt],
+		{ systemPrompt: "Complete the task.", messages: [], tools: [completionTool as any] },
+		{ model, convertToLlm: (messages) => messages as Message[] },
+		undefined,
+		(_model, llmContext) => streamViaCursorAgent(model, llmContext, {
+			_cursorAgentRunnerForTest: async () => ({
+				stdout: '{"type":"assistant","message":{"content":[{"type":"text","text":"<gsd_tool_call>{\\"name\\":\\"gsd_task_complete\\",\\"arguments\\":{\\"milestoneId\\":\\"M001\\",\\"sliceId\\":\\"S01\\",\\"taskId\\":\\"T03\\"}}</gsd_tool_call>"}]}}\n',
+				stderr: "",
+				code: 0,
+				signal: null,
+			}),
+		}),
+	);
+
+	const events: AgentEvent[] = [];
+	for await (const event of stream) events.push(event);
+	assert.deepEqual(executedArgs, { milestoneId: "M001", sliceId: "S01", taskId: "T03" });
+	assert.ok(events.some((event) => event.type === "tool_execution_end" && event.toolName === "gsd_task_complete"));
 });
 
 test("cursor adapter refuses unbridged GSD tool calls (#1764)", async () => {

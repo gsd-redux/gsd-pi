@@ -241,7 +241,7 @@ function guidanceForUnitToolsPolicy(unitType: string, policy: ToolsPolicy): stri
     const dispatch = policy.mode === "planning-dispatch"
       ? ` Dispatch subagents only to ${formatAllowedAgents(policy.allowedSubagents)} for reconnaissance — not implementation agents.`
       : " Do not dispatch subagents.";
-    return `Persist planning through \`gsd_plan_slice\` only.${dispatch} Do not edit user source files outside \`.gsd/**\`.`;
+    return `Persist planning through \`gsd_plan_slice\` and \`gsd_plan_task\`.${dispatch} Do not edit user source files outside \`.gsd/**\`. Keep self-verification inside the active worktree: inspect with read-only tools and run any required command through \`gsd_exec\` or \`gsd_exec_search\`, not a direct shell or an out-of-worktree path.`;
   }
 
   if (unitType === "refine-slice") {

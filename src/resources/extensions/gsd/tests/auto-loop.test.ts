@@ -2276,9 +2276,10 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
       s.orchestration = {
         settle: async () => { releaseCalls++; },
         retryActiveUnit: async () => { releaseCalls++; },
-        abandonActiveUnit: async () => {},
+        abandonActiveUnit: async () => { releaseCalls++; },
       };
       let dispatchStatusAtPause: string | undefined;
+      let releaseCallsAtPause: number | undefined;
       const deps = makeMockDeps({
         isDbAvailable: () => true,
         taskExecutionBoundary: async () => {
@@ -2287,6 +2288,7 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         },
         pauseAuto: async () => {
           dispatchStatusAtPause = getLatestForUnit("M001/S01/T01")?.status;
+          releaseCallsAtPause = releaseCalls;
         },
       });
 
@@ -2302,7 +2304,12 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         action === "break" ? "failed" : undefined,
         "a terminal recovery abort must settle its dispatch before pausing",
       );
-      assert.equal(releaseCalls, action === "retry" ? 1 : 0);
+      assert.equal(
+        releaseCallsAtPause,
+        action === "break" ? 1 : undefined,
+        "a terminal recovery abort must release its active unit before pausing",
+      );
+      assert.equal(releaseCalls, 1);
       assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
     } finally {
       closeDatabase();
@@ -2378,6 +2385,60 @@ test("#1769: unit recovery retry releases the active orchestration marker", asyn
   const wedgeResult = getOpenWedge(realpathSync(s.basePath));
   assert.equal(wedgeResult.ok, true);
   assert.equal(wedgeResult.ok ? wedgeResult.wedge : null, null);
+});
+
+test("autoLoop stops at the retry closeout when orchestration reports a liveness trip", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.notify = () => {};
+  const pi = makeMockPi();
+  const unit = { unitType: "plan-slice", unitId: "M001/S01" };
+  let advanceCalls = 0;
+  let orchestrationPhase: AutoStatus["phase"] = "running";
+  const stopReasons: Array<string | undefined> = [];
+  const s = makeLoopSession({ currentMilestoneId: "M001" });
+  s.orchestration = {
+    start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    advance: async () => {
+      advanceCalls++;
+      if (advanceCalls > 1) {
+        s.active = false;
+        return { kind: "stopped" as const, reason: "unexpected redispatch after retry trip" };
+      }
+      return {
+        kind: "advanced" as const,
+        unit,
+        stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+        dispatchId: 1,
+      };
+    },
+    settle: async () => {},
+    completeActiveUnit: async () => {},
+    retryActiveUnit: async () => {
+      orchestrationPhase = "stopped";
+    },
+    abandonActiveUnit: async () => {},
+    resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+    getStatus: () => ({ phase: orchestrationPhase, transitionCount: advanceCalls }),
+  } satisfies AutoOrchestrationModule;
+  openLoopDatabase(t, s);
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
+    taskExecutionBoundary: async () => ({ action: "retry" as const, reason: "finalize-retry" }),
+    stopAuto: async (_ctx, _pi, reason) => {
+      stopReasons.push(reason);
+      s.active = false;
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(advanceCalls, 1, "the loop must not redispatch after the retry trip");
+  assert.equal(stopReasons.length, 1);
+  assert.match(stopReasons[0] ?? "", /liveness backstop tripped during retry closeout/);
 });
 
 test("custom-engine recovery fails loudly when dispatch terminalization cannot be confirmed", async (t) => {
@@ -4326,7 +4387,7 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
   const pi = makeMockPi();
   const s = makeLoopSession();
   let pauseReason: string | undefined;
-  let recoveryReads = 0;
+  let terminalAbortReads = 0;
   const abortReason =
     "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
 
@@ -4352,14 +4413,12 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
             milestoneLeaseToken: 7,
           };
         },
+        readTerminalTaskRecoveryAbort() {
+          terminalAbortReads += 1;
+          return { recoveryActionId: "recovery-action-1" };
+        },
         readTaskRecoveryRoute() {
-          recoveryReads += 1;
-          return {
-            recoveryActionId: "recovery-action-1",
-            recoveryOwner: "agent",
-            action: "abort",
-            resumeAuthorized: false,
-          };
+          throw new Error("all-attempt terminal abort guard must run before the latest-route fallback");
         },
       }),
     pauseAuto: async (_ctx, _pi, errorContext) => {
@@ -4371,7 +4430,7 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
   await autoLoop(ctx, pi, s, deps);
 
   assert.equal(pi.calls.length, 0, "the predecessor abort must stop before an agent turn");
-  assert.equal(recoveryReads, 1, "the durable predecessor abort must be read exactly once");
+  assert.equal(terminalAbortReads, 1, "the durable predecessor abort must be read exactly once");
   assert.equal(pauseReason, abortReason);
   assert.match(notifications.join("\n"), /recoveryActionId: recovery-action-1/);
   assert.match(notifications.join("\n"), /gsd_task_recovery_resume/);

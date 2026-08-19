@@ -1,10 +1,57 @@
 // Project/App: gsd-pi
-// File Purpose: Unit tests for hasBrowserRequiredText heading-depth section guard.
+// File Purpose: Unit tests for browser requirement and persisted evidence detection.
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hasBrowserRequiredText } from '../browser-evidence.ts';
+import { formatTimelineEntries } from '../../browser-tools/core.ts';
+import {
+  browserTimelineHasNavigateAndAssert,
+  hasBrowserRequiredText,
+  hasPassedStructuredBrowserUatEvidenceText,
+} from '../browser-evidence.ts';
+
+test('structured browser UAT evidence requires an overall and check-level PASS', () => {
+  const evidence = [
+    '---',
+    'uatType: browser-executable',
+    'verdict: PASS',
+    '---',
+    '| Check | Mode | Result | Evidence | Notes |',
+    '| SSE stats | browser | PASS | browser:.artifacts/browser/session/stats.json | persisted structured evidence |',
+  ].join('\n');
+
+  assert.equal(hasPassedStructuredBrowserUatEvidenceText(evidence), true);
+  assert.equal(hasPassedStructuredBrowserUatEvidenceText(evidence.replace('browser | PASS', 'browser | FAIL')), false);
+  assert.equal(hasPassedStructuredBrowserUatEvidenceText(evidence.replace('verdict: PASS', 'verdict: FAIL')), false);
+});
+
+test('persisted browser_batch timelines retain successful navigate and assert steps', () => {
+  const persistedTimeline = formatTimelineEntries([{
+    id: 1,
+    tool: 'browser_batch',
+    paramsSummary: 'steps=[3]',
+    startedAt: 1,
+    finishedAt: 2,
+    status: 'success',
+    beforeUrl: 'about:blank',
+    afterUrl: 'http://127.0.0.1:58081/admin-api/log/stream/stats',
+    batchSteps: [
+      { action: 'navigate', ok: true },
+      { action: 'assert', ok: true },
+      { action: 'assert', ok: true },
+    ],
+  }]);
+  assert.equal(browserTimelineHasNavigateAndAssert(persistedTimeline), true);
+  assert.equal(browserTimelineHasNavigateAndAssert({
+    tool: 'browser_batch',
+    status: 'error',
+    stepResults: [
+      { action: 'navigate', ok: true },
+      { action: 'assert', ok: false },
+    ],
+  }), false);
+});
 
 describe('hasBrowserRequiredText', () => {
   test('detects browser requirement in a plain test-cases section', () => {

@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@opengsd/gsd-pi?label=npm&logo=npm)](https://www.npmjs.com/package/@opengsd/gsd-pi)
 [![npm downloads](https://img.shields.io/npm/dm/@opengsd/gsd-pi?label=downloads&logo=npm&color=red)](https://www.npmjs.com/package/@opengsd/gsd-pi)
 [![CI](https://img.shields.io/github/actions/workflow/status/open-gsd/gsd-pi/ci.yml?branch=main&label=tests&logo=github)](https://github.com/open-gsd/gsd-pi/actions/workflows/ci.yml)
-[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/8NnkKuepmQ)
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/vY2bv3FrzX)
 [![GitHub stars](https://img.shields.io/github/stars/open-gsd/gsd-pi?label=stars&logo=github)](https://github.com/open-gsd/gsd-pi/stargazers)
 [![License: MIT](https://img.shields.io/github/license/open-gsd/gsd-pi?label=license)](https://github.com/open-gsd/gsd-pi/blob/main/LICENSE)
 
@@ -28,16 +28,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for release-by-release fixes and [Legacy Rele
 ## Latest Release Highlights
 
 <!-- release-highlights:start -->
-Latest release: **v1.15.0**
+Latest release: **v1.16.0**
 
-- **model-router:** Add claude-sonnet-5 to model capability registries.
-- **tools:** Add gsd_requirement_list/get and gsd_decision_list/get (#1608).
-- **pi-ai:** Add missing kimi-coding subscription models to catalog.
-- **pi-ai:** Add Kimi Code (subscription) OAuth provider.
-- **ci:** Retrigger PR checks.
-- **gsd:** Deepen projection delivery ownership.
-- **gsd:** Own slice companion gate lifecycle.
-- **gsd:** Register required schema features once.
+- **gsd:** Verify-after-write receipts for save-tool units (#1802).
+- **gsd:** Settle orphaned task attempts and add gsd_task_settle operator tool (#1777).
+- **gsd:** Collapse auto-mode onto the unit_dispatches UnitRun (ADR-048).
+- **pi-ai:** Add MAI Code 1.1 Flash routing.
+- **models:** Add Claude Opus 5 across catalogs and registries.
+- **gsd:** Delete leftover filesystem-state read path.
+- **gsd:** Remove unused MEDIUM files and package deps (#1760).
+- **gsd:** Drop unused root packaging hoists and @types/picomatch (#1767).
 
 <!-- release-highlights:end -->
 
@@ -223,7 +223,7 @@ Historical tags and archived refs may exist for traceability, but active release
 
 ## Community
 
-Join the [GSD Discord community](https://discord.gg/8NnkKuepmQ).
+Join the [GSD Discord community](https://discord.gg/vY2bv3FrzX).
 
 ## Star History
 

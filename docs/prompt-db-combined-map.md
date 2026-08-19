@@ -122,7 +122,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
 | `complete-slice` | evidence-backed terminal Task state, Slice lifecycle, quality gates | invokes the authoritative `gsd_slice_complete` Domain Operation; see the [database map](./db-map.md) | S##-SUMMARY.md, S##-UAT.md, ROADMAP.md, and STATE.md projections after commit |
-| `reassess-roadmap` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones (UPDATE), slices (INSERT/UPDATE; removed pending rows become `skipped` / `cancelled`), assessments | ROADMAP.md, ASSESSMENT.md |
+| `reassess-roadmap` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones (UPDATE), slices (INSERT/UPDATE; removed pending rows become `skipped` / `cancelled`), assessments | ROADMAP.md, ROADMAP-ASSESSMENT.md |
 | `complete-milestone` | current validation receipt, terminal descendant parity, Waivers, and active Attempts | invokes the authoritative `gsd_complete_milestone` Domain Operation; see the [database map](./db-map.md) | M##-SUMMARY.md projection after commit |
 
 ### Maintenance Phase

@@ -3421,9 +3421,9 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         },
       });
       assert.match((reassessAliasResult as any).content[0].text as string, /Reassessed roadmap for milestone M006 after S06/);
-      // Flat-phase: M006 "Roadmap reassessment" → phases/06-roadmap-reassessment/, S06 → 06-06-*
+      // Flat-phase roadmap reassessments are milestone-level artifacts.
       assert.ok(
-        existsSync(join(base, ".gsd", "phases", "06-roadmap-reassessment", "06-06-ASSESSMENT.md")),
+        existsSync(join(base, ".gsd", "phases", "06-roadmap-reassessment", "06-ROADMAP-ASSESSMENT.md")),
         "assessment artifact should exist on disk",
       );
       assert.ok(

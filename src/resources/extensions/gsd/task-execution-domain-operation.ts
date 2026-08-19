@@ -26,13 +26,14 @@ import {
 import {
   claimMilestoneLease,
   getMilestoneLease,
+  refreshMilestoneLease,
 } from "./db/milestone-leases.js";
 import { autoWorkerHeartbeatTtlSeconds } from "./db/auto-workers.js";
 import {
   internalExecutionInvocation,
   type ExecutionInvocation,
 } from "./execution-invocation.js";
-import { isDbAvailable, setTaskSummaryMd } from "./gsd-db.js";
+import { clearTaskSummaryProjectionState, isDbAvailable } from "./gsd-db.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
 import type { RecoveryAction } from "./recovery-classification.js";
 import type { TaskFailureKind } from "./recovery-policy.js";
@@ -483,16 +484,10 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
         taskId: attempt.task_id,
       }, input.stagedTaskCompletion);
     }
-    // Interrupted Attempts clear their staged SUMMARY at settle time; a
-    // blockerDiscovered failure gets the same treatment (#1726) — otherwise
-    // the staged projection is re-rendered forever for a task that was
-    // never completed. Cleared after any staged write so it always wins.
-    const blockerDiscovered =
-      input.outcome === "failed" &&
-      typeof input.output === "object" && input.output !== null &&
-      (input.output as Record<string, unknown>)["blockerDiscovered"] === true;
-    if (input.outcome === "interrupted" || blockerDiscovered) {
-      setTaskSummaryMd(attempt.milestone_id, attempt.slice_id, attempt.task_id, "");
+    // A non-success Result cannot own a staged completion projection. Clear
+    // both DB sources after any staged write so cancellation always wins.
+    if (input.outcome !== "succeeded") {
+      clearTaskSummaryProjectionState(attempt.milestone_id, attempt.slice_id, attempt.task_id);
     }
     const settled = settleAttemptWithResult(context, input);
     terminalizeTaskExecutionDispatch(context, {
@@ -543,6 +538,55 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
     resultId: result.result_id,
     nextStage: nextStage(result.outcome),
   };
+}
+
+export function settleRunningAttemptsForWorker(workerId: string): string[] {
+  if (!isDbAvailable()) return [];
+  const attempts = getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.milestone_lease_token,
+           lifecycle.milestone_id
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    WHERE attempt.worker_id = :worker_id
+      AND attempt.attempt_state = 'running'
+      AND lifecycle.item_kind = 'task'
+    ORDER BY attempt.started_at, attempt.attempt_id
+  `).all({ ":worker_id": workerId }) as Array<{
+    attempt_id: string;
+    milestone_lease_token: number;
+    milestone_id: string;
+  }>;
+  const settledAttemptIds: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      // A stale heartbeat and its lease normally expire together. Renew only
+      // the dead worker's still-owned lease long enough to authorize its own
+      // settlement; a lease already taken over by another worker cannot renew.
+      if (!refreshMilestoneLease(
+        workerId,
+        attempt.milestone_id,
+        attempt.milestone_lease_token,
+      )) continue;
+      settleTaskAttempt({
+        invocation: internalExecutionInvocation(
+          `internal:crash-recovery:attempt.settle:${attempt.attempt_id}`,
+          { actorId: workerId },
+        ),
+        attemptId: attempt.attempt_id,
+        outcome: "interrupted",
+        failureClass: "stale-worker",
+        summary: "Interrupted running Task Attempt during stale worker cleanup",
+        output: { staleWorkerId: workerId },
+      });
+      settledAttemptIds.push(attempt.attempt_id);
+    } catch {
+      // Best-effort: lease-aware readers ignore any Attempt whose lease was
+      // concurrently taken over before settlement could commit.
+    }
+  }
+  return settledAttemptIds;
 }
 
 /**

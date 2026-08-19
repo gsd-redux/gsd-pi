@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   unlinkSync,
@@ -33,6 +34,7 @@ import { clearPathCache } from "../paths.js";
 import {
   claimTaskAttempt,
   readLatestTaskAttempt,
+  settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
@@ -43,7 +45,11 @@ import {
 import { checkEngineHealth } from "../doctor-engine-checks.js";
 import type { DoctorIssue } from "../doctor-types.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
-import { detectArtifactDbDrift } from "../state-reconciliation/drift/artifact-db.js";
+import {
+  describeArtifactDbDriftBlocker,
+  detectArtifactDbDrift,
+  repairArtifactDbDrift,
+} from "../state-reconciliation/drift/artifact-db.js";
 import type { GSDState } from "../types.js";
 
 interface TaskIdentity {
@@ -730,6 +736,34 @@ test("#1763: staging from a milestone worktree dual-writes the SUMMARY to the pr
   );
 });
 
+test("#1763: verified publication from a milestone worktree restores both SUMMARY projections", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, planPath, attemptId } = createFixture();
+  writeFileSync(join(basePath, ".git", "info", "exclude"), ".gsd-worktrees/\n");
+  const worktreePath = join(basePath, ".gsd-worktrees", "M001");
+  const worktreePhaseDir = join(worktreePath, ".gsd", "phases", "01-test");
+  mkdirSync(worktreePhaseDir, { recursive: true });
+  writeFileSync(join(worktreePhaseDir, "01-01-PLAN.md"), readFileSync(planPath, "utf8"));
+  const staged = await stageTaskCompletion(stageInput(worktreePath));
+
+  const { resolveTaskFile } = await import("../paths.js");
+  const rootSummary = resolveTaskFile(basePath, "M001", "S01", "T01", "SUMMARY");
+  assert.ok(rootSummary, "project-root SUMMARY path resolves");
+  unlinkSync(rootSummary);
+  unlinkSync(staged.summaryPath);
+  recordPassingHostVerdict(basePath, attemptId);
+
+  const published = await publishVerifiedTaskCompletion(publishInput(worktreePath, attemptId));
+
+  assert.equal(existsSync(rootSummary), true, "publication restores the canonical copy");
+  assert.equal(existsSync(published.summaryPath), true, "publication restores the worktree copy");
+  assert.equal(
+    readFileSync(rootSummary, "utf8"),
+    readFileSync(published.summaryPath, "utf8"),
+    "the project-root and worktree copies are byte-identical",
+  );
+});
+
 test("#1677: inside a worktree the classifier falls back to the project-root copy", async () => {
   const { stageTaskCompletion } = await subject();
   const { basePath } = createFixture();
@@ -795,6 +829,77 @@ test("#1726: a blockerDiscovered failure leaves no staged SUMMARY and no wedge",
     await renderTaskSummary(basePath, "M001", "S01", "T01"),
     false,
     "the renderer refuses re-projection",
+  );
+});
+
+test("#1726: an interrupted retry quarantines its abandoned staged SUMMARY without a blocker", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  const staged = await stageTaskCompletion(stageInput(basePath));
+  db().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-dispatch-2', 'turn-dispatch-2', 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 2, '2026-07-12T00:10:00.000Z'
+    )
+  `).run();
+  const retry = claimTaskAttempt({
+    invocation: invocation("task-completion/interrupted-retry-claim"),
+    task: TASK,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id),
+    retryOfAttemptId: attemptId,
+  });
+
+  settleTaskAttempt({
+    invocation: invocation("task-completion/interrupted-retry-settle"),
+    attemptId: retry.attemptId,
+    outcome: "interrupted",
+    failureClass: "operator-cancelled",
+    summary: "The retry was cancelled",
+    output: { cancelled: true },
+  });
+
+  assert.equal(row("SELECT full_summary_md FROM tasks WHERE id = 'T01'").full_summary_md, "");
+  assert.equal(count("artifacts"), 0, "settlement removes the stale artifact row atomically");
+  assert.equal(existsSync(staged.summaryPath), true, "the abandoned disk projection awaits quarantine");
+  const { renderTaskSummary } = await import("../markdown-renderer.js");
+  assert.equal(await renderTaskSummary(basePath, "M001", "S01", "T01"), false);
+
+  const state = reconciliationState();
+  const drift = detectArtifactDbDrift(state, { basePath, state }).find((record) =>
+    record.kind === "artifact-db-status-divergence" && record.taskId === "T01"
+  );
+  assert.ok(drift && drift.kind === "artifact-db-status-divergence");
+  const noncanonicalPath = join(basePath, ".gsd", "phases", "01-test", "T01-ALT-SUMMARY.md");
+  writeFileSync(noncanonicalPath, readFileSync(staged.summaryPath));
+  assert.match(
+    describeArtifactDbDriftBlocker({ ...drift, artifactPath: noncanonicalPath }, { basePath, state }) ?? "",
+    /Artifact\/DB status drift/,
+    "noncanonical cancellation artifacts remain fail-closed",
+  );
+  unlinkSync(noncanonicalPath);
+  assert.equal(
+    describeArtifactDbDriftBlocker(drift, { basePath, state }),
+    null,
+    "abandoned staging is auto-repairable",
+  );
+  await repairArtifactDbDrift(drift, { basePath, state });
+
+  assert.equal(existsSync(staged.summaryPath), false);
+  const quarantineRoot = join(basePath, ".gsd", "quarantine", "projections");
+  const quarantined = readdirSync(quarantineRoot, { recursive: true })
+    .map(String)
+    .find((path) => path.endsWith("T01-SUMMARY.md"));
+  assert.ok(quarantined, "the abandoned projection is preserved in quarantine");
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: false, reconciliationDivergence: false },
   );
 });
 

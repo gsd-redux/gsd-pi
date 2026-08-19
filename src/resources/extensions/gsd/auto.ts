@@ -232,7 +232,12 @@ import {
   getSlice,
   getTask,
 } from "./gsd-db.js";
-import { checkpointWorkflowDatabase, closeWorkflowDatabase } from "./db-workspace.js";
+import {
+  checkpointWorkflowDatabase,
+  closeWorkflowDatabase,
+  getWorkflowDatabaseStatus,
+  resolveProjectRootDbPath,
+} from "./db-workspace.js";
 import { markActiveForWorkerCanceled } from "./db/unit-dispatches.js";
 import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
@@ -242,6 +247,10 @@ import { formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
 import { clearSessionModelOverride } from "./session-model-override.js";
+import {
+  formatLockedWorkflowDatabaseNotice,
+  listWorkflowDbLockHolderPids,
+} from "./workflow-db-locks.js";
 
 function makeCmuxEmitters(pi: ExtensionAPI) {
   return {
@@ -2281,6 +2290,13 @@ export async function pauseAuto(
       autoStartTime: s.autoStartTime,
       milestoneLock: s.sessionMilestoneLock ?? undefined,
       pauseReason: _errorContext?.message,
+      lastPreExecFailure: s.lastPreExecFailure
+        ? {
+            ...s.lastPreExecFailure,
+            blockingFindings: [...s.lastPreExecFailure.blockingFindings],
+          }
+        : null,
+      preExecRetryCount: Object.fromEntries(s.preExecRetryCount),
     };
     setRuntimeKv("global", "", PAUSED_SESSION_KV_KEY, pausedMeta);
   } catch (err) {
@@ -2364,6 +2380,26 @@ export async function pauseAuto(
     lifecycle.notifyLevel,
   );
 }
+
+function restorePausedPreExecRepairState(
+  meta: PausedSessionMetadata,
+  session: Pick<AutoSession, "lastPreExecFailure" | "preExecRetryCount">,
+): void {
+  session.lastPreExecFailure = meta.lastPreExecFailure
+    ? {
+        ...meta.lastPreExecFailure,
+        blockingFindings: [...meta.lastPreExecFailure.blockingFindings],
+      }
+    : null;
+  session.preExecRetryCount.clear();
+  for (const [unitId, count] of Object.entries(meta.preExecRetryCount ?? {})) {
+    if (Number.isSafeInteger(count) && count > 0) {
+      session.preExecRetryCount.set(unitId, count);
+    }
+  }
+}
+
+export const _restorePausedPreExecRepairStateForTest = restorePausedPreExecRepairState;
 
 /**
  * Build a WorktreeLifecycle Module wrapping the current session.
@@ -2645,6 +2681,15 @@ export async function startAuto(
   // longer a silent counter reset. `/gsd auto --resume-wedge <id>` is the one
   // sanctioned re-entry.
   if (!(await ensureDbOpen(base))) {
+    const dbStatus = getWorkflowDatabaseStatus();
+    if (dbStatus.lastPhase === "locked") {
+      const holderPids = listWorkflowDbLockHolderPids(resolveProjectRootDbPath(base));
+      ctx.ui.notify(
+        formatLockedWorkflowDatabaseNotice(holderPids),
+        "error",
+      );
+      return;
+    }
     ctx.ui.notify(
       "Auto-mode blocked — liveness backstop unavailable: workflow database could not be opened. Run `/gsd doctor --fix` before retrying.",
       "error",
@@ -2784,6 +2829,7 @@ export async function startAuto(
             s.pausedUnitId = meta.unitId ?? null;
             s.autoStartTime = meta.autoStartTime || Date.now();
             s.sessionMilestoneLock = meta.milestoneLock ?? null;
+            restorePausedPreExecRepairState(meta, s);
             s.paused = true;
             // Build scope from persisted state. Use worktreePath when present and
             // still on disk so mode is detected correctly; fall back to project root.

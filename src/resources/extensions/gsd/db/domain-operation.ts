@@ -17,6 +17,7 @@ import {
 } from "../legacy-import-preview.js";
 import type { LegacyImportForwardRepairPlan } from "../legacy-import-forward-repair-plan.js";
 import type { LegacyImportValue } from "../legacy-import-contract.js";
+import { isSqliteBusyError } from "../sqlite-errors.js";
 import {
   assertDatabaseReplacementReceiptIntent,
   getDb,
@@ -951,12 +952,6 @@ function staleAuthority(request: DomainOperationRequestIdentity, authority: Auth
     GSD_REVISION_CONFLICT,
     `stale authority epoch: expected ${request.expectedAuthorityEpoch}, current ${authority.authority_epoch}`,
   );
-}
-
-function isSqliteBusyError(error: unknown): boolean {
-  const code = String((error as { code?: unknown })?.code ?? "");
-  const message = String((error as { message?: unknown })?.message ?? error);
-  return code.includes("SQLITE_BUSY") || /SQLITE_BUSY|database is locked/i.test(message);
 }
 
 function runDomainOperationTransaction(fn: () => DomainOperationResult): DomainOperationResult {

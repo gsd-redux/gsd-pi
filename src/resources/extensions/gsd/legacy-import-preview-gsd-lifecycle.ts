@@ -945,10 +945,86 @@ export function validateLegacyGsdLifecycleManifest(
   );
 }
 
-function artifactFor(file: SourceFile): LifecycleArtifact | undefined {
+function flatMilestoneId(phase: string, slug: string | undefined, state?: ManifestState): string {
+  const numericId = `M${phase.padStart(3, "0")}`;
+  if (state === undefined) return numericId;
+  const ids = new Set([
+    ...state.milestones.map((record) => textField(record.value, "id")),
+    ...state.slices.map((record) => textField(record.value, "milestone_id")),
+    ...state.tasks.map((record) => textField(record.value, "milestone_id")),
+  ].filter((id): id is string => id !== undefined));
+  const matches = [...ids].filter((id) => Number(/^M0*(\d+)/u.exec(id)?.[1]) === Number(phase));
+  const teamSuffix = /^([a-z0-9]{6})(?:-|$)/u.exec(slug ?? "")?.[1];
+  return matches.find((id) => teamSuffix !== undefined && id.endsWith(`-${teamSuffix}`))
+    ?? (matches.length === 1 ? matches[0] : numericId);
+}
+
+function artifactFor(file: SourceFile, state?: ManifestState): LifecycleArtifact | undefined {
   if (file.encoding !== "utf-8" || file.outcome === "unparsed") return undefined;
   const path = file.entry.logical_path;
-  let match = new RegExp(`^\\.gsd/milestones/(${MILESTONE_ID})/\\1-(ROADMAP|SUMMARY|PARKED)\\.md$`, "u").exec(path);
+  let match = /^\.gsd\/phases\/(\d+)(?:-([^/]+))?\/\1-(ROADMAP|SUMMARY|PARKED)\.md$/u.exec(path);
+  if (match !== null) {
+    const milestoneId = flatMilestoneId(match[1], match[2], state);
+    const sliceId = `S${match[1].padStart(2, "0")}`;
+    if (match[3] === "SUMMARY" && lineMatching(file, new RegExp(`^#\\s+${sliceId}\\b`, "u")) !== undefined) {
+      return { file, role: "slice-summary", milestoneId, sliceId };
+    }
+    const role = {
+      ROADMAP: "milestone-roadmap",
+      SUMMARY: "milestone-summary",
+      PARKED: "milestone-parked",
+    } as const;
+    return { file, role: role[match[3] as keyof typeof role], milestoneId };
+  }
+  match = /^\.gsd\/phases\/(\d+)(?:-([^/]+))?\/(?:\1-)?(\d+)-(PLAN|SUMMARY)\.md$/u.exec(path);
+  if (match !== null) {
+    return {
+      file,
+      role: match[4] === "PLAN" ? "slice-plan" : "slice-summary",
+      milestoneId: flatMilestoneId(match[1], match[2], state),
+      sliceId: `S${match[3].padStart(2, "0")}`,
+    };
+  }
+  match = /^\.gsd\/phases\/(\d+)(?:-([^/]+))?\/(S\d+)-(T\d+)-SUMMARY\.md$/u.exec(path);
+  if (match !== null) {
+    return {
+      file,
+      role: "nested-task-summary",
+      milestoneId: flatMilestoneId(match[1], match[2], state),
+      sliceId: match[3],
+      taskId: match[4],
+    };
+  }
+  match = /^\.gsd\/phases\/(\d+)(?:-([^/]+))?\/(T\d+)-SUMMARY\.md$/u.exec(path);
+  if (match !== null) {
+    const milestoneId = flatMilestoneId(match[1], match[2], state);
+    const taskId = match[3];
+    let sliceId: string | undefined;
+    for (const line of file.lines) {
+      const parent = /^(?:parent|slice):\s*["']?(S\d+)["']?\s*$/u.exec(line.text);
+      if (parent !== null) {
+        sliceId = parent[1];
+        break;
+      }
+    }
+    if (sliceId === undefined) {
+      const matchingSlices = new Set((state?.tasks ?? []).flatMap((record) => (
+        textField(record.value, "milestone_id") === milestoneId
+          && textField(record.value, "id") === taskId
+          ? textField(record.value, "slice_id") ?? []
+          : []
+      )));
+      if (matchingSlices.size === 1) sliceId = [...matchingSlices][0];
+    }
+    return sliceId === undefined ? undefined : {
+      file,
+      role: "nested-task-summary",
+      milestoneId,
+      sliceId,
+      taskId,
+    };
+  }
+  match = new RegExp(`^\\.gsd/milestones/(${MILESTONE_ID})/\\1-(ROADMAP|SUMMARY|PARKED)\\.md$`, "u").exec(path);
   if (match !== null) {
     const role = {
       ROADMAP: "milestone-roadmap",
@@ -1546,7 +1622,7 @@ export function interpretLegacyGsdLifecycle(
   );
   if (state === undefined) return;
   interpretVersionedManifestRows(state, candidates, completeRowSets);
-  const artifacts = files.flatMap((file) => artifactFor(file) ?? []);
+  const artifacts = files.flatMap((file) => artifactFor(file, state) ?? []);
   if (state.milestones.length === 0 && state.slices.length === 0 && state.tasks.length === 0) return;
   markArtifacts(artifacts);
   const byRole = artifactsByRole(artifacts);
