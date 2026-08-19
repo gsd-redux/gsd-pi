@@ -8,7 +8,8 @@ This document maps **what protects what** across local scripts and CI. Use it wh
 |------|-------------|---------------|---------------|
 | Every push | `npm run verify:fast` | `fast-gates` | Yes |
 | Fast iteration while editing | `npm run verify:pr` | Partial `build` job (`build:core` + unit tests) | No — not sufficient alone |
-| **Before requesting PR review** | **`npm run verify:merge`** | `build` | Yes (when `heavy-code-changed`) |
+| Decide whether the heavy merge gate is needed | `npm run verify:merge:needed -- --base upstream/main` | `fast-gates` path classification | No — advisory |
+| **Before requesting PR review on heavy-code changes** | **`npm run verify:merge`** | `build` | Yes (when `heavy-code-changed`) |
 | Full evaluation baseline | `npm run test:evaluation` | Partial (blocking tiers + auxiliary) | No |
 | Repo-wide coverage report | `npm run test:coverage:full` | `Coverage report` workflow | Separate workflow |
 | Coverage thresholds | `npm run test:coverage` | `Coverage report` workflow | Separate workflow |
@@ -64,7 +65,7 @@ When `heavy-code-changed=true`, CI runs the Linux build and test stack in one jo
 Native package tests are skipped in the main Linux package-test step unless native/portability paths changed; otherwise a full Rust native rebuild can dominate unrelated CI runs.
 Compiled package tests use Node's `--test-force-exit` so leaked handles in one package do not idle until the CI watchdog fires after all assertions pass.
 
-Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`). It also builds `pnpm run build:native:test` and stages `dist-test/native/addon/` with `GSD_NATIVE_PREFER_LOCAL=1`, matching the CI `build` job. Requires a local Rust toolchain.
+Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`). It also builds `pnpm run build:native:test` and stages `dist-test/native/addon/` with `GSD_NATIVE_PREFER_LOCAL=1`, matching the CI `build` job; requires a local Rust toolchain. Use `npm run verify:merge:needed -- --base upstream/main` first so you only pay for it when the diff would actually trigger CI's heavy Linux gate.
 
 `verify:fast` also runs:
 
@@ -88,7 +89,7 @@ Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially
 
 `verify:pr` is a **fast inner loop** (~5–15 min): `build:core` → `typecheck:extensions` → `test:unit`.
 
-It is intentionally lighter than CI. Do not treat a passing `verify:pr` as merge-ready. Use `verify:merge` before requesting review.
+It is intentionally lighter than CI. Do not treat a passing `verify:pr` as merge-ready when `verify:merge:needed` says the diff triggers the heavy Linux gate. Start with `verify:merge:needed`, then pay for `verify:merge` only when the path classification says it matters or when you want extra confidence.
 
 `verify:full` is an alias for `verify:merge` (kept for backward compatibility).
 

@@ -138,6 +138,7 @@
     "verify:fast": "pnpm install --frozen-lockfile --ignore-scripts && bash scripts/ci-fast-gates.sh",
     "verify:pr": "pnpm run build:core && pnpm run typecheck:extensions && pnpm run test:unit && pnpm run gate:lifecycle-shadow-no-cutover",
     "verify:merge": "bash scripts/verify-merge.sh",
+    "verify:merge:needed": "bash scripts/verify-merge-needed.sh",
     "verify:full": "pnpm run verify:merge",
     "pipeline:version-stamp": "node scripts/version-stamp.mjs",
     "release:changelog": "node scripts/generate-changelog.mjs",

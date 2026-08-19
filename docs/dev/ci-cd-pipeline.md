@@ -110,7 +110,7 @@ See [Test confidence stack](./test-confidence-stack.md) for the code-area → ru
 | Platform | Docker e2e step in `build`, `windows-portability` | Path-gated; Docker runs only when `docker-changed=true`, Windows runs only when portability paths change | Yes when triggered |
 | Platform (warn) | Windows e2e smoke step inside `windows-portability` | `windows-e2e-changed=true` | **No** (`continue-on-error: true`) |
 
-**Local before review:** `npm run verify:merge` — sequential parity with PR blocking jobs above (except path-gated platform jobs).
+**Local before review:** run `npm run verify:merge:needed -- --base upstream/main` first. If it reports `heavy-code-changed=true`, then run `npm run verify:merge` for sequential parity with the PR-blocking Linux jobs above (except path-gated platform jobs). If not, `verify:fast` plus targeted checks is usually sufficient.
 
 **Branch protection:** Required checks should include `fast-gates` and `build` for full Linux merge confidence. Keep `windows-portability` required only if GitHub branch protection is configured to handle skipped path-gated checks correctly.
 

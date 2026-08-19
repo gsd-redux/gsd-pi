@@ -53,12 +53,13 @@ CI is tiered to match local scripts. See [Test confidence stack](docs/dev/test-c
 ```bash
 pnpm run verify:fast    # ~1–3 min: same scans as CI fast-gates (secrets, docs injection, skill refs)
 pnpm run verify:pr      # ~5–15 min: fast inner loop — build:core → typecheck:extensions → test:unit
-pnpm run verify:merge   # ~20–40 min: CI PR blocking parity (native test addon, build, all test jobs, validate-pack)
+pnpm run verify:merge:needed -- --base upstream/main  # decide whether this diff really needs the full merge gate
+pnpm run verify:merge   # ~20–60+ min on large diffs: CI PR blocking parity (native test addon, build, all test jobs, validate-pack)
 pnpm run verify:full    # Alias for verify:merge
 pnpm run audit:test-confidence   # Inventory report: runners, tiers, thin areas
 ```
 
-Run `verify:fast` on every push. While iterating, `verify:pr` is enough for a quick check. **Before requesting review** on a PR that touches `src/`, `packages/`, or tests, run **`verify:merge`** — a passing `verify:pr` alone does not match what CI requires to merge.
+Run `verify:fast` on every push. While iterating, `verify:pr` is enough for a quick check. Before requesting review, run `pnpm run verify:merge:needed -- --base upstream/main` first. If it reports that the diff is `heavy-code-changed=true`, run `verify:merge`; otherwise `verify:fast` plus targeted checks is enough unless you want extra confidence. A passing `verify:pr` alone does not match what CI requires when the heavy Linux gate will run.
 
 `verify:merge` builds the native engine with `pnpm run build:native:test` (needs Rust/`rustc`) and copies `native/addon/*.node` into `dist-test/native/addon/` with `GSD_NATIVE_PREFER_LOCAL=1`, matching CI. Without that, compiled unit tests fail on a fresh checkout because the published `@opengsd/engine-*` binary can lag N-API exports such as `ProjectionRootIdentityLock`.
 
@@ -114,7 +115,7 @@ git fetch origin
 git rebase origin/main
 ```
 
-CI must pass before your PR will be reviewed. Run `pnpm run verify:fast` on every push and `pnpm run verify:merge` before requesting review on code changes.
+CI must pass before your PR will be reviewed. Run `pnpm run verify:fast` on every push, use `pnpm run verify:merge:needed -- --base upstream/main` to decide whether the full local merge gate is warranted, and reserve `pnpm run verify:merge` for diffs that would trigger CI's heavy Linux build/test gate or when you explicitly want the extra confidence.
 
 ## Working with GSD (team workflow)
 
@@ -163,7 +164,7 @@ If this is a non-trivial change, explain the design and any alternatives you con
 ### Requirements
 
 - **CI must pass.** If your PR breaks tests, fix them before requesting review.
-- **Run `pnpm run verify:merge` locally before requesting review.** Use `verify:pr` only as a fast inner loop. See [Local development](#local-development) and [Test confidence stack](docs/dev/test-confidence-stack.md).
+- **Run `pnpm run verify:merge` locally before requesting review only when `pnpm run verify:merge:needed -- --base upstream/main` says the diff triggers the heavy CI gate.** Use `verify:pr` only as a fast inner loop. See [Local development](#local-development) and [Test confidence stack](docs/dev/test-confidence-stack.md).
 - **One concern per PR.** A bug fix is a bug fix. A feature is a feature. Don't bundle unrelated changes.
 - **No drive-by formatting.** Don't reformat code you didn't change. Don't reorder imports in files you're not modifying.
 - **Link issues when relevant.** Not mandatory for every PR, but if an issue exists, reference it.
