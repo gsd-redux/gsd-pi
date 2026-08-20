@@ -116,7 +116,7 @@ test('migrate-hier: single milestone with 2 slices, 3 tasks', () => {
       const milestones = getAllMilestones();
       assert.deepStrictEqual(milestones.length, 1, 'single-ms: 1 milestone in DB');
       assert.deepStrictEqual(milestones[0]!.id, 'M001', 'single-ms: milestone ID is M001');
-      assert.deepStrictEqual(milestones[0]!.title, 'M001: Test Milestone', 'single-ms: milestone title correct');
+      assert.deepStrictEqual(milestones[0]!.title, 'Test Milestone', 'single-ms: milestone title correct');
       assert.deepStrictEqual(milestones[0]!.status, 'active', 'single-ms: milestone status is active');
 
       const slices = getMilestoneSlices('M001');
@@ -356,7 +356,7 @@ test('migrate-hier: empty roadmap, no slices', () => {
 
       const milestones = getAllMilestones();
       assert.deepStrictEqual(milestones.length, 1, 'empty-roadmap: 1 milestone in DB');
-      assert.deepStrictEqual(milestones[0]!.title, 'M001: Empty Milestone', 'empty-roadmap: title correct');
+      assert.deepStrictEqual(milestones[0]!.title, 'Empty Milestone', 'empty-roadmap: title correct');
 
       const slices = getMilestoneSlices('M001');
       assert.deepStrictEqual(slices.length, 0, 'empty-roadmap: no slices in DB');
