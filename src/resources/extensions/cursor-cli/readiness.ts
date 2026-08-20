@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 
 const VERSION_TIMEOUT_MS = 5_000;
 const STATUS_TIMEOUT_MS = 10_000;
+const LIST_MODELS_TIMEOUT_MS = 15_000;
 const CHECK_INTERVAL_MS = 30_000;
 
 let cachedBinaryPresent: boolean | null = null;
@@ -137,4 +138,15 @@ export function clearCursorAgentReadinessCache(): void {
 	cachedBinaryPresent = null;
 	cachedAuthed = null;
 	lastCheckMs = 0;
+}
+
+export function readCursorAgentListModels(): string | null {
+	const command = findWorkingCommand();
+	if (!command) return null;
+	try {
+		return spawnCursorAgent(command, ["--list-models"], LIST_MODELS_TIMEOUT_MS).toString("utf8");
+	} catch (error) {
+		debugLog("list-models failed", (error as Error).message?.slice(0, 200));
+		return null;
+	}
 }
