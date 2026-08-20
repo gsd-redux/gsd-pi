@@ -260,6 +260,7 @@ function buildTranscript(testedSourceRevision: string, workingDirectory: string)
 							verify: "node --test test/answer.test.js",
 							inputs: ["src/answer.js", "test/answer.test.js"],
 							expectedOutput: ["src/answer.js"],
+							requiredWorkflowTools: [],
 							observabilityImpact: "None.",
 						}],
 					},

@@ -50,6 +50,7 @@ function slicePlanInput(sliceId: "S01" | "S02", file: string, verify: string, ex
 			verify,
 			inputs: [file, "test/answer.test.js", "test/status.test.js"],
 			expectedOutput: [file],
+			requiredWorkflowTools: [],
 			observabilityImpact: "None.",
 		}],
 	};

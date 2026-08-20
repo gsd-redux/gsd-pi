@@ -50,6 +50,7 @@ function slicePlanInput(file: string, verify: string, expected: string): Record<
 			verify,
 			inputs: [file, "test/answer.test.js", "test/status.test.js"],
 			expectedOutput: [file],
+			requiredWorkflowTools: [],
 			observabilityImpact: "None.",
 		}],
 	};
