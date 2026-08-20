@@ -21,6 +21,7 @@ import {
 	buildPromptFromContext,
 	buildSdkQueryPrompt,
 	buildSdkOptions,
+	CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV,
 	resolveClaudeCodeCwd,
 	createClaudeCodeCanUseToolHandler,
 	buildBashPermissionPattern,
@@ -1525,6 +1526,96 @@ describe("claude-code-cli — Claude Fable 5 Opus-tier support", () => {
 		const options = buildSdkOptions("claude-haiku-4-5", "test prompt", undefined, { reasoning: "xhigh" });
 		assert.equal(options.effort, "high", "xhigh must clamp to high for non-Opus-tier models");
 		assert.deepEqual(options.betas, [], "Haiku must not enable the 1M-context beta");
+	});
+});
+
+describe("stream-adapter — print bg wait ceiling (#1855)", () => {
+	function withCeilingEnv(value: string | undefined): () => void {
+		const previous = process.env[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV];
+		if (value === undefined) {
+			delete process.env[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV];
+		} else {
+			process.env[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV] = value;
+		}
+		return () => {
+			if (previous === undefined) {
+				delete process.env[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV];
+			} else {
+				process.env[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV] = previous;
+			}
+		};
+	}
+
+	test("buildSdkOptions includes CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 unless already set", () => {
+		const restore = withCeilingEnv(undefined);
+		try {
+			const options = buildSdkOptions("claude-sonnet-4-20250514", "test prompt");
+			const env = options.env as NodeJS.ProcessEnv | undefined;
+			assert.equal(env?.[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV], "0");
+			assert.equal(typeof options.stderr, "function");
+		} finally {
+			restore();
+		}
+	});
+
+	test("buildSdkOptions preserves an existing CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", () => {
+		const restore = withCeilingEnv("20000");
+		try {
+			const options = buildSdkOptions("claude-sonnet-4-20250514", "test prompt");
+			const env = options.env as NodeJS.ProcessEnv | undefined;
+			assert.equal(env?.[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV], "20000");
+		} finally {
+			restore();
+		}
+	});
+
+	test("buildSdkOptions stderr sink logs the CLI print wind-down warning", () => {
+		const options = buildSdkOptions("claude-sonnet-4-20250514", "test prompt");
+		const stderr = options.stderr as (data: unknown) => void;
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (...args: unknown[]) => {
+			warnings.push(args.map(String).join(" "));
+		};
+		try {
+			stderr("Background tasks still running after 600s; terminating.\nSet CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.\n");
+			stderr("unrelated cli chatter\n");
+			assert.equal(warnings.length, 1);
+			assert.match(warnings[0]!, /\[claude-code\].*Background tasks still running after 600s/);
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	test("query options keep the print bg wait ceiling after observation-token injection", async () => {
+		const restore = withCeilingEnv(undefined);
+		const cwd = mkdtempSync(join(tmpdir(), "claude-sdk-bg-wait-"));
+		let capturedEnv: NodeJS.ProcessEnv | undefined;
+		let capturedStderr: unknown;
+		try {
+			const stream = streamViaClaudeCode(
+				{ id: "claude-sonnet-4-6" } as any,
+				{ messages: [{ role: "user", content: "Continue." } as Message] },
+				{
+					cwd,
+					_skipWorkflowMcpPreflightForTest: true,
+					async *_sdkQueryForTest(args: {
+						prompt: string | AsyncIterable<unknown>;
+						options?: Record<string, unknown>;
+					}) {
+						capturedEnv = args.options?.env as NodeJS.ProcessEnv | undefined;
+						capturedStderr = args.options?.stderr;
+						yield makeSdkSuccessResult("finished");
+					},
+				} as any,
+			);
+			await stream.result();
+			assert.equal(capturedEnv?.[CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS_ENV], "0");
+			assert.equal(typeof capturedStderr, "function");
+		} finally {
+			restore();
+			rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 });
 
