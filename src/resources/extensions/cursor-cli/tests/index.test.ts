@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import cursorCli, { probeAndRegisterCursorModels } from "../index.ts";
+import { CURSOR_AGENT_MODELS } from "../models.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 
@@ -21,6 +22,10 @@ function makeMockPi() {
 		},
 	};
 	return { pi, providers, handlers };
+}
+
+function modelIds(providers: Array<{ config: Record<string, unknown> }>): string[] {
+	return (providers[0]?.config.models as Array<{ id: string }>).map((model) => model.id);
 }
 
 test("registers the cursor-agent provider with external CLI auth", () => {
@@ -55,13 +60,58 @@ test("session_start rediscovers CLI models and replaces the fallback catalog (#1
 	cursorCli(pi as never);
 	assert.equal((providers[0].config.models as Array<{ id: string }>).some((m) => m.id === "composer-2.5"), true);
 
-	probeAndRegisterCursorModels(pi as never, () =>
-		["gpt-5.6-sol-high - GPT-5.6 Sol 1M High", "composer-2.5 - Composer 2.5 (current)"].join("\n"),
+	probeAndRegisterCursorModels(
+		pi as never,
+		() => ["gpt-5.6-sol-high - GPT-5.6 Sol 1M High", "composer-2.5 - Composer 2.5 (current)"].join("\n"),
+		() => true,
 	);
 	assert.equal(providers.length, 1);
 	const models = providers[0].config.models as Array<{ id: string }>;
 	assert.deepEqual(models.map((m) => m.id), ["gpt-5.6-sol-high", "composer-2.5"]);
 	assert.equal(typeof handlers.session_start, "function");
+});
+
+test("session_start does not block on live catalog discovery in headless (#1869)", () => {
+	const { pi, providers, handlers } = makeMockPi();
+	cursorCli(pi as never);
+	const before = providers[0].config.models;
+
+	const result = handlers.session_start({}, { hasUI: false });
+	assert.equal(result, undefined);
+	assert.equal(handlers.session_start.constructor.name, "Function");
+	assert.equal(providers[0].config.models, before);
+	assert.deepEqual(modelIds(providers), CURSOR_AGENT_MODELS.map((model) => model.id));
+});
+
+test("probe skips --list-models when the cursor-agent binary is missing (#1869)", () => {
+	const { pi, providers } = makeMockPi();
+	cursorCli(pi as never);
+	let reads = 0;
+	const models = probeAndRegisterCursorModels(
+		pi as never,
+		() => {
+			reads += 1;
+			return "kimi-k3 - Kimi K3";
+		},
+		() => false,
+	);
+	assert.equal(reads, 0);
+	assert.equal(models, CURSOR_AGENT_MODELS);
+	assert.deepEqual(modelIds(providers), CURSOR_AGENT_MODELS.map((model) => model.id));
+});
+
+test("probe keeps the fallback catalog when list-models throws (#1869)", () => {
+	const { pi, providers } = makeMockPi();
+	cursorCli(pi as never);
+	const models = probeAndRegisterCursorModels(
+		pi as never,
+		() => {
+			throw new Error("cursor-agent --list-models failed");
+		},
+		() => true,
+	);
+	assert.equal(models, CURSOR_AGENT_MODELS);
+	assert.deepEqual(modelIds(providers), CURSOR_AGENT_MODELS.map((model) => model.id));
 });
 
 test("GSD_CURSOR_DISABLE keeps the provider dormant", () => {
@@ -76,4 +126,3 @@ test("GSD_CURSOR_DISABLE keeps the provider dormant", () => {
 		else process.env.GSD_CURSOR_DISABLE = original;
 	}
 });
-
