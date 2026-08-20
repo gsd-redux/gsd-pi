@@ -61,7 +61,9 @@ Use `gsd_reassess_roadmap` with `verdict: "roadmap-confirmed"`, an empty `sliceC
 
 **Persist changes through `gsd_reassess_roadmap`.** Pass: `milestoneId`, `completedSliceId`, `verdict` (e.g. "roadmap-adjusted"), `assessment` (text explaining the decision), and `sliceChanges` with `modified` (array of sliceId, title, risk, depends, demo), `added` (same shape), `removed` (array of slice ID strings). The tool structurally enforces preservation of completed slices, writes the assessment to the DB, re-renders `{{roadmapPath}}`, and renders `{{assessmentPath}}`.
 
-If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, update it.
+When runtime evidence proves milestone success criteria, verification language, requirement coverage, boundary-map text, or a completed slice's demo/boundary evidence is stale, pass the narrowly scoped `metadataCorrections` object. Use `metadataCorrections.milestone` for acceptance fields and `metadataCorrections.completedSlices` for explicit evidence fields on completed slices. This DB-backed path preserves all statuses, tasks, dependencies, and completed-slice structure. Do not put metadata reconciliation in an execution task and do not edit rendered roadmap projections directly.
+
+If requirement ownership language changed, correct the milestone's `requirementCoverage` metadata here. Requirement status terminalization remains owned by `complete-slice` or `complete-milestone`; do not edit `.gsd/REQUIREMENTS.md` directly or assign that mutation to an execution task.
 
 {{commitInstruction}}
 

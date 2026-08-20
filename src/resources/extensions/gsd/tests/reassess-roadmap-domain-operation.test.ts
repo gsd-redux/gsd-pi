@@ -14,8 +14,10 @@ import {
   closeDatabase,
   executeDomainOperation,
   getAssessment,
+  getMilestone,
   getSlice,
   getTask,
+  insertAssessment,
   insertMilestone,
   insertSlice,
   openDatabase,
@@ -252,6 +254,128 @@ test("reassessment preserves its response and adopts added slices with progressi
   assert.equal(count("workflow_operations"), 2, "seed plus reassessment operations");
   assert.equal(count("workflow_domain_events"), 2);
   assert.equal(eventLines(base).filter((line) => line.includes('"cmd":"reassess-roadmap"')).length, 1);
+});
+
+test("reassessment corrects milestone and completed-slice evidence metadata without changing completed structure", async () => {
+  const { base } = fixture();
+  adoptDriftedTerminalLifecycle("milestone");
+  db().prepare("UPDATE milestones SET status = 'complete' WHERE id = 'M001'").run();
+  insertTask({
+    id: "T01",
+    milestoneId: "M001",
+    sliceId: "S01",
+    title: "Completed evidence task",
+    status: "complete",
+    planning: {
+      description: "Preserved completed work.",
+      estimate: "15m",
+      files: [],
+      verify: "node --test",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "Original task evidence.",
+      requiredWorkflowTools: [],
+    },
+  });
+  const beforeTask = getTask("M001", "S01", "T01");
+  const beforeMilestoneLifecycle = db().prepare(
+    "SELECT lifecycle_status, state_version FROM workflow_item_lifecycles WHERE item_kind = 'milestone' AND milestone_id = 'M001'",
+  ).get();
+  const validationDbPath = ".gsd/phases/01-test-milestone/01-VALIDATION.md";
+  const validationFilePath = join(base, validationDbPath);
+  insertAssessment({
+    path: validationDbPath,
+    milestoneId: "M001",
+    status: "passed",
+    scope: "milestone-validation",
+    fullContent: "PASS against the superseded acceptance contract.",
+  });
+  writeFileSync(validationFilePath, "# Superseded milestone validation\n", "utf8");
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: [] },
+    metadataCorrections: {
+      milestone: {
+        successCriteria: ["Runtime evidence proves the corrected acceptance policy."],
+        verificationContract: "Verify the observed runtime policy.",
+        requirementCoverage: "R001 is covered by completed slice S01 evidence.",
+        boundaryMapMarkdown: "S01 -> runtime acceptance evidence",
+      },
+      completedSlices: [{
+        sliceId: "S01",
+        demo: "The corrected runtime acceptance policy is demonstrable.",
+        goal: "Preserve the delivered boundary while correcting its evidence language.",
+        successCriteria: "Runtime acceptance evidence is recorded.",
+        integrationClosure: "The completed integration boundary remains unchanged.",
+        observabilityImpact: "Use the corrected runtime signal.",
+      }],
+    },
+  }, base, invocation("reassess/metadata-correction"));
+
+  assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+  assert.equal(getMilestone("M001")?.status, "complete");
+  assert.deepEqual(getMilestone("M001")?.success_criteria, ["Runtime evidence proves the corrected acceptance policy."]);
+  assert.equal(getMilestone("M001")?.requirement_coverage, "R001 is covered by completed slice S01 evidence.");
+  const completedSlice = getSlice("M001", "S01");
+  assert.equal(completedSlice?.status, "complete");
+  assert.equal(completedSlice?.demo, "The corrected runtime acceptance policy is demonstrable.");
+  assert.equal(completedSlice?.success_criteria, "Runtime acceptance evidence is recorded.");
+  assert.deepEqual(getTask("M001", "S01", "T01"), beforeTask, "metadata correction must not mutate completed task rows");
+  assert.deepEqual(db().prepare(
+    "SELECT lifecycle_status, state_version FROM workflow_item_lifecycles WHERE item_kind = 'milestone' AND milestone_id = 'M001'",
+  ).get(), beforeMilestoneLifecycle, "metadata correction must preserve completed milestone lifecycle state");
+  assert.equal(getAssessment(validationDbPath), null, "acceptance correction must invalidate the superseded validation verdict");
+  assert.equal(existsSync(validationFilePath), false, "acceptance correction must remove the superseded validation projection");
+  const roadmap = readFileSync((result as ReassessRoadmapResult).roadmapPath, "utf8");
+  assert.match(roadmap, /Runtime evidence proves the corrected acceptance policy/);
+  assert.match(roadmap, /The corrected runtime acceptance policy is demonstrable/);
+  assert.match(roadmap, /S01 -> runtime acceptance evidence/);
+});
+
+test("completed-slice metadata correction rejects pending slices without residue", async () => {
+  const { base } = fixture();
+  const before = {
+    operations: count("workflow_operations"),
+    slice: getSlice("M001", "S02"),
+  };
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: [] },
+    metadataCorrections: {
+      completedSlices: [{ sliceId: "S02", demo: "Must not be applied." }],
+    },
+  }, base, invocation("reassess/reject-pending-metadata"));
+
+  assert.ok("error" in result);
+  assert.match(result.error, /metadata correction.*S02.*not complete/i);
+  assert.deepEqual({
+    operations: count("workflow_operations"),
+    slice: getSlice("M001", "S02"),
+  }, before);
+});
+
+test("completed-slice metadata correction rejects structural fields", async () => {
+  const { base } = fixture();
+  const before = getSlice("M001", "S01");
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: [] },
+    metadataCorrections: {
+      completedSlices: [{
+        sliceId: "S01",
+        demo: "Evidence-only correction.",
+        status: "pending",
+      } as never],
+    },
+  }, base, invocation("reassess/reject-structural-metadata"));
+
+  assert.ok("error" in result);
+  assert.match(result.error, /status.*not an allowed correction field/i);
+  assert.deepEqual(getSlice("M001", "S01"), before);
+  assert.equal(count("workflow_operations"), 1, "only the fixture lifecycle seed should remain");
 });
 
 test("exact reassessment replay repairs projections without another mutation or JSONL event", async () => {

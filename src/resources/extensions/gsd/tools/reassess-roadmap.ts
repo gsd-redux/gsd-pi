@@ -12,7 +12,7 @@ import {
 import { deriveCompatProjectionKey } from "../compat/compat-marker.js";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
-import { isNonEmptyString } from "../validation.js";
+import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { removeProjectionFileSync } from "../atomic-write.js";
 import {
   adoptLifecycleIfMissing,
@@ -25,6 +25,8 @@ import {
   insertSlice,
   normalizeLegacyLifecycleStatus,
   projectCanonicalStatusToLegacy,
+  upsertMilestonePlanning,
+  upsertSlicePlanning,
   updateSliceFields,
   insertAssessment,
   deleteAssessmentByScope,
@@ -64,6 +66,27 @@ export interface ReassessRoadmapParams {
     modified: SliceChangeInput[];
     added: SliceChangeInput[];
     removed: string[];
+  };
+  metadataCorrections?: {
+    milestone?: {
+      successCriteria?: string[];
+      verificationContract?: string;
+      verificationIntegration?: string;
+      verificationOperational?: string;
+      verificationUat?: string;
+      definitionOfDone?: string[];
+      requirementCoverage?: string;
+      boundaryMapMarkdown?: string;
+    };
+    completedSlices?: Array<{
+      sliceId: string;
+      demo?: string;
+      goal?: string;
+      successCriteria?: string;
+      proofLevel?: string;
+      integrationClosure?: string;
+      observabilityImpact?: string;
+    }>;
   };
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
@@ -132,6 +155,90 @@ function validateParams(params: ReassessRoadmapParams): ReassessRoadmapParams {
 
   const SLICE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
+  const metadataCorrections = params.metadataCorrections;
+  if (metadataCorrections !== undefined) {
+    if (!metadataCorrections || typeof metadataCorrections !== "object" || Array.isArray(metadataCorrections)) {
+      throw new Error("metadataCorrections must be an object when provided");
+    }
+    const metadataKeys = Object.keys(metadataCorrections);
+    const unknownMetadataKey = metadataKeys.find((key) => key !== "milestone" && key !== "completedSlices");
+    if (unknownMetadataKey) throw new Error(`metadataCorrections.${unknownMetadataKey} is not an allowed correction field`);
+
+    if (metadataCorrections.milestone !== undefined) {
+      const milestone = metadataCorrections.milestone;
+      if (!milestone || typeof milestone !== "object" || Array.isArray(milestone)) {
+        throw new Error("metadataCorrections.milestone must be an object");
+      }
+      const allowedMilestoneFields = new Set([
+        "successCriteria",
+        "verificationContract",
+        "verificationIntegration",
+        "verificationOperational",
+        "verificationUat",
+        "definitionOfDone",
+        "requirementCoverage",
+        "boundaryMapMarkdown",
+      ]);
+      const unknownField = Object.keys(milestone).find((key) => !allowedMilestoneFields.has(key));
+      if (unknownField) throw new Error(`metadataCorrections.milestone.${unknownField} is not an allowed correction field`);
+      if (Object.keys(milestone).length === 0) throw new Error("metadataCorrections.milestone must include at least one correction");
+      for (const field of ["successCriteria", "definitionOfDone"] as const) {
+        if (milestone[field] !== undefined) validateStringArray(milestone[field], `metadataCorrections.milestone.${field}`);
+      }
+      for (const field of [
+        "verificationContract",
+        "verificationIntegration",
+        "verificationOperational",
+        "verificationUat",
+        "requirementCoverage",
+        "boundaryMapMarkdown",
+      ] as const) {
+        if (milestone[field] !== undefined && typeof milestone[field] !== "string") {
+          throw new Error(`metadataCorrections.milestone.${field} must be a string`);
+        }
+      }
+    }
+
+    if (metadataCorrections.completedSlices !== undefined) {
+      if (!Array.isArray(metadataCorrections.completedSlices)) {
+        throw new Error("metadataCorrections.completedSlices must be an array");
+      }
+      const seenCorrectionIds = new Set<string>();
+      const allowedSliceFields = new Set([
+        "sliceId",
+        "demo",
+        "goal",
+        "successCriteria",
+        "proofLevel",
+        "integrationClosure",
+        "observabilityImpact",
+      ]);
+      for (let i = 0; i < metadataCorrections.completedSlices.length; i++) {
+        const correction = metadataCorrections.completedSlices[i];
+        if (!correction || typeof correction !== "object" || Array.isArray(correction)) {
+          throw new Error(`metadataCorrections.completedSlices[${i}] must be an object`);
+        }
+        const unknownField = Object.keys(correction).find((key) => !allowedSliceFields.has(key));
+        if (unknownField) throw new Error(`metadataCorrections.completedSlices[${i}].${unknownField} is not an allowed correction field`);
+        if (!isNonEmptyString(correction.sliceId) || !SLICE_ID_RE.test(correction.sliceId)) {
+          throw new Error(`metadataCorrections.completedSlices[${i}].sliceId must be a valid slice ID`);
+        }
+        if (seenCorrectionIds.has(correction.sliceId)) {
+          throw new Error(`metadataCorrections.completedSlices contains duplicate sliceId ${correction.sliceId}`);
+        }
+        seenCorrectionIds.add(correction.sliceId);
+        if (Object.keys(correction).length === 1) {
+          throw new Error(`metadataCorrections.completedSlices[${i}] must include at least one correction`);
+        }
+        for (const field of ["demo", "goal", "successCriteria", "proofLevel", "integrationClosure", "observabilityImpact"] as const) {
+          if (correction[field] !== undefined && typeof correction[field] !== "string") {
+            throw new Error(`metadataCorrections.completedSlices[${i}].${field} must be a string`);
+          }
+        }
+      }
+    }
+  }
+
   // Validate each modified slice
   for (let i = 0; i < params.sliceChanges.modified.length; i++) {
     const s = params.sliceChanges.modified[i];
@@ -177,6 +284,11 @@ export async function handleReassessRoadmap(
     params.sliceChanges.added.length > 0 ||
     params.sliceChanges.modified.length > 0 ||
     params.sliceChanges.removed.length > 0;
+  const hasMetadataCorrections = Boolean(
+    params.metadataCorrections?.milestone || params.metadataCorrections?.completedSlices?.length,
+  );
+  const isMetadataOnlyCorrection = hasMetadataCorrections && !hasStructuralChanges;
+  const invalidatesMilestoneValidation = hasStructuralChanges || Boolean(params.metadataCorrections?.milestone);
 
   const assessmentPath = resolveRoadmapAssessmentProjectionPath(
     basePath,
@@ -210,6 +322,7 @@ export async function handleReassessRoadmap(
           ...params.sliceChanges.modified.map((slice) => slice.sliceId),
           ...params.sliceChanges.added.map((slice) => slice.sliceId),
           ...params.sliceChanges.removed,
+          ...(params.metadataCorrections?.completedSlices ?? []).map((slice) => slice.sliceId),
         ]);
         return [
           { itemKind: "milestone", milestoneId: params.milestoneId },
@@ -229,7 +342,7 @@ export async function handleReassessRoadmap(
         if (!milestone) {
           throw new PlanningGuardError(`milestone not found: ${params.milestoneId}`);
         }
-        if (isClosedStatus(milestone.status)) {
+        if (isClosedStatus(milestone.status) && !isMetadataOnlyCorrection) {
           throw new PlanningGuardError(`cannot reassess a closed milestone: ${params.milestoneId} (status: ${milestone.status})`);
         }
         const milestoneLifecycle = adoptLifecycleIfMissing(context, {
@@ -237,10 +350,10 @@ export async function handleReassessRoadmap(
           milestoneId: params.milestoneId,
           lifecycleStatus: normalizeLegacyLifecycleStatus(milestone.status) ?? "ready",
         });
-        if (
-          milestoneLifecycle.lifecycleStatus === "completed" ||
-          milestoneLifecycle.lifecycleStatus === "cancelled"
-        ) {
+        if (milestoneLifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(`cannot reassess a closed milestone: ${params.milestoneId} (canonical status: ${milestoneLifecycle.lifecycleStatus})`);
+        }
+        if (milestoneLifecycle.lifecycleStatus === "completed" && !isMetadataOnlyCorrection) {
           throw new PlanningGuardError(`cannot reassess a closed milestone: ${params.milestoneId} (canonical status: ${milestoneLifecycle.lifecycleStatus})`);
         }
 
@@ -266,6 +379,25 @@ export async function handleReassessRoadmap(
         const completedSliceIds = new Set<string>();
         for (const slice of existingSlices) {
           if (slice.status !== "skipped" && isClosedStatus(slice.status)) completedSliceIds.add(slice.id);
+        }
+
+        for (const correction of params.metadataCorrections?.completedSlices ?? []) {
+          const existing = existingSliceById.get(correction.sliceId);
+          if (!existing) {
+            throw new PlanningGuardError(`metadata correction references missing slice ${correction.sliceId}`);
+          }
+          if (!completedSliceIds.has(correction.sliceId)) {
+            throw new PlanningGuardError(`metadata correction target ${correction.sliceId} is not complete`);
+          }
+          const lifecycle = adoptLifecycleIfMissing(context, {
+            itemKind: "slice",
+            milestoneId: params.milestoneId,
+            sliceId: correction.sliceId,
+            lifecycleStatus: normalizeLegacyLifecycleStatus(existing.status) ?? "completed",
+          });
+          if (lifecycle.lifecycleStatus !== "completed") {
+            throw new PlanningGuardError(`metadata correction target ${correction.sliceId} is canonically ${lifecycle.lifecycleStatus}, not completed`);
+          }
         }
 
         for (const modifiedSlice of params.sliceChanges.modified) {
@@ -369,6 +501,20 @@ export async function handleReassessRoadmap(
           throw new PlanningGuardError(`cannot add existing slice ${added.sliceId}`);
         }
 
+        if (params.metadataCorrections?.milestone) {
+          upsertMilestonePlanning(params.milestoneId, params.metadataCorrections.milestone);
+        }
+        for (const correction of params.metadataCorrections?.completedSlices ?? []) {
+          updateSliceFields(params.milestoneId, correction.sliceId, { demo: correction.demo });
+          upsertSlicePlanning(params.milestoneId, correction.sliceId, {
+            goal: correction.goal,
+            successCriteria: correction.successCriteria,
+            proofLevel: correction.proofLevel,
+            integrationClosure: correction.integrationClosure,
+            observabilityImpact: correction.observabilityImpact,
+          });
+        }
+
         for (const modified of params.sliceChanges.modified) {
           updateSliceFields(params.milestoneId, modified.sliceId, {
             title: modified.title,
@@ -452,7 +598,7 @@ export async function handleReassessRoadmap(
           });
         }
 
-        if (hasStructuralChanges) {
+        if (invalidatesMilestoneValidation) {
           deleteAssessmentByScope(params.milestoneId, "milestone-validation");
         }
 
@@ -492,7 +638,7 @@ export async function handleReassessRoadmap(
     });
 
     // ── Remove stale VALIDATION file from disk (#2957) ────────────
-    if (hasStructuralChanges) {
+    if (invalidatesMilestoneValidation) {
       const milestoneDir = resolveMilestonePath(basePath, params.milestoneId);
       const validationFiles = new Set([
         resolveMilestoneFile(basePath, params.milestoneId, "VALIDATION"),
