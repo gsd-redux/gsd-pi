@@ -38,10 +38,16 @@ export interface TaskLifecycleReconcileRow {
   rationale: string;
 }
 
+export interface TaskSettleProof {
+  attemptId: string | null;
+  note: string;
+}
+
 export interface TaskSettlePlan {
   task: TaskSettleTask;
   rows: TaskSettleRow[];
   lifecycleRows: TaskLifecycleReconcileRow[];
+  proof: TaskSettleProof | null;
 }
 
 export interface TaskSettleOptions {
@@ -155,6 +161,69 @@ function readTaskLifecycleState(task: TaskSettleTask): TaskLifecycleState {
     lifecycleStatus: state["lifecycle_status"]
       ? String(state["lifecycle_status"]) as CanonicalLifecycleStatus
       : null,
+  };
+}
+
+function readPassingProofAttempt(task: TaskSettleTask): string | null {
+  const row = getDb().prepare(`
+    SELECT attempt.attempt_id
+    FROM workflow_item_lifecycles lifecycle
+    JOIN workflow_execution_attempts attempt
+      ON attempt.lifecycle_id = lifecycle.lifecycle_id
+     AND attempt.project_id = lifecycle.project_id
+     AND attempt.attempt_state = 'settled'
+    JOIN workflow_attempt_results result
+      ON result.attempt_id = attempt.attempt_id
+     AND result.lifecycle_id = lifecycle.lifecycle_id
+     AND result.outcome = 'succeeded'
+    JOIN workflow_acceptance_criteria criterion
+      ON criterion.lifecycle_id = lifecycle.lifecycle_id
+     AND criterion.criterion_key = 'host-technical-verification'
+     AND NOT EXISTS (
+       SELECT 1 FROM workflow_acceptance_criteria successor
+       WHERE successor.supersedes_criterion_id = criterion.criterion_id
+     )
+    JOIN workflow_technical_verdicts verdict
+      ON verdict.criterion_id = criterion.criterion_id
+     AND verdict.attempt_id = attempt.attempt_id
+     AND verdict.verdict = 'pass'
+     AND NOT EXISTS (
+       SELECT 1 FROM workflow_technical_verdicts successor
+       WHERE successor.supersedes_verdict_id = verdict.verdict_id
+     )
+    JOIN workflow_verification_evidence evidence
+      ON evidence.verdict_id = verdict.verdict_id
+     AND evidence.attempt_id = attempt.attempt_id
+     AND evidence.observation = 'passed'
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+    ORDER BY attempt.attempt_number DESC
+    LIMIT 1
+  `).get({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as { attempt_id?: string } | undefined;
+  return row?.attempt_id ? String(row.attempt_id) : null;
+}
+
+function planCompletionProof(
+  task: TaskSettleTask,
+  lifecycleRows: TaskLifecycleReconcileRow[],
+): TaskSettleProof | null {
+  if (!lifecycleRows.some((row) => row.targetStatus === "completed")) return null;
+  const attemptId = readPassingProofAttempt(task);
+  if (attemptId) {
+    return {
+      attemptId,
+      note: `current passing Technical Verdict is on Attempt ${attemptId}`,
+    };
+  }
+  return {
+    attemptId: null,
+    note: "no current passing Technical Verdict — gsd_slice_complete will still refuse until one is recorded",
   };
 }
 
@@ -290,7 +359,8 @@ export function planTaskSettle(
   const lifecycleRows = options.reconcileLifecycle
     ? planLifecycleReconcile(task, reason, attempt !== null)
     : [];
-  if (!attempt) return { task, rows: [], lifecycleRows };
+  const proof = planCompletionProof(task, lifecycleRows);
+  if (!attempt) return { task, rows: [], lifecycleRows, proof };
   const leaseHeld = readLeaseHeld(attempt, task.milestoneId);
   const rationale = leaseHeld
     ? reason
@@ -305,6 +375,7 @@ export function planTaskSettle(
       leaseHeld,
     }],
     lifecycleRows,
+    proof,
   };
 }
 
@@ -357,10 +428,12 @@ export function applyTaskSettle(input: {
     resultId = settlement.resultId;
   }
   let lifecycleRows = plan.lifecycleRows;
+  let proof = plan.proof;
   let reconciled = false;
   if (input.reconcileLifecycle) {
     const after = planTaskSettle(input.task, input.reason, { reconcileLifecycle: true });
     lifecycleRows = after.lifecycleRows;
+    proof = after.proof;
     if (lifecycleRows.length > 0) {
       applyLifecycleReconcile(input.invocation, input.task, input.reason, lifecycleRows);
       reconciled = true;
@@ -369,6 +442,7 @@ export function applyTaskSettle(input: {
   return {
     ...plan,
     lifecycleRows,
+    proof,
     settled,
     reconciled,
     ...(resultId ? { resultId } : {}),

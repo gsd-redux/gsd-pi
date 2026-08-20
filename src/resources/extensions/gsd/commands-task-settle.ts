@@ -80,6 +80,7 @@ export async function handleTaskSettle(
         ...plan.lifecycleRows.map(
           (row) => `  lifecycle ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
         ),
+        ...(plan.proof ? [`  proof: ${plan.proof.note}`] : []),
       ];
       ctx.ui.notify(
         `gsd task settle (dry run) — no changes made:\n${lines.join("\n")}\nRe-run with --apply to settle.`,

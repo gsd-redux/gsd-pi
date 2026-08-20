@@ -1164,6 +1164,7 @@ export async function executeTaskSettle(
         ...plan.lifecycleRows.map(
           (row) => `  lifecycle ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
         ),
+        ...(plan.proof ? [`  proof: ${plan.proof.note}`] : []),
       ];
       return {
         content: [{
@@ -1204,6 +1205,9 @@ export async function executeTaskSettle(
     if (result.reconciled) {
       const target = result.lifecycleRows[result.lifecycleRows.length - 1]?.targetStatus;
       parts.push(`Reconciled lifecycle to ${target} (${unit}) without deleting SUMMARYs.`);
+    }
+    if (result.proof) {
+      parts.push(result.proof.note);
     }
     return {
       content: [{ type: "text", text: parts.join(" ") }],

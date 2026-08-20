@@ -340,4 +340,24 @@ test("reconcileLifecycle adopts completed for complete after interrupt without d
   assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "complete");
   assert.equal(existsSync(summaryPath), true);
   assert.equal(readFileSync(summaryPath, "utf8"), "# Completed repair SUMMARY");
+  assert.equal(applied.proof?.attemptId ?? null, null);
+  assert.match(
+    applied.proof?.note ?? "",
+    /no current passing Technical Verdict/,
+  );
+});
+
+test("reconcileLifecycle reports when completed repair still lacks passing proof (#1749)", () => {
+  const { dispatchId } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  db().prepare(`
+    UPDATE tasks SET status = 'complete' WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+
+  const plan = planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true });
+  assert.equal(plan.proof?.attemptId ?? null, null);
+  assert.match(
+    plan.proof?.note ?? "",
+    /gsd_slice_complete will still refuse/,
+  );
 });
