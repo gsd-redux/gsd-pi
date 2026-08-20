@@ -9,6 +9,12 @@ import { join } from "node:path";
 
 import { bootstrapAutoSession } from "../auto-start.ts";
 import { AutoSession } from "../auto/session.ts";
+import {
+  acquireSessionLock,
+  isSessionLockHeld,
+  releaseSessionLock,
+  validateSessionLock,
+} from "../session-lock.ts";
 import type { InterruptedSessionAssessment } from "../interrupted-session.ts";
 import {
   closeDatabase,
@@ -268,6 +274,53 @@ test("fresh bootstrap clears isolation degradation from a prior auto run (#1689)
 
   assert.equal(ready, false, "the system temp root should stop bootstrap at directory validation");
   assert.equal(s.isolationDegraded, false, "fresh bootstrap must not inherit degradation");
+});
+
+test("re-entrant bootstrap failure preserves the outer session lock", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-reentrant-bootstrap-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  const previousProjectId = process.env.GSD_PROJECT_ID;
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  try {
+    assert.deepEqual(acquireSessionLock(base), { acquired: true });
+    process.env.GSD_PROJECT_ID = "invalid project id";
+
+    const ready = await bootstrapAutoSession(
+      new AutoSession(),
+      makeCtx(notifications) as any,
+      { getThinkingLevel: () => "medium" } as any,
+      base,
+      false,
+      false,
+      {
+        shouldUseWorktreeIsolation: () => false,
+        registerSigtermHandler: () => {},
+        registerAutoWorkerForSession: () => {},
+        lockBase: () => base,
+        buildLifecycle: () => ({} as any),
+      },
+      {} as InterruptedSessionAssessment,
+    );
+
+    assert.equal(ready, false);
+    assert.match(notifications.at(-1)?.message ?? "", /GSD_PROJECT_ID/);
+    assert.equal(
+      isSessionLockHeld(base),
+      true,
+      "failed inner bootstrap must not release outer ownership",
+    );
+    assert.equal(
+      validateSessionLock(base),
+      true,
+      "outer lock remains valid after inner bootstrap aborts",
+    );
+  } finally {
+    if (previousProjectId === undefined) delete process.env.GSD_PROJECT_ID;
+    else process.env.GSD_PROJECT_ID = previousProjectId;
+    releaseSessionLock(base);
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("bootstrap aborts before starting next milestone when completed orphan merge fails", async () => {

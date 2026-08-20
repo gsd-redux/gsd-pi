@@ -10,7 +10,17 @@
  * including cross-process exclusion during re-entrant acquisition.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { join, sep } from 'node:path';
@@ -373,6 +383,47 @@ describe('session-lock-regression', async () => {
     assert.ok(isSessionLockHeld(equivalentBase), 'canonical alias reports held ownership');
 
     releaseSessionLock(equivalentBase);
+  });
+
+  test('re-entry hands ownership to a migrated external-state lock target', (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'gsd-session-lock-migration-'));
+    const base = join(root, 'project');
+    const externalGsd = join(root, 'external-state');
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+    t.after(() => {
+      try { releaseSessionLock(base); } catch { /* best-effort */ }
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    assert.ok(acquireSessionLock(base).acquired, 'initial in-project lock acquired');
+    const originalLockDir = join(base, '.gsd.lock');
+    assert.ok(existsSync(originalLockDir), 'original physical target is locked');
+
+    renameSync(join(base, '.gsd'), externalGsd);
+    symlinkSync(
+      externalGsd,
+      join(base, '.gsd'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    assert.deepStrictEqual(
+      acquireSessionLock(base),
+      { acquired: true, reentrant: true },
+      'same owner transfers the lock after external-state migration',
+    );
+    assert.equal(
+      existsSync(originalLockDir),
+      false,
+      'old physical target is released after handoff',
+    );
+    assert.ok(existsSync(`${externalGsd}.lock`), 'new external-state target is locked');
+
+    unlinkSync(join(externalGsd, 'auto.lock'));
+    assert.deepStrictEqual(
+      getSessionLockStatus(base),
+      { valid: true },
+      'OS ownership remains authoritative after metadata cleanup',
+    );
   });
 
   // ─── 10. Re-entrant acquisition refreshes lock artifacts ──────────────

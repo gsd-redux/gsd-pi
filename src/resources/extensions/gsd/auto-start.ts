@@ -1071,9 +1071,16 @@ export async function bootstrapAutoSession(
     return false;
   }
 
-  function releaseLockAndReturn(): false {
+  const ownsSessionLockAcquisition = lockResult.reentrant !== true;
+
+  function releaseLockAcquisition(): void {
+    if (!ownsSessionLockAcquisition) return;
     releaseSessionLock(base);
     clearLock(base);
+  }
+
+  function releaseLockAndReturn(): false {
+    releaseLockAcquisition();
     return false;
   }
 
@@ -1220,6 +1227,16 @@ export async function bootstrapAutoSession(
     }
     // Ensure symlink exists (handles fresh projects and post-migration)
     ensureGsdSymlink(base);
+
+    // Acquisition starts before migration so bootstrap is serialized. Once
+    // .gsd points at external state, hand ownership to that physical target
+    // before any later process can observe or contend on the new path.
+    const migratedLockResult = acquireSessionLock(base);
+    if (!migratedLockResult.acquired) {
+      ctx.ui.notify(migratedLockResult.reason, "error");
+      return releaseLockAndReturn();
+    }
+
     openWorkflowDatabase(base);
 
     // Ensure .gitignore has baseline patterns.
@@ -2062,8 +2079,7 @@ export async function bootstrapAutoSession(
 
     return true;
   } catch (err) {
-    releaseSessionLock(base);
-    clearLock(base);
+    releaseLockAcquisition();
     throw err;
   }
 }
