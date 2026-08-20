@@ -23,7 +23,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, re
 import { execFileSync } from "node:child_process";
 import { join, resolve, sep } from "node:path";
 import { GSDError, GSD_PARSE_ERROR, GSD_STALE_STATE, GSD_LOCK_HELD, GSD_GIT_ERROR, GSD_MERGE_CONFLICT } from "./errors.js";
-import { logWarning } from "./workflow-logger.js";
+import { logError, logWarning } from "./workflow-logger.js";
 import {
   nativeBranchList,
   nativeBranchDelete,
@@ -227,7 +227,7 @@ function isRegisteredGitWorktreeAtPath(basePath: string, wtPath: string): boolea
   }
 }
 
-function inspectUncommittedWorktreeState(wtPath: string): { dirty: boolean; status: string } {
+export function inspectUncommittedWorktreeState(wtPath: string): { dirty: boolean; status: string } {
   try {
     const status = execFileSync(
       "git",
@@ -326,9 +326,11 @@ function quarantineDirtyWorktree(
     );
   }
 
-  logWarning(
-    "reconcile",
-    `Quarantined dirty worktree ${name} at ${quarantinePath} before removal. Branch ${branch} was preserved.`,
+  logError(
+    "worktree",
+    `Quarantined dirty worktree ${name} at ${quarantinePath} before removal. ` +
+      `Branch ${branch} was preserved. Recover by checking out ${branch} and copying files from ${quarantinePath} ` +
+      `(exclude .git, .gsd, and .gsd-quarantine.json).`,
     { worktree: name, path: quarantinePath, branch },
   );
   return quarantinePath;

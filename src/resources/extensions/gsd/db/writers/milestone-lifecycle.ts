@@ -57,6 +57,7 @@ export interface MilestoneCompletionHierarchyResult {
 export interface MilestoneReopenHierarchyInput {
   milestoneId: string;
   reason: string;
+  keepCompleted?: boolean;
 }
 
 export interface MilestoneReopenHierarchyResult {
@@ -649,13 +650,13 @@ export function reopenMilestoneHierarchy(
   requireNoActiveAttempts(milestoneId);
   requireNoProgressedDependentMilestones(context, milestoneId);
 
-  const waiverResult = revokeCancellationWaivers(
-    context,
-    milestoneId,
-    reason,
-    reopenedAt,
-  );
+  const keepCompleted = input.keepCompleted === true;
+  const waiverResult = keepCompleted
+    ? { revokedWaiverIds: [] as string[], supersedingDispositionIds: [] as string[] }
+    : revokeCancellationWaivers(context, milestoneId, reason, reopenedAt);
   const reopenedTaskIds: string[] = [];
+  const reopenedSliceIds: string[] = [];
+  if (!keepCompleted) {
   for (const task of tasks) {
     const taskId = task.taskId!;
     adoptOrTransitionLifecycle(context, {
@@ -685,7 +686,6 @@ export function reopenMilestoneHierarchy(
     reopenedTaskIds.push(`${task.sliceId}/${taskId}`);
   }
 
-  const reopenedSliceIds: string[] = [];
   for (const slice of slices) {
     const sliceId = slice.sliceId!;
     adoptOrTransitionLifecycle(context, {
@@ -712,6 +712,7 @@ export function reopenMilestoneHierarchy(
     }
     ensurePendingSliceQ8(context, { milestoneId, sliceId });
     reopenedSliceIds.push(sliceId);
+  }
   }
 
   const milestoneLifecycle = adoptOrTransitionLifecycle(context, {

@@ -18,6 +18,7 @@ import {
   insertTask,
   openDatabase,
 } from "../gsd-db.ts";
+import { canonicalPhaseDirName } from "../paths.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
 import {
   adoptOrTransitionLifecycle,
@@ -332,7 +333,7 @@ test("fresh milestone planning keeps its public response and atomically adopts r
 
   assert.deepEqual(result, {
     milestoneId: "M001",
-    roadmapPath: join(base, ".gsd", "phases", "01-test", "01-ROADMAP.md"),
+    roadmapPath: join(base, ".gsd", "phases", canonicalPhaseDirName("M001", "Atomic planning"), "01-ROADMAP.md"),
   });
   assert.deepEqual(rows(`
     SELECT item_kind, milestone_id, slice_id, lifecycle_status, state_version

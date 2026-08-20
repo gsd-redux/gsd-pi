@@ -38,6 +38,7 @@ import {
 } from "../planning-domain-operation.js";
 import type { PlanningInvocation } from "../planning-invocation.js";
 import { validateTaskToolRequirements } from "../task-tool-requirements.js";
+import { executeTaskIllegalPlanToolsError } from "../execute-task-plan-tool-guard.js";
 
 export interface PlanTaskParams {
   milestoneId: string;
@@ -144,9 +145,16 @@ function validateParams(params: PlanTaskParams): PlanTaskParams {
     throw new Error("observabilityImpact must be a non-empty string when provided");
   }
 
+  const files = validateStringArray(params.files, "files");
+  const illegalToolsError = executeTaskIllegalPlanToolsError(
+    { description: params.description, files },
+    `task ${params.taskId}`,
+  );
+  if (illegalToolsError) throw new Error(illegalToolsError);
+
   return {
     ...params,
-    files: validateStringArray(params.files, "files"),
+    files,
     inputs: validateStringArray(params.inputs, "inputs"),
     expectedOutput: validateStringArray(params.expectedOutput, "expectedOutput"),
     requiredWorkflowTools: params.requiredWorkflowTools === undefined

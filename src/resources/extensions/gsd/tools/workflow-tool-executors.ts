@@ -826,6 +826,7 @@ export interface TaskSettleExecutorParams {
   taskId: string;
   reason: string;
   apply?: boolean;
+  reconcileLifecycle?: boolean;
 }
 export type ReopenSliceExecutorParams = ReopenSliceParams;
 export type SkipSliceExecutorParams = SkipSliceParams;
@@ -1146,44 +1147,79 @@ export async function executeTaskSettle(
     taskId: params.taskId,
   };
   const unit = `${task.milestoneId}/${task.sliceId}/${task.taskId}`;
+  const settleOptions = { reconcileLifecycle: params.reconcileLifecycle === true };
   try {
     if (!params.apply) {
-      const plan = planTaskSettle(task, params.reason);
-      if (plan.rows.length === 0) {
+      const plan = planTaskSettle(task, params.reason, settleOptions);
+      if (plan.rows.length === 0 && plan.lifecycleRows.length === 0) {
         return {
           content: [{ type: "text", text: `gsd_task_settle (dry run): ${unit} has no running Attempt — nothing to do.` }],
-          details: { operation: "task_settle", dryRun: true, rows: [] },
+          details: { operation: "task_settle", dryRun: true, rows: [], lifecycleRows: [] },
         };
       }
-      const lines = plan.rows.map(
-        (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
-      );
+      const lines = [
+        ...plan.rows.map(
+          (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+        ),
+        ...plan.lifecycleRows.map(
+          (row) => `  lifecycle ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+        ),
+        ...(plan.proof ? [`  proof: ${plan.proof.note}`] : []),
+      ];
       return {
         content: [{
           type: "text",
           text: `gsd_task_settle (dry run) — no changes made:\n${lines.join("\n")}\nRe-run with apply: true to settle.`,
         }],
-        details: { operation: "task_settle", dryRun: true, rows: plan.rows },
+        details: {
+          operation: "task_settle",
+          dryRun: true,
+          rows: plan.rows,
+          lifecycleRows: plan.lifecycleRows,
+        },
       };
     }
-    const result = applyTaskSettle({ invocation, task, reason: params.reason });
-    if (!result.settled) {
+    const result = applyTaskSettle({
+      invocation,
+      task,
+      reason: params.reason,
+      ...settleOptions,
+    });
+    if (!result.settled && !result.reconciled) {
       return {
         content: [{ type: "text", text: `gsd_task_settle: ${unit} has no running Attempt — nothing to do.` }],
-        details: { operation: "task_settle", dryRun: false, rows: [], settled: false },
+        details: {
+          operation: "task_settle",
+          dryRun: false,
+          rows: [],
+          lifecycleRows: [],
+          settled: false,
+          reconciled: false,
+        },
       };
     }
+    const parts: string[] = [];
+    if (result.settled) {
+      parts.push(`Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`);
+    }
+    if (result.reconciled) {
+      const target = result.lifecycleRows[result.lifecycleRows.length - 1]?.targetStatus;
+      parts.push(`Reconciled lifecycle to ${target} (${unit}) without deleting SUMMARYs.`);
+    }
+    if (result.proof) {
+      parts.push(result.proof.note);
+    }
     return {
-      content: [{
-        type: "text",
-        text: `Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`,
-      }],
+      content: [{ type: "text", text: parts.join(" ") }],
       details: {
         operation: "task_settle",
         dryRun: false,
-        settled: true,
-        attemptId: result.rows[0].attemptId,
-        resultId: result.resultId,
+        settled: result.settled,
+        reconciled: result.reconciled,
+        ...(result.settled
+          ? { attemptId: result.rows[0].attemptId, resultId: result.resultId }
+          : {}),
+        lifecycleRows: result.lifecycleRows,
       },
     };
   } catch (err) {

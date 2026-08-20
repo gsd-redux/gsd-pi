@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync,
 import { basename, dirname, join } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
+import { removeLockDirectory } from "./session-lock.js";
 import { cleanNumberedGsdVariants } from "./repo-identity.js";
 import { milestonesDir, gsdRoot, resolveGsdRootFile, milestoneDirExists } from "./paths.js";
 import { deriveState, isGhostMilestone, isReusableGhostMilestone } from "./state.js";
@@ -197,10 +198,13 @@ export async function checkRuntimeHealth(
           });
           if (shouldFix("stranded_lock_directory")) {
             try {
-              rmSync(lockDir, { recursive: true, force: true });
+              removeLockDirectory(lockDir);
               fixesApplied.push(`removed stranded lock directory ${lockDir}`);
-            } catch {
-              fixesApplied.push(`failed to remove stranded lock directory ${lockDir}`);
+            } catch (error) {
+              fixesApplied.push(
+                `failed to remove stranded lock directory ${lockDir}` +
+                  ` (${error instanceof Error ? error.message : String(error)})`,
+              );
             }
           }
         }

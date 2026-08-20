@@ -3,7 +3,7 @@
 // idempotent, never-guessing Task Attempt settlement (#1749).
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -47,7 +47,7 @@ function invocation(key: string): ExecutionInvocation {
 
 const TASK = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
 
-function seedRunningAttempt(): { attemptId: string; dispatchId: number } {
+function seedRunningAttempt(): { attemptId: string; dispatchId: number; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "gsd-task-settle-"));
   tempDirs.add(dir);
   assert.equal(openDatabase(join(dir, "gsd.db")), true);
@@ -121,7 +121,7 @@ function seedRunningAttempt(): { attemptId: string; dispatchId: number } {
     milestoneLeaseToken: 7,
     coordinationDispatchId: dispatchId,
   });
-  return { attemptId: claim.attemptId, dispatchId };
+  return { attemptId: claim.attemptId, dispatchId, dir };
 }
 
 function orphanClaimedAttempt(dispatchId: number): void {
@@ -168,11 +168,21 @@ test("apply settles the orphaned Attempt and a second apply is a no-op", () => {
     reason: "operator repair after manual investigation",
   });
   assert.equal(applied.settled, true);
+  assert.equal(applied.reconciled, false);
   assert.equal(applied.rows[0].attemptId, attemptId);
   const settled = readTaskAttempt(attemptId);
   assert.equal(settled?.state, "settled");
   assert.equal(settled?.outcome, "interrupted");
   assert.equal(settled?.resultFailureClass, "operator-settle");
+  assert.equal(
+    row(`
+      SELECT lifecycle_status AS status
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'task' AND task_id = 'T01'
+    `).status,
+    "in_progress",
+    "settle without reconcileLifecycle must not adopt canonical status",
+  );
 
   const again = applyTaskSettle({
     invocation: invocation("settle/apply/2"),
@@ -236,5 +246,118 @@ test("apply refuses when the Attempt's lease is no longer held", () => {
     readTaskAttempt(attemptId)?.state,
     "running",
     "the refused apply leaves the Attempt untouched",
+  );
+});
+
+function taskLifecycleStatus(): string {
+  return String(row(`
+    SELECT lifecycle_status AS status
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND task_id = 'T01'
+  `).status);
+}
+
+function restoreSummary(dir: string, body: string, status: "pending" | "complete"): string {
+  const summaryPath = join(dir, "T01-SUMMARY.md");
+  writeFileSync(summaryPath, body);
+  db().prepare(`
+    UPDATE tasks SET status = :status, full_summary_md = :body
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run({ ":status": status, ":body": body });
+  return summaryPath;
+}
+
+test("reconcileLifecycle adopts ready for pending after interrupt without deleting SUMMARYs", () => {
+  const { dispatchId, dir } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+
+  const dryRun = planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true });
+  assert.equal(dryRun.rows.length, 1);
+  assert.deepEqual(
+    dryRun.lifecycleRows.map((row) => `${row.currentStatus}->${row.targetStatus}`),
+    ["in_progress->paused", "paused->ready"],
+  );
+  assert.equal(taskLifecycleStatus(), "in_progress", "dry-run must not adopt lifecycle");
+
+  const settled = applyTaskSettle({
+    invocation: invocation("settle/reconcile/pending/settle"),
+    task: TASK,
+    reason: "operator repair",
+  });
+  assert.equal(settled.settled, true);
+  const summaryPath = restoreSummary(dir, "# Pending repair SUMMARY", "pending");
+
+  const planned = planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true });
+  assert.equal(planned.rows.length, 0);
+  assert.deepEqual(
+    planned.lifecycleRows.map((row) => `${row.currentStatus}->${row.targetStatus}`),
+    ["in_progress->paused", "paused->ready"],
+  );
+
+  const applied = applyTaskSettle({
+    invocation: invocation("settle/reconcile/pending"),
+    task: TASK,
+    reason: "operator repair",
+    reconcileLifecycle: true,
+  });
+  assert.equal(applied.settled, false);
+  assert.equal(applied.reconciled, true);
+  assert.equal(taskLifecycleStatus(), "ready");
+  assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "pending");
+  assert.equal(row("SELECT full_summary_md AS body FROM tasks WHERE id = 'T01'").body, "# Pending repair SUMMARY");
+  assert.equal(existsSync(summaryPath), true);
+  assert.equal(readFileSync(summaryPath, "utf8"), "# Pending repair SUMMARY");
+
+  const again = applyTaskSettle({
+    invocation: invocation("settle/reconcile/pending/2"),
+    task: TASK,
+    reason: "operator repair",
+    reconcileLifecycle: true,
+  });
+  assert.equal(again.settled, false);
+  assert.equal(again.reconciled, false);
+  assert.equal(taskLifecycleStatus(), "ready");
+});
+
+test("reconcileLifecycle adopts completed for complete after interrupt without deleting SUMMARYs", () => {
+  const { dispatchId, dir } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  const summaryPath = restoreSummary(dir, "# Completed repair SUMMARY", "complete");
+
+  const applied = applyTaskSettle({
+    invocation: invocation("settle/reconcile/complete"),
+    task: TASK,
+    reason: "operator repair",
+    reconcileLifecycle: true,
+  });
+  assert.equal(applied.settled, true);
+  assert.equal(applied.reconciled, true);
+  assert.deepEqual(
+    applied.lifecycleRows.map((row) => `${row.currentStatus}->${row.targetStatus}`),
+    ["in_progress->completed"],
+  );
+  assert.equal(taskLifecycleStatus(), "completed");
+  assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "complete");
+  assert.equal(existsSync(summaryPath), true);
+  assert.equal(readFileSync(summaryPath, "utf8"), "# Completed repair SUMMARY");
+  assert.equal(applied.proof?.attemptId ?? null, null);
+  assert.match(
+    applied.proof?.note ?? "",
+    /no current passing Technical Verdict/,
+  );
+});
+
+test("reconcileLifecycle reports when completed repair still lacks passing proof (#1749)", () => {
+  const { dispatchId } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  db().prepare(`
+    UPDATE tasks SET status = 'complete' WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+
+  const plan = planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true });
+  assert.equal(plan.proof?.attemptId ?? null, null);
+  assert.match(
+    plan.proof?.note ?? "",
+    /gsd_slice_complete will still refuse/,
   );
 });

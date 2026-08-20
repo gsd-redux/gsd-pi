@@ -17,7 +17,7 @@
  */
 
 import { createRequire } from "node:module";
-import { existsSync, readFileSync, readdirSync, mkdirSync, unlinkSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdirSync, unlinkSync, rmSync, rmdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { gsdRoot, normalizeRealPath } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
@@ -124,6 +124,49 @@ function lockPath(basePath: string): string {
   return join(gsdRoot(basePath), effectiveLockFile());
 }
 
+export interface LockDirectoryFs {
+  rmSync(path: string, options: { recursive: boolean; force: true }): void;
+  rmdirSync(path: string): void;
+  existsSync(path: string): boolean;
+}
+
+const defaultLockDirectoryFs: LockDirectoryFs = { rmSync, rmdirSync, existsSync };
+
+/**
+ * Remove a proper-lockfile directory. Node `fs.rmSync({ recursive: true })` can
+ * return without throwing while leaving the directory in place on Windows when
+ * the absolute path contains non-ASCII characters. After rmSync, verify with
+ * existsSync and fall back to rmdirSync; if the path still exists, throw with
+ * the path so callers cannot treat a no-op as success. (#1526)
+ */
+export function removeLockDirectory(
+  lockDir: string,
+  fsOps: LockDirectoryFs = defaultLockDirectoryFs,
+): void {
+  if (!fsOps.existsSync(lockDir)) return;
+  try {
+    fsOps.rmSync(lockDir, { recursive: true, force: true });
+  } catch {
+    // rmSync may throw or silently no-op; rmdirSync is the known-working fallback.
+  }
+  if (!fsOps.existsSync(lockDir)) return;
+  try {
+    fsOps.rmdirSync(lockDir);
+  } catch (error) {
+    throw new Error(
+      `Session lock directory still exists after rmSync/rmdirSync: ${lockDir}` +
+        ` (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  if (fsOps.existsSync(lockDir)) {
+    throw new Error(
+      `Session lock directory still exists after rmSync/rmdirSync: ${lockDir}. ` +
+        `Node fs.rmSync can no-op on Windows paths with non-ASCII characters. ` +
+        `Remove it manually: rmdir "${lockDir}"`,
+    );
+  }
+}
+
 // ─── Stray Lock Cleanup ─────────────────────────────────────────────────────
 
 /**
@@ -161,7 +204,7 @@ export function cleanupStrayLockFiles(basePath: string): void {
           try {
             const stat = statSync(fullPath);
             if (stat.isDirectory()) {
-              rmSync(fullPath, { recursive: true, force: true });
+              try { removeLockDirectory(fullPath); } catch { /* best-effort stray cleanup */ }
             }
           } catch { /* best-effort */ }
         }
@@ -197,8 +240,8 @@ function ensureExitHandler(_gsdDir: string): void {
       } catch { /* best-effort */ }
       try {
         const lockDir = join(dir + ".lock");
-        if (ownsRegisteredLock && existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
-      } catch { /* best-effort */ }
+        if (ownsRegisteredLock) removeLockDirectory(lockDir);
+      } catch { /* best-effort on process exit */ }
     }
   });
 }
@@ -323,7 +366,14 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     if (deadPid) markWorkerStoppingByPid(normalizeRealPath(basePath), deadPid);
     const isOrphan = !existingData || !!deadPid;
     if (isOrphan) {
-      try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try {
+        removeLockDirectory(lockDir);
+      } catch (error) {
+        return {
+          acquired: false,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
       try { if (existsSync(lp)) unlinkSync(lp); } catch { /* best-effort */ }
     }
   }
@@ -365,7 +415,7 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     if (!existingData || (existingPid && !isPidAlive(existingPid))) {
       try {
         const lockDir = join(lockTarget + ".lock");
-        if (existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
+        removeLockDirectory(lockDir);
         if (existsSync(lp)) unlinkSync(lp);
 
         // Retry acquisition after cleanup
@@ -382,7 +432,10 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
 
         atomicWriteSync(lp, JSON.stringify(lockData, null, 2));
         return { acquired: true };
-      } catch {
+      } catch (retryErr) {
+        if (retryErr instanceof Error && retryErr.message.includes("Session lock directory still exists")) {
+          return { acquired: false, reason: retryErr.message };
+        }
         // Retry also failed — fall through to the error path
       }
     }
@@ -556,11 +609,8 @@ export function releaseSessionLock(basePath: string): void {
   // In parallel worker mode, this is .gsd/parallel/<MID>.lock/ (#2184).
   const gsdDir = gsdRoot(basePath);
   const lockTarget = effectiveLockTarget(gsdDir);
-  try {
-    const lockDir = join(lockTarget + ".lock");
-    if (ownsPrimaryLock && existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
-  } catch {
-    // Non-fatal
+  if (ownsPrimaryLock) {
+    removeLockDirectory(join(lockTarget + ".lock"));
   }
   // Also clean the per-milestone parallel directory itself if it exists
   if (ownsPrimaryLock && lockTarget !== gsdDir) {
@@ -581,8 +631,8 @@ export function releaseSessionLock(basePath: string): void {
     } catch { /* best-effort */ }
     try {
       const lockDir = join(dir + ".lock");
-      if (ownsRegisteredLock && existsSync(lockDir)) rmSync(lockDir, { recursive: true, force: true });
-    } catch { /* best-effort */ }
+      if (ownsRegisteredLock) removeLockDirectory(lockDir);
+    } catch { /* best-effort registry cleanup */ }
   }
   _lockDirRegistry.clear();
 
@@ -634,12 +684,8 @@ export function removeStaleSessionLock(basePath: string): boolean {
 
   let removed = false;
   if (existsSync(lockDir)) {
-    try {
-      rmSync(lockDir, { recursive: true, force: true });
-      removed = true;
-    } catch {
-      /* best-effort */
-    }
+    removeLockDirectory(lockDir);
+    removed = true;
   }
   if (existsSync(lp)) {
     try {

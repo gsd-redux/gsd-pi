@@ -8,11 +8,18 @@ import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
 import { applyTaskSettle, planTaskSettle, type TaskSettleTask } from "./task-settle.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 
-function parseTaskSettleArgs(args: string): { task: TaskSettleTask; reason: string; apply: boolean } | null {
+function parseTaskSettleArgs(args: string): {
+  task: TaskSettleTask;
+  reason: string;
+  apply: boolean;
+  reconcileLifecycle: boolean;
+} | null {
   const apply = /(?:^|\s)--apply(?:\s|$)/.test(args);
+  const reconcileLifecycle = /(?:^|\s)--reconcile-lifecycle(?:\s|$)/.test(args);
   const reasonMatch = args.match(/--reason\s+"([^"]+)"|--reason\s+'([^']+)'|--reason\s+(\S+)/);
   const positional = args
     .replace(/--apply/g, "")
+    .replace(/--reconcile-lifecycle/g, "")
     .replace(/--reason\s+"[^"]*"|\s--reason\s+'[^']*'|--reason\s+\S+/g, "")
     .trim()
     .split(/\s+/)
@@ -25,6 +32,7 @@ function parseTaskSettleArgs(args: string): { task: TaskSettleTask; reason: stri
     task: { milestoneId: parts[0], sliceId: parts[1], taskId: parts[2] },
     reason,
     apply,
+    reconcileLifecycle,
   };
 }
 
@@ -46,8 +54,8 @@ export async function handleTaskSettle(
   const parsed = parseTaskSettleArgs(args);
   if (!parsed) {
     ctx.ui.notify(
-      'Usage: /gsd task settle <M001/S01/T01> --reason "why this Attempt is being settled" [--apply]\n' +
-      "Dry-run by default: prints the exact Attempt row it would change. --apply performs the settle.",
+      'Usage: /gsd task settle <M001/S01/T01> --reason "why this Attempt is being settled" [--apply] [--reconcile-lifecycle]\n' +
+      "Dry-run by default: prints the exact Attempt and optional lifecycle rows it would change. --apply performs the settle.",
       "warning",
     );
     return;
@@ -58,15 +66,22 @@ export async function handleTaskSettle(
   }
   const unit = `${parsed.task.milestoneId}/${parsed.task.sliceId}/${parsed.task.taskId}`;
   try {
+    const settleOptions = { reconcileLifecycle: parsed.reconcileLifecycle };
     if (!parsed.apply) {
-      const plan = planTaskSettle(parsed.task, parsed.reason);
-      if (plan.rows.length === 0) {
+      const plan = planTaskSettle(parsed.task, parsed.reason, settleOptions);
+      if (plan.rows.length === 0 && plan.lifecycleRows.length === 0) {
         ctx.ui.notify(`gsd task settle (dry run): ${unit} has no running Attempt — nothing to do.`, "info");
         return;
       }
-      const lines = plan.rows.map(
-        (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
-      );
+      const lines = [
+        ...plan.rows.map(
+          (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+        ),
+        ...plan.lifecycleRows.map(
+          (row) => `  lifecycle ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+        ),
+        ...(plan.proof ? [`  proof: ${plan.proof.note}`] : []),
+      ];
       ctx.ui.notify(
         `gsd task settle (dry run) — no changes made:\n${lines.join("\n")}\nRe-run with --apply to settle.`,
         "info",
@@ -77,15 +92,21 @@ export async function handleTaskSettle(
       invocation: cliInvocation(),
       task: parsed.task,
       reason: parsed.reason,
+      ...settleOptions,
     });
-    if (!result.settled) {
+    if (!result.settled && !result.reconciled) {
       ctx.ui.notify(`gsd task settle: ${unit} has no running Attempt — nothing to do.`, "info");
       return;
     }
-    ctx.ui.notify(
-      `Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`,
-      "info",
-    );
+    const parts: string[] = [];
+    if (result.settled) {
+      parts.push(`Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`);
+    }
+    if (result.reconciled) {
+      const target = result.lifecycleRows[result.lifecycleRows.length - 1]?.targetStatus;
+      parts.push(`Reconciled lifecycle to ${target} (${unit}) without deleting SUMMARYs.`);
+    }
+    ctx.ui.notify(parts.join(" "), "info");
   } catch (error) {
     ctx.ui.notify(`gsd task settle: ${error instanceof Error ? error.message : String(error)}`, "error");
   }

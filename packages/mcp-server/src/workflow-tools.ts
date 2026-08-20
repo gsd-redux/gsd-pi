@@ -2481,6 +2481,9 @@ const taskSettleParams = {
   taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
   reason: nonEmptyString("reason").describe("Operator rationale recorded on the settled Attempt Result"),
   apply: z.boolean().optional().describe("Actually settle; omit or false for a dry run that changes nothing"),
+  reconcileLifecycle: z.boolean().optional().describe(
+    "After settling (or if already interrupted), adopt ready/completed to match tasks.status without deleting SUMMARYs",
+  ),
 };
 const taskSettleSchema = z.object(taskSettleParams);
 
@@ -2500,6 +2503,7 @@ const milestoneReopenParams = {
   reason: z.string().optional().describe("Why the milestone is being reopened"),
   actorName: z.string().optional().describe("Caller-provided actor identity for audit trail"),
   triggerReason: z.string().optional().describe("Caller-provided reason this action was triggered"),
+  keepCompleted: z.boolean().optional().describe("When true, unlock the milestone without resetting completed slices/tasks or deleting their SUMMARY projections. Default false (full cascade reset)."),
 };
 const milestoneReopenSchema = z.object(milestoneReopenParams);
 
@@ -3507,7 +3511,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_task_settle",
-    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true.",
+    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true. Optional reconcileLifecycle adopts ready/completed to match tasks.status without deleting SUMMARYs.",
     taskSettleParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskSettleSchema, args);
@@ -3553,7 +3557,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_milestone_reopen",
-    "Reopen a terminal Milestone hierarchy atomically while preserving immutable history, then refresh readable projections.",
+    "Reopen a terminal Milestone hierarchy atomically while preserving immutable history, then refresh readable projections. Pass keepCompleted=true to unlock the milestone without resetting completed slices/tasks or deleting their SUMMARYs.",
     milestoneReopenParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(milestoneReopenSchema, args);
@@ -3568,7 +3572,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_reopen_milestone",
-    "Alias for gsd_milestone_reopen. Reopen a terminal Milestone hierarchy atomically, then refresh readable projections.",
+    "Alias for gsd_milestone_reopen. Reopen a terminal Milestone hierarchy atomically, then refresh readable projections. Pass keepCompleted=true to unlock without resetting completed work.",
     milestoneReopenParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_reopen_milestone", "gsd_milestone_reopen");

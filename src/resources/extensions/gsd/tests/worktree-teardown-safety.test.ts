@@ -29,6 +29,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 
 import { createWorktree, removeWorktree, worktreePath, isInsideWorktreesDir } from "../worktree-manager.ts";
+import { _resetLogs, peekLogs } from "../workflow-logger.ts";
 import { createTestContext } from "./test-helpers.ts";
 
 const { assertEq, assertTrue, report } = createTestContext();
@@ -141,6 +142,7 @@ describe("worktree-teardown-safety", () => {
     writeFileSync(join(wt.path, "generated-feature.ts"), "export const answer = 42;\n");
     writeFileSync(join(wt.path, "README.md"), "# changed in worktree\n");
 
+    _resetLogs();
     removeWorktree(tempDir, "dirty-wt", { deleteBranch: false });
 
     assertTrue(!existsSync(wt.path), "original dirty worktree path removed after quarantine");
@@ -148,6 +150,13 @@ describe("worktree-teardown-safety", () => {
     const entries = readdirSync(quarantineRoot).filter((entry) => entry.startsWith("dirty-wt-"));
     assertEq(entries.length, 1, "dirty worktree snapshot quarantined");
     const quarantineDir = join(quarantineRoot, entries[0]!);
+    const quarantineNotice = peekLogs().find(
+      (entry) => entry.severity === "error" && entry.message.includes(quarantineDir),
+    );
+    assertTrue(
+      Boolean(quarantineNotice),
+      "quarantine path is surfaced as an error notification",
+    );
     assertEq(
       readFileSync(join(quarantineDir, "generated-feature.ts"), "utf-8"),
       "export const answer = 42;\n",
