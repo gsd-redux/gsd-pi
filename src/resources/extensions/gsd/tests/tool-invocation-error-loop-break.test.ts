@@ -127,6 +127,10 @@ describe("#2883: isToolInvocationError classification", () => {
       isScheduleWakeupContinuationError("ScheduleWakeup", error),
       true,
     );
+    assert.equal(
+      isScheduleWakeupContinuationError("gsd_schedule_wakeup", error),
+      true,
+    );
     assert.equal(isScheduleWakeupContinuationError("read", error), false);
     assert.equal(
       isScheduleWakeupContinuationError(

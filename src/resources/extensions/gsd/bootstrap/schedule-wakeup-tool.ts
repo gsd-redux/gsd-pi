@@ -12,6 +12,10 @@ import { resolveCtxCwd } from "./dynamic-tools.js";
 const MAX_WAKEUP_DELAY_SECONDS = 24 * 60 * 60;
 const INTERACTIVE_WAKEUP_CUSTOM_TYPE = "gsd-schedule-wakeup";
 
+/** GSD-owned name so Claude Code's native `ScheduleWakeup` does not collide (#1847). */
+export const GSD_SCHEDULE_WAKEUP_TOOL_NAME = "gsd_schedule_wakeup";
+export const CLAUDE_CODE_NATIVE_SCHEDULE_WAKEUP_TOOL_NAME = "ScheduleWakeup";
+
 // One pending interactive wakeup per session, keyed by base path — the same
 // scoping auto-mode uses for its wakeup map (see `wakeupKey`). Re-arming cancels
 // only that session's prior timer, so repeated polling never stacks overlapping
@@ -44,13 +48,13 @@ function scheduleInteractiveWakeup(
       )).catch((error) => {
         logWarning(
           "bootstrap",
-          `ScheduleWakeup interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+          `${GSD_SCHEDULE_WAKEUP_TOOL_NAME} interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       });
     } catch (error) {
       logWarning(
         "bootstrap",
-        `ScheduleWakeup interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+        `${GSD_SCHEDULE_WAKEUP_TOOL_NAME} interactive dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }, delaySeconds * 1000);
@@ -74,17 +78,19 @@ export function _resetInteractiveWakeupsForTest(): void {
 
 export function registerScheduleWakeupTool(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "ScheduleWakeup",
+    name: GSD_SCHEDULE_WAKEUP_TOOL_NAME,
     label: "Schedule Wakeup",
     description:
       "Schedule a delayed continuation turn. In GSD auto-mode, continue the current unit in the same session; " +
-      "outside auto-mode, start a new triggered turn with the supplied wakeup prompt.",
+      "outside auto-mode, start a new triggered turn with the supplied wakeup prompt. " +
+      "Do not call Claude Code's native ScheduleWakeup tool.",
     promptSnippet: "Schedule a wakeup prompt after a delay.",
     promptGuidelines: [
-      "Use ScheduleWakeup at the end of an execute-task turn when waiting for a long external process.",
+      `Use ${GSD_SCHEDULE_WAKEUP_TOOL_NAME} at the end of an execute-task turn when waiting for a long external process.`,
       "Include a prompt that says exactly what external state to check next and what artifact to write when done.",
-      "Re-arm ScheduleWakeup on each polling turn if the external process is still running.",
-      "Outside auto-mode, use ScheduleWakeup when the user asks you to check back or poll later.",
+      `Re-arm ${GSD_SCHEDULE_WAKEUP_TOOL_NAME} on each polling turn if the external process is still running.`,
+      `Outside auto-mode, use ${GSD_SCHEDULE_WAKEUP_TOOL_NAME} when the user asks you to check back or poll later.`,
+      "Never call the native ScheduleWakeup tool; it is not GSD's continuation mechanism.",
     ],
     parameters: Type.Object({
       delaySeconds: Type.Number({

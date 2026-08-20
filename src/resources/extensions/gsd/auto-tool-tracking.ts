@@ -132,8 +132,8 @@ export function clearInFlightTools(): void {
  */
 const TOOL_INVOCATION_ERROR_RE = /Validation failed for tool|Input validation error|Invalid arguments for tool|MCP error -32602|No such tool available|Expected ',' or '\}'(?: after property value)?(?: in JSON)?|Unexpected end of JSON|Unexpected token.*in JSON|does not provide an export named|Named export .* not found|Cannot find module|ERR_MODULE_NOT_FOUND|ERR_MODULE_NOT_EXPORTED|ERR_PACKAGE_PATH_NOT_EXPORTED/i;
 const DETERMINISTIC_POLICY_ERROR_RE = /(?:^|\b)(?:HARD BLOCK:|Blocked: \/gsd queue is a planning tool|Direct writes to \.gsd\/STATE\.md and \.gsd\/gsd\.db are blocked|This is a mechanical gate)/i;
-const SCHEDULE_WAKEUP_TOOL_NAME = "ScheduleWakeup";
 const SCHEDULE_WAKEUP_CONTINUATION_ERROR = "`prompt` is required when `stop` is not true";
+const SCHEDULE_WAKEUP_TOOL_NAMES = new Set(["ScheduleWakeup", "gsd_schedule_wakeup"]);
 
 /**
  * Matches the runtime's "tool not registered" error. Unlike the deterministic
@@ -159,7 +159,7 @@ export function isToolInvocationError(errorMsg: string): boolean {
  * unrelated tools does not pause auto-mode.
  */
 export function isScheduleWakeupContinuationError(toolName: string, errorMsg: string): boolean {
-  return stripMcpToolPrefix(toolName) === SCHEDULE_WAKEUP_TOOL_NAME
+  return SCHEDULE_WAKEUP_TOOL_NAMES.has(stripMcpToolPrefix(toolName))
     && errorMsg.trim() === SCHEDULE_WAKEUP_CONTINUATION_ERROR;
 }
 

@@ -28,7 +28,7 @@ test("ScheduleWakeup arms an interactive wakeup when auto-mode is inactive", asy
 
   try {
     registerScheduleWakeupTool(pi as any);
-    assert.ok(tool, "ScheduleWakeup tool should be registered");
+    assert.equal(tool.name, "gsd_schedule_wakeup");
 
     const result = await tool.execute(
       "call-1",
@@ -86,7 +86,7 @@ test("ScheduleWakeup re-arm cancels the prior interactive timer instead of stack
 
   try {
     registerScheduleWakeupTool(pi as any);
-    assert.ok(tool, "ScheduleWakeup tool should be registered");
+    assert.equal(tool.name, "gsd_schedule_wakeup");
 
     const ctx = { cwd: process.cwd() };
     await tool.execute(
@@ -133,7 +133,7 @@ test("ScheduleWakeup keeps interactive wakeups isolated per session base path", 
 
   try {
     registerScheduleWakeupTool(pi as any);
-    assert.ok(tool, "ScheduleWakeup tool should be registered");
+    assert.equal(tool.name, "gsd_schedule_wakeup");
 
     // Two concurrent interactive sessions (different cwds) arm wakeups. One
     // session re-arming must not cancel the other session's pending wakeup.

@@ -115,7 +115,7 @@ Writes outside those allowed paths, unsafe bash commands, and subagent dispatch 
 
 ### ScheduleWakeup Continuations
 
-`ScheduleWakeup` schedules a delayed follow-up prompt. In auto mode, it is used for long external waits inside `execute-task` units and keeps the same unit session alive instead of ending the unit as incomplete. Outside auto mode, it waits for the requested delay and then starts a new triggered turn with the supplied wakeup prompt.
+`gsd_schedule_wakeup` schedules a delayed follow-up prompt. In auto mode, it is used for long external waits inside `execute-task` units and keeps the same unit session alive instead of ending the unit as incomplete. Outside auto mode, it waits for the requested delay and then starts a new triggered turn with the supplied wakeup prompt. Do not use Claude Code's native `ScheduleWakeup` tool for this.
 
 - Use it when a task kicked off external work (for example CI, deploy, or async jobs) and needs a later poll.
 - Include a concrete follow-up prompt that says what to check and what artifact to write when done.
