@@ -20,6 +20,7 @@ import {
   insertAssessment,
   insertMilestone,
   insertSlice,
+  insertTask,
   openDatabase,
   readDomainOperationFence,
 } from "../gsd-db.ts";
