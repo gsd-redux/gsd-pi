@@ -12,11 +12,12 @@ import { isClosedStatus } from "./status-guards.js";
 import { allWorktreesDirs, createWorktree, listWorktrees, resolveGitDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegrationBranch } from "./git-service.js";
-import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
+import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit, nativeIsCurrentUnbornBranch } from "./native-git-bridge.js";
 import { getAllWorktreeHealth } from "./worktree-health.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { listUnmergedGitPaths, probeGitConflictState, reconcileGitConflictsOnSignal } from "./git-conflict-state.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
+import { enterBranchModeForMilestone } from "./auto-worktree-branch-lifecycle.js";
 
 /**
  * Returns true if the directory contains only doctor artifacts
@@ -485,14 +486,21 @@ export async function checkGitHealth(
       }
 
       if (resolution.status === "missing") {
+        const fixableUnbornBranch =
+          isolationMode === "branch" &&
+          nativeIsCurrentUnbornBranch(basePath, `milestone/${milestone.id}`);
         issues.push({
           severity: "error",
           code: "integration_branch_missing",
           scope: "milestone",
           unitId: milestone.id,
           message: resolution.reason,
-          fixable: false,
+          fixable: fixableUnbornBranch,
         });
+        if (fixableUnbornBranch && shouldFix("integration_branch_missing")) {
+          enterBranchModeForMilestone(basePath, milestone.id);
+          fixesApplied.push(`established integration branch for ${milestone.id}`);
+        }
       }
     }
   } catch {

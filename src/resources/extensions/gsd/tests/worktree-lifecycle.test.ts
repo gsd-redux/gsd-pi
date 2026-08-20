@@ -306,7 +306,7 @@ test("enterMilestone retries branch isolation when session is degraded", (t) => 
   assert.equal(s.milestoneLeaseToken, null);
 });
 
-test("enterMilestone enters branch isolation in a zero-commit repository (#1688)", (t) => {
+test("enterMilestone establishes an integration ref before branch isolation in a zero-commit repository", (t) => {
   const previousCwd = process.cwd();
   const base = makeGitRepoBase({ isolation: "branch", unborn: true });
   t.after(() => cleanupRepoBase(base, previousCwd));
@@ -321,9 +321,9 @@ test("enterMilestone enters branch isolation in a zero-commit repository (#1688)
     execFileSync("git", ["branch", "--show-current"], { cwd: base, encoding: "utf8" }).trim(),
     "milestone/M001",
   );
-  assert.throws(
-    () => execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: base, stdio: "pipe" }),
-    "branch entry must not fabricate a commit",
+  assert.ok(
+    execFileSync("git", ["rev-parse", "--verify", "main^{commit}"], { cwd: base, encoding: "utf8" }).trim(),
+    "branch entry must preserve a commit-backed integration branch",
   );
 });
 

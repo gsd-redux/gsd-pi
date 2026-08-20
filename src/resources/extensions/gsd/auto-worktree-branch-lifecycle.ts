@@ -10,9 +10,12 @@ import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { debugLog } from "./debug-logger.js";
 import { checkoutBranchWithStashGuard } from "./worktree-git-recovery.js";
 import {
+  nativeAddAll,
   nativeBranchExists,
   nativeBranchForceReset,
+  nativeCheckoutBranch,
   nativeCheckoutNewBranch,
+  nativeCommit,
   nativeDetectMainBranch,
   nativeHasCommittedHead,
   nativeIsAncestor,
@@ -45,6 +48,8 @@ export function _resolveAutoWorktreeStartPoint(
  * Creates `milestone/<MID>` from the integration branch (if it doesn't
  * exist yet) and checks out to it. No worktree directory is created — the
  * project root is the working copy; only HEAD changes.
+ * An unborn repository first receives a baseline commit on its integration
+ * branch so that branch remains available after milestone isolation begins.
  *
  * Uses the same 3-tier integration-branch fallback as createAutoWorktree:
  *   1. META.json recorded integration branch
@@ -56,21 +61,38 @@ export function enterBranchModeForMilestone(
   milestoneId: string,
 ): void {
   const branch = autoWorktreeBranch(milestoneId);
+
+  if (!nativeHasCommittedHead(basePath)) {
+    const currentBranch = runGit(
+      basePath,
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+    );
+    const gitMainBranch = loadEffectiveGSDPreferences(basePath)?.preferences?.git?.main_branch;
+    const integrationBranch =
+      readIntegrationBranch(basePath, milestoneId) ??
+      gitMainBranch ??
+      (currentBranch !== branch ? currentBranch : "main");
+
+    if (currentBranch !== integrationBranch) {
+      if (nativeBranchExists(basePath, integrationBranch)) {
+        nativeCheckoutBranch(basePath, integrationBranch);
+      } else {
+        nativeCheckoutNewBranch(basePath, integrationBranch);
+      }
+    }
+    nativeAddAll(basePath);
+    nativeCommit(basePath, "chore: init project", { allowEmpty: true });
+    debugLog("auto-worktree", {
+      action: "establishIntegrationBranch",
+      milestoneId,
+      branch: integrationBranch,
+      repositoryState: "unborn",
+    });
+  }
+
   const branchExists = nativeBranchExists(basePath, branch);
 
   if (!branchExists) {
-    if (!nativeHasCommittedHead(basePath)) {
-      nativeCheckoutNewBranch(basePath, branch);
-      debugLog("auto-worktree", {
-        action: "enterBranchMode",
-        milestoneId,
-        branch,
-        repositoryState: "unborn",
-        created: true,
-      });
-      return;
-    }
-
     // Create the milestone branch from the integration branch start-point.
     const integrationBranch =
       readIntegrationBranch(basePath, milestoneId) ?? undefined;
