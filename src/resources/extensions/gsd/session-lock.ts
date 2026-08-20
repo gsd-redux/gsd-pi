@@ -125,7 +125,7 @@ function lockPath(basePath: string): string {
 }
 
 export interface LockDirectoryFs {
-  rmSync(path: string, options: { recursive: boolean; force: boolean }): void;
+  rmSync(path: string, options: { recursive: boolean; force: true }): void;
   rmdirSync(path: string): void;
   existsSync(path: string): boolean;
 }

@@ -23,6 +23,11 @@ import {
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
 import { parseProjectionRoadmap as parseRoadmap } from '../schemas/parsers.ts';
+import { canonicalPhaseDirName } from '../paths.ts';
+
+function expectedRoadmapPath(base: string, title: string, milestoneId = 'M001'): string {
+  return join(base, '.gsd', 'phases', canonicalPhaseDirName(milestoneId, title), '01-ROADMAP.md');
+}
 
 function handlePlanMilestone(
   params: Parameters<typeof handlePlanMilestoneWithInvocation>[0],
@@ -151,7 +156,7 @@ test('handlePlanMilestone writes milestone and slice planning state and renders 
     assert.equal(slices[0]?.goal, 'Wire the handler.');
     assert.equal(slices[1]?.depends[0], 'S01');
 
-    const roadmapPath = join(base, '.gsd', 'phases', '01-test', '01-ROADMAP.md');
+    const roadmapPath = expectedRoadmapPath(base, 'DB-backed planning');
     assert.ok(existsSync(roadmapPath), 'roadmap should be rendered to disk');
     const roadmap = readFileSync(roadmapPath, 'utf-8');
     assert.match(roadmap, /# M001: DB-backed planning/);
@@ -236,16 +241,16 @@ test('handlePlanMilestone clears parse-visible roadmap state after successful re
   openDatabase(dbPath);
 
   try {
-    const roadmapPath = join(base, '.gsd', 'phases', '01-test', '01-ROADMAP.md');
-    writeFileSync(roadmapPath, '# M001: Cached roadmap\n\n**Vision:** old value\n\n## Slices\n\n', 'utf-8');
+    const cachedPath = join(base, '.gsd', 'phases', '01-test', '01-ROADMAP.md');
+    writeFileSync(cachedPath, '# M001: Cached roadmap\n\n**Vision:** old value\n\n## Slices\n\n', 'utf-8');
 
-    const cachedBefore = parseRoadmap(readFileSync(roadmapPath, 'utf-8'));
+    const cachedBefore = parseRoadmap(readFileSync(cachedPath, 'utf-8'));
     assert.equal(cachedBefore.vision, 'old value');
 
     const result = await handlePlanMilestone(validParams(), base);
     assert.ok(!('error' in result));
 
-    const contentAfter = readFileSync(roadmapPath, 'utf-8');
+    const contentAfter = readFileSync(expectedRoadmapPath(base, 'DB-backed planning'), 'utf-8');
     assert.match(contentAfter, /Make planning write through the database\./);
     assert.match(contentAfter, /S01/);
     assert.match(contentAfter, /S02/);
