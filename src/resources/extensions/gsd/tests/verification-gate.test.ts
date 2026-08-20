@@ -596,6 +596,22 @@ describe("verification-gate: execution", () => {
     assert.equal(typeof result.timestamp, "number");
   });
 
+  test("passing task evidence prevents unrelated preference verification from failing an artifact task (#1431)", () => {
+    const result = runVerificationGate({
+      cwd: tmp,
+      taskPlanVerify: "Planning artifacts exist and contain all required sections",
+      preferenceCommands: ["node -e 'process.exit(9)'"],
+      taskEvidence: [
+        { command: "gsd_exec node: artifact check", exitCode: 0, verdict: "passed", durationMs: 12 },
+        { command: "gsd_exec node: consolidated artifact verification", exitCode: 0, verdict: "pass", durationMs: 8 },
+      ],
+    });
+
+    assert.equal(result.passed, true);
+    assert.equal(result.discoverySource, "task-plan-prose");
+    assert.deepEqual(result.checks, []);
+  });
+
   test("host verification removes GSD control-plane routing while preserving ordinary environment", () => {
     const routingKeys = [
       "GSD_PROJECT_ROOT",
