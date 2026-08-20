@@ -64,7 +64,7 @@ When `heavy-code-changed=true`, CI runs the Linux build and test stack in one jo
 Native package tests are skipped in the main Linux package-test step unless native/portability paths changed; otherwise a full Rust native rebuild can dominate unrelated CI runs.
 Compiled package tests use Node's `--test-force-exit` so leaked handles in one package do not idle until the CI watchdog fires after all assertions pass.
 
-Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`).
+Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially, including `verify:extension-coverage`). It also builds `pnpm run build:native:test` and stages `dist-test/native/addon/` with `GSD_NATIVE_PREFER_LOCAL=1`, matching the CI `build` job. Requires a local Rust toolchain.
 
 `verify:fast` also runs:
 

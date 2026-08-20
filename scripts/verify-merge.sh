@@ -8,6 +8,15 @@ cd "$ROOT"
 
 echo "── verify:merge (CI PR blocking parity) ──"
 
+echo "── native addon from source (test-fault-injection) ──"
+if ! command -v rustc >/dev/null 2>&1; then
+  echo "verify:merge needs Rust to build the local native engine (pnpm run build:native:test)."
+  echo "CI does this before unit tests so ProjectionRootIdentityLock matches this commit."
+  echo "Install rustup, then re-run. See CONTRIBUTING.md (Native engine version lockstep)."
+  exit 1
+fi
+pnpm run build:native:test
+
 echo "── build:core ──"
 pnpm run build:core
 
@@ -28,7 +37,11 @@ echo "── verify:extension-coverage ──"
 pnpm run verify:extension-coverage
 
 echo "── test:unit ──"
-pnpm run test:unit
+pnpm run test:compile
+mkdir -p dist-test/native/addon
+cp native/addon/*.node dist-test/native/addon/
+export GSD_NATIVE_PREFER_LOCAL=1
+pnpm run test:unit:compiled
 
 echo "── test:packages ──"
 pnpm run test:packages

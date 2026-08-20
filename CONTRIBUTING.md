@@ -53,12 +53,14 @@ CI is tiered to match local scripts. See [Test confidence stack](docs/dev/test-c
 ```bash
 pnpm run verify:fast    # ~1–3 min: same scans as CI fast-gates (secrets, docs injection, skill refs)
 pnpm run verify:pr      # ~5–15 min: fast inner loop — build:core → typecheck:extensions → test:unit
-pnpm run verify:merge   # ~20–40 min: CI PR blocking parity (build, all test jobs, validate-pack)
+pnpm run verify:merge   # ~20–40 min: CI PR blocking parity (native test addon, build, all test jobs, validate-pack)
 pnpm run verify:full    # Alias for verify:merge
 pnpm run audit:test-confidence   # Inventory report: runners, tiers, thin areas
 ```
 
 Run `verify:fast` on every push. While iterating, `verify:pr` is enough for a quick check. **Before requesting review** on a PR that touches `src/`, `packages/`, or tests, run **`verify:merge`** — a passing `verify:pr` alone does not match what CI requires to merge.
+
+`verify:merge` builds the native engine with `pnpm run build:native:test` (needs Rust/`rustc`) and copies `native/addon/*.node` into `dist-test/native/addon/` with `GSD_NATIVE_PREFER_LOCAL=1`, matching CI. Without that, compiled unit tests fail on a fresh checkout because the published `@opengsd/engine-*` binary can lag N-API exports such as `ProjectionRootIdentityLock`.
 
 If `verify:pr` fails after running tests (e.g. `Cannot find module '@gsd/*'` errors), run `pnpm install --frozen-lockfile` first to restore workspace symlinks, then try again.
 

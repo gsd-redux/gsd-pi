@@ -11,6 +11,13 @@ test("verify:merge and verify:full alias stay aligned with CI PR blocking parity
   assert.match(pkg.scripts["audit:test-confidence"], /audit-test-confidence\.mjs/);
 });
 
+test("verify:merge stages the native test addon like CI (#1582)", () => {
+  const script = readFileSync("scripts/verify-merge.sh", "utf8");
+  assert.match(script, /build:native:test/);
+  assert.match(script, /dist-test\/native\/addon/);
+  assert.match(script, /GSD_NATIVE_PREFER_LOCAL=1/);
+});
+
 test("audit:test-confidence --strict passes when tier map is intact", async () => {
   const { spawnSync } = await import("node:child_process");
   const result = spawnSync(process.execPath, ["scripts/audit-test-confidence.mjs", "--strict"], {
