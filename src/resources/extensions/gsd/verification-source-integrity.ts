@@ -52,7 +52,12 @@ export interface VerificationSourceDriftDiagnosis {
   autoCommitDetected: boolean;
 }
 
-const SOURCE_PATHSPEC = ["--", ".", ":(exclude).gsd/**"];
+const SOURCE_PATHSPEC = [
+  "--",
+  ".",
+  ":(exclude).gsd/**",
+  ":(exclude)receipts/**",
+];
 
 /**
  * Git pathspecs match tracked path names, not symlink targets. In a GSD-managed
@@ -174,8 +179,6 @@ function sourcePaths(cwd: string, options: VerificationSourceSnapshotOptions): s
   const paths = gitOutput(cwd, [
     "ls-files",
     "--cached",
-    "--others",
-    "--exclude-standard",
     "-z",
     ...SOURCE_PATHSPEC,
     ...gsdBookkeepingExclusions(cwd),
