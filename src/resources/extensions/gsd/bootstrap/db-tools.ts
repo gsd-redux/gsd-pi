@@ -2706,12 +2706,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		name: "gsd_milestone_reopen",
 		label: "Reopen Milestone",
 		description:
-			"Reopen a terminal Milestone and its completed work in one revision- and Authority-Epoch-fenced SQLite operation while preserving immutable history, then remove stale readable summaries.",
+			"Reopen a terminal Milestone and its completed work in one revision- and Authority-Epoch-fenced SQLite operation while preserving immutable history, then remove stale readable summaries. Pass keepCompleted=true to unlock the milestone without resetting completed slices/tasks or deleting their SUMMARYs.",
 		promptSnippet:
 			"Reopen a terminal GSD Milestone atomically, then refresh readable projections",
 		promptGuidelines: [
 			"Use gsd_milestone_reopen when a terminal Milestone needs to be re-done (e.g. validation failure surfaced after closure).",
-			"All terminal slices and tasks reopen together — no partial reopen — while prior Attempts and evidence remain immutable.",
+			"Default is a full cascade: all terminal slices and tasks reopen together while prior Attempts and evidence remain immutable.",
+			"Pass keepCompleted=true to unlock the milestone for new work without resetting completed slices/tasks or deleting their SUMMARY projections.",
 			"Will fail if the Milestone is not currently terminal — there is nothing to reopen.",
 			"Exact invocation replays report duplicate; historical replays report superseded and cannot remove newer projections.",
 			"Use the canonical name gsd_milestone_reopen; gsd_reopen_milestone is only an alias.",
@@ -2722,6 +2723,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				Type.String({
 					description:
 						"Why the milestone is being reopened (recorded in the audit trail)",
+				}),
+			),
+			keepCompleted: Type.Optional(
+				Type.Boolean({
+					description:
+						"When true, unlock the milestone without resetting completed slices/tasks or deleting their SUMMARY projections. Default false.",
 				}),
 			),
 			// Single-writer v3 audit trail (Stream 2): caller-provided actor identity + causation.

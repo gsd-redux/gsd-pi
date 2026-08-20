@@ -53,6 +53,8 @@ export interface ReopenMilestoneParams {
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
   triggerReason?: string;
+  /** Unlock the milestone without resetting completed slices/tasks or deleting their SUMMARYs. */
+  keepCompleted?: boolean;
 }
 
 export interface ReopenMilestoneResult {
@@ -99,6 +101,7 @@ export async function handleReopenMilestone(
         invocation,
         milestoneId: params.milestoneId,
         reason: params.reason?.trim() || "Full Milestone redo requested",
+        keepCompleted: params.keepCompleted === true,
         audit: {
           ...(params.actorName ? { actorName: params.actorName } : {}),
           ...(params.triggerReason ? { triggerReason: params.triggerReason } : {}),
@@ -110,7 +113,7 @@ export async function handleReopenMilestone(
       return { error: error instanceof Error ? error.message : String(error) };
     }
   } else {
-    const outcome = reopenMilestoneCascade(params.milestoneId);
+    const outcome = reopenMilestoneCascade(params.milestoneId, params.keepCompleted === true);
     if (!outcome.ok) {
       switch (outcome.reason) {
         case "milestone-not-found":
@@ -168,6 +171,7 @@ export async function handleReopenMilestone(
         }
       }
 
+      if (params.keepCompleted !== true) {
       cleanup: for (const slice of slices) {
         if (superseded) break;
         const sliceDir = resolveSlicePath(basePath, params.milestoneId, slice.id);
@@ -216,6 +220,7 @@ export async function handleReopenMilestone(
             }
           }
         }
+      }
       }
     } catch (err) {
       projectionStale = true;

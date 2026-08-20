@@ -85,11 +85,16 @@ export type ReopenMilestoneOutcome =
   | { ok: false; reason: "milestone-not-closed"; status: string };
 
 /**
- * Reopen a closed milestone: milestone → "active", every slice → "in_progress",
- * every task → "pending", completion timestamps cleared, in one commit. Folds
- * the hand-rolled transaction-plus-cascade previously in tools/reopen-milestone.ts.
+ * Reopen a closed milestone: milestone → "active", completion timestamp
+ * cleared. The default cascade also sets every slice → "in_progress" and every
+ * task → "pending". Pass keepCompleted to unlock the milestone without
+ * resetting already-finished descendants. Folds the hand-rolled
+ * transaction-plus-cascade previously in tools/reopen-milestone.ts.
  */
-export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutcome {
+export function reopenMilestoneCascade(
+  milestoneId: string,
+  keepCompleted = false,
+): ReopenMilestoneOutcome {
   requireDb();
   let outcome: ReopenMilestoneOutcome = { ok: true, slicesReset: 0, tasksReset: 0 };
   transaction(() => {
@@ -106,11 +111,15 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
     }
     if (!isClosedStatus(milestone.status)) { outcome = { ok: false, reason: "milestone-not-closed", status: milestone.status }; return; }
 
-    const slices = getMilestoneSlices(milestoneId);
-
     getDbOrNull()!.prepare(
       `UPDATE milestones SET status = 'active', completed_at = NULL WHERE id = :mid`,
     ).run({ ":mid": milestoneId });
+    if (keepCompleted) {
+      outcome = { ok: true, slicesReset: 0, tasksReset: 0 };
+      return;
+    }
+
+    const slices = getMilestoneSlices(milestoneId);
     getDbOrNull()!.prepare(
       `UPDATE slices SET status = 'in_progress', completed_at = NULL WHERE milestone_id = :mid`,
     ).run({ ":mid": milestoneId });

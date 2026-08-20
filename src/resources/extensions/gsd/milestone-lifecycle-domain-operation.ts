@@ -426,18 +426,21 @@ export function reopenMilestone(input: {
   milestoneId: string;
   reason: string;
   audit?: MilestoneCompletionAudit;
+  keepCompleted?: boolean;
 }): MilestoneReopenReceipt {
   const milestoneId = requiredText(input.milestoneId, "milestoneId");
   const reason = requiredText(input.reason, "reason");
   const audit = normalizedAudit(input.audit);
+  const keepCompleted = input.keepCompleted === true;
   const operation = executeDomainOperation(
     operationRequest("milestone.reopen", input.invocation, {
       milestoneId,
       reason,
       audit,
+      ...(keepCompleted ? { keepCompleted: true } : {}),
     }),
     (context) => {
-      const result = reopenMilestoneHierarchy(context, { milestoneId, reason });
+      const result = reopenMilestoneHierarchy(context, { milestoneId, reason, keepCompleted });
       return {
         events: [{
           eventType: "milestone.reopened",
