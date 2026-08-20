@@ -90,6 +90,7 @@ import {
   applyMigrationV44MilestoneReopen,
   applyMigrationV45AuthorityRecovery,
   applyMigrationV47SameLeaseAttemptSettlement,
+  applyMigrationV48TaskToolRequirements,
 } from "../db-migration-steps.js";
 import {
   createCanonicalFoundationSchemaV31,
@@ -159,7 +160,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 47;
+export const SCHEMA_VERSION = 48;
 
 /**
  * PRAGMA application_id stamped on every gsd.db at V46 so binaries and
@@ -407,6 +408,7 @@ function initSchema(
         applyMigrationV44MilestoneReopen(db);
         applyMigrationV45AuthorityRecovery(db);
         applyMigrationV47SameLeaseAttemptSettlement(db);
+        applyMigrationV48TaskToolRequirements(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -784,6 +786,12 @@ function migrateSchema(
       applyMigrationV47SameLeaseAttemptSettlement(db);
       stampStateCutoverPragmas(db, 47);
       recordSchemaVersion(db, 47);
+    }
+
+    if (currentVersion < 48) {
+      applyMigrationV48TaskToolRequirements(db);
+      stampStateCutoverPragmas(db, 48);
+      recordSchemaVersion(db, 48);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");

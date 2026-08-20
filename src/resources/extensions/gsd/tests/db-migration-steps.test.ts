@@ -18,6 +18,7 @@ import {
   applyMigrationV19MemoryFts,
   applyMigrationV20MemoryRelations,
   applyMigrationV22QualityGateRepair,
+  applyMigrationV48TaskToolRequirements,
 } from "../db-migration-steps.ts";
 
 class FakeStatement implements DbStatement {
@@ -118,6 +119,16 @@ describe("db-migration-steps", () => {
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE INDEX IF NOT EXISTS idx_memory_sources_scope")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS memory_relations")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE INDEX IF NOT EXISTS idx_memory_relations_from")));
+  });
+
+  test("v48 adds default-empty task workflow tool requirements", () => {
+    const db = new FakeAdapter();
+
+    applyMigrationV48TaskToolRequirements(db);
+
+    assert.deepEqual(db.execCalls, [
+      "ALTER TABLE tasks ADD COLUMN required_workflow_tools TEXT NOT NULL DEFAULT '[]'",
+    ]);
   });
 
   test("memory FTS migration delegates data-copy backfill to caller-owned write callback", () => {

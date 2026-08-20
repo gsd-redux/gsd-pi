@@ -61,9 +61,30 @@ function validReplanTaskParams() {
     verify: 'node --test replanned.test.ts',
     inputs: ['src/original.ts'],
     expectedOutput: ['src/replanned.ts'],
+    requiredWorkflowTools: [] as string[],
     reworkBriefRef: 'RB-001',
   };
 }
+
+test('handleReplanTask rejects incompatible lifecycle work before persistence', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedTask('pending');
+    const before = getTask('M001', 'S01', 'T01');
+    const input = validReplanTaskParams();
+    input.requiredWorkflowTools = ['gsd_requirement_update'];
+
+    const result = await handleReplanTask(input, base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /gsd_requirement_update.*execute-task/i);
+    assert.deepEqual(getTask('M001', 'S01', 'T01'), before);
+  } finally {
+    cleanup(base);
+  }
+});
 
 test('handleReplanTask updates one pending task plan and records a task-scoped replan history entry', async () => {
   const base = makeTmpBase();

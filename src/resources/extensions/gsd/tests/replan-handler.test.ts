@@ -96,6 +96,7 @@ function validReplanParams() {
         verify: 'node --test b-v2.test.ts',
         inputs: ['src/b.ts'],
         expectedOutput: ['src/b-v2.ts'],
+        requiredWorkflowTools: [] as string[],
       },
     ],
     removedTaskIds: ['T03'],
@@ -114,6 +115,26 @@ test('handleReplanSlice rejects invalid payloads (missing milestoneId)', async (
     assert.ok('error' in result);
     assert.match(result.error, /validation failed/);
     assert.match(result.error, /milestoneId/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handleReplanSlice rejects incompatible lifecycle work before persistence', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedSliceWithTasks();
+    const before = getTask('M001', 'S01', 'T02');
+    const input = validReplanParams();
+    input.updatedTasks[0]!.requiredWorkflowTools = ['gsd_requirement_update'];
+
+    const result = await handleReplanSlice(input, base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /gsd_requirement_update.*execute-task/i);
+    assert.deepEqual(getTask('M001', 'S01', 'T02'), before);
   } finally {
     cleanup(base);
   }

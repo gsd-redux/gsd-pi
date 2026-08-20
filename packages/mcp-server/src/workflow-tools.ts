@@ -2008,6 +2008,7 @@ const planSliceParams = {
     verify: nonEmptyString("verify"),
     inputs: nonEmptyStringArray("inputs"),
     expectedOutput: nonEmptyStringArray("expectedOutput"),
+    requiredWorkflowTools: z.array(z.string()).describe("Workflow tools required during execute-task; use [] for ordinary tasks"),
     observabilityImpact: optionalNonEmptyString("observabilityImpact"),
   })).optional().describe("Optional full task replacement for the slice. Omit for incremental planning, then call gsd_plan_task once per task."),
   successCriteria: z.string().optional(),
@@ -2117,6 +2118,27 @@ const reassessRoadmapParams = {
     added: z.array(roadmapSliceChangeSchema),
     removed: z.array(z.string()),
   }).describe("Slice changes to apply"),
+  metadataCorrections: z.object({
+    milestone: z.object({
+      successCriteria: z.array(z.string()).optional(),
+      verificationContract: z.string().optional(),
+      verificationIntegration: z.string().optional(),
+      verificationOperational: z.string().optional(),
+      verificationUat: z.string().optional(),
+      definitionOfDone: z.array(z.string()).optional(),
+      requirementCoverage: z.string().optional(),
+      boundaryMapMarkdown: z.string().optional(),
+    }).strict().optional(),
+    completedSlices: z.array(z.object({
+      sliceId: nonEmptyString("sliceId"),
+      demo: z.string().optional(),
+      goal: z.string().optional(),
+      successCriteria: z.string().optional(),
+      proofLevel: z.string().optional(),
+      integrationClosure: z.string().optional(),
+      observabilityImpact: z.string().optional(),
+    }).strict()).optional(),
+  }).strict().optional().describe("Narrow DB-backed acceptance and completed-slice evidence corrections"),
 };
 const reassessRoadmapSchema = z.object(reassessRoadmapParams);
 
@@ -2189,6 +2211,7 @@ const replanSliceParams = {
     verify: z.string(),
     inputs: z.array(z.string()),
     expectedOutput: z.array(z.string()),
+    requiredWorkflowTools: z.array(z.string()).describe("Workflow tools required during task execution; use [] for ordinary tasks"),
     fullPlanMd: z.string().optional(),
   })).describe("Tasks to upsert into the replanned slice"),
   removedTaskIds: z.array(z.string()).describe("Task IDs to remove from the slice"),
@@ -2207,6 +2230,7 @@ const replanTaskParams = {
   verify: nonEmptyString("verify").describe("Updated verification command or block"),
   inputs: z.array(z.string()).describe("Updated input files or references"),
   expectedOutput: z.array(z.string()).describe("Updated files this task creates or overwrites"),
+  requiredWorkflowTools: z.array(z.string()).describe("Workflow tools required during task execution; use [] for ordinary tasks"),
   reworkBriefRef: z.string().optional().describe("Rework brief ID/reference that triggered this task replan"),
 };
 const replanTaskSchema = z.object(replanTaskParams);
@@ -2375,6 +2399,7 @@ const planTaskParams = {
   verify: nonEmptyString("verify").describe("Verification command or block"),
   inputs: z.array(z.string()).describe("Input files or references"),
   expectedOutput: z.array(z.string()).describe("Files this task creates or overwrites"),
+  requiredWorkflowTools: z.array(z.string()).describe("Workflow tools required during execute-task; use [] for ordinary tasks"),
   observabilityImpact: optionalNonEmptyString("observabilityImpact").describe("Task observability impact"),
 };
 const planTaskSchema = z.object(planTaskParams);

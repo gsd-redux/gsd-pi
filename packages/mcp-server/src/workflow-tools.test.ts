@@ -1489,6 +1489,7 @@ describe("workflow MCP tools", () => {
             verify: "node --test",
             inputs: ["M001-ROADMAP.md"],
             expectedOutput: ["T01-PLAN.md"],
+            requiredWorkflowTools: [],
           },
           {
             taskId: "T02",
@@ -1499,6 +1500,7 @@ describe("workflow MCP tools", () => {
             verify: "node --test",
             inputs: ["M001-ROADMAP.md"],
             expectedOutput: ["T02-PLAN.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -1515,6 +1517,7 @@ describe("workflow MCP tools", () => {
         verify: "node --test",
         inputs: ["M001-ROADMAP.md"],
         expectedOutput: ["T01-PLAN.md"],
+        requiredWorkflowTools: [],
       });
 
       await planTaskTool!.handler({
@@ -1529,6 +1532,7 @@ describe("workflow MCP tools", () => {
         verify: "node --test",
         inputs: ["M001-ROADMAP.md"],
         expectedOutput: ["T02-PLAN.md"],
+        requiredWorkflowTools: [],
       });
 
       _getAdapter()!
@@ -2293,6 +2297,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: [],
             expectedOutput: ["src/bridge-status.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -2301,6 +2306,30 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       assert.ok(
         existsSync(join(base, ".gsd", "phases", "01-workflow-mcp-planning", "01-01-PLAN.md")),
         "slice plan should exist on disk",
+      );
+      const incompatible = await sliceTool!.handler({
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+        goal: "Must fail before assigning lifecycle work to execution.",
+        tasks: [{
+          taskId: "T01",
+          title: "Invalid lifecycle task",
+          description: "Terminalize a requirement during execution.",
+          estimate: "5m",
+          files: [],
+          verify: "node --test",
+          inputs: [],
+          expectedOutput: [],
+          requiredWorkflowTools: ["gsd_requirement_update"],
+        }],
+      });
+      assert.equal((incompatible as any).isError, true);
+      assert.match((incompatible as any).content[0].text as string, /gsd_requirement_update.*execute-task/i);
+      assert.deepEqual(
+        _getAdapter()!.prepare("SELECT title, required_workflow_tools FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'").get(),
+        { title: "Add planning bridge", required_workflow_tools: "[]" },
+        "rejected lifecycle work must not mutate the persisted task",
       );
       // Flat-phase: tasks are checkboxes inside the slice plan file, no per-task T01-PLAN.md
     } finally {
@@ -2432,6 +2461,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "",
             inputs: ["ROADMAP.md"],
             expectedOutput: ["S01-PLAN.md"],
+            requiredWorkflowTools: [],
           },
         ],
       }, "verify");
@@ -2452,6 +2482,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["ROADMAP.md"],
             expectedOutput: ["S01-PLAN.md"],
+            requiredWorkflowTools: [],
           },
         ],
       }, "files");
@@ -2469,6 +2500,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         verify: "v",
         inputs: [],
         expectedOutput: [],
+        requiredWorkflowTools: [],
       }, "milestoneId");
 
       // Empty observabilityImpact explicitly rejected (optional-but-non-empty)
@@ -2484,6 +2516,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         verify: "v",
         inputs: [],
         expectedOutput: [],
+        requiredWorkflowTools: [],
         observabilityImpact: "   ",
       }, "observabilityImpact");
 
@@ -2811,6 +2844,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["M010-ROADMAP.md"],
             expectedOutput: ["T10-PLAN.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -2829,6 +2863,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         verify: "node --test",
         inputs: ["M010-ROADMAP.md", "S10-PLAN.md"],
         expectedOutput: ["T11-PLAN.md"],
+        requiredWorkflowTools: [],
       });
 
       assert.match((result as any).content[0].text as string, /Planned task T11/);
@@ -2897,6 +2932,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["M099-ROADMAP.md"],
             expectedOutput: ["T09-SUMMARY.md"],
+            requiredWorkflowTools: [],
           },
           {
             taskId: "T10",
@@ -2907,6 +2943,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["S09-PLAN.md"],
             expectedOutput: ["Updated plan"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -2929,6 +2966,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["S09-PLAN.md"],
             expectedOutput: ["Updated plan"],
+            requiredWorkflowTools: [],
           },
           {
             taskId: "T11",
@@ -2939,6 +2977,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["S09-REPLAN.md"],
             expectedOutput: ["Remediation patch"],
+            requiredWorkflowTools: [],
           },
         ],
         removedTaskIds: [],
@@ -2962,6 +3001,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["S09-PLAN.md"],
             expectedOutput: ["Updated plan"],
+            requiredWorkflowTools: [],
           },
         ],
         removedTaskIds: ["T11"],
@@ -3034,6 +3074,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["M003-ROADMAP.md"],
             expectedOutput: ["S03-SUMMARY.md", "S03-UAT.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -3086,6 +3127,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["M004-ROADMAP.md"],
             expectedOutput: ["S04-SUMMARY.md", "S04-UAT.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -3186,6 +3228,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: ["M005-ROADMAP.md"],
             expectedOutput: ["M005-VALIDATION.md", "M005-SUMMARY.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -3308,6 +3351,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
             verify: "node --test",
             inputs: [],
             expectedOutput: ["src/gate-seed.md"],
+            requiredWorkflowTools: [],
           },
         ],
       });
@@ -3405,8 +3449,43 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
           ],
           removed: [],
         },
+        metadataCorrections: {
+          milestone: {
+            successCriteria: ["Corrected runtime acceptance evidence is durable."],
+            verificationContract: "Use the corrected runtime evidence contract.",
+            requirementCoverage: "R006 remains covered by completed S06 evidence.",
+            boundaryMapMarkdown: "S06 -> corrected runtime evidence",
+          },
+          completedSlices: [{
+            sliceId: "S06",
+            demo: "Completed S06 demonstrates the corrected acceptance policy.",
+            successCriteria: "Corrected runtime evidence is recorded.",
+          }],
+        },
       });
       assert.match((reassessResult as any).content[0].text as string, /Reassessed roadmap for milestone M006 after S06/);
+      assert.deepEqual(
+        _getAdapter()!.prepare("SELECT status, success_criteria, requirement_coverage, boundary_map_markdown FROM milestones WHERE id = 'M006'").get(),
+        {
+          status: "active",
+          success_criteria: '["Corrected runtime acceptance evidence is durable."]',
+          requirement_coverage: "R006 remains covered by completed S06 evidence.",
+          boundary_map_markdown: "S06 -> corrected runtime evidence",
+        },
+      );
+      assert.deepEqual(
+        _getAdapter()!.prepare("SELECT status, demo, success_criteria FROM slices WHERE milestone_id = 'M006' AND id = 'S06'").get(),
+        {
+          status: "complete",
+          demo: "Completed S06 demonstrates the corrected acceptance policy.",
+          success_criteria: "Corrected runtime evidence is recorded.",
+        },
+      );
+      assert.equal(
+        _getAdapter()!.prepare("SELECT status FROM tasks WHERE milestone_id = 'M006' AND slice_id = 'S06' AND id = 'T06'").get()?.["status"],
+        "complete",
+        "metadata correction must preserve completed task status",
+      );
 
       const reassessAliasResult = await reassessAlias!.handler({
         projectDir: base,

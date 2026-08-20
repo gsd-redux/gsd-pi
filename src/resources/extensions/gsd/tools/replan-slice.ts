@@ -14,7 +14,7 @@ import {
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import { isClosedStatus } from "../status-guards.js";
-import { isNonEmptyString } from "../validation.js";
+import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { renderPlanFromDb, renderReplanFromDb } from "../markdown-renderer.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifestAndFlush } from "../workflow-manifest.js";
@@ -30,6 +30,7 @@ import {
 } from "../planning-domain-operation.js";
 import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
 import { ensurePendingSliceQ8 } from "../db/writers/slice-companion-state.js";
+import { validateTaskToolRequirements } from "../task-tool-requirements.js";
 
 export interface ReplanSliceTaskInput {
   taskId: string;
@@ -40,6 +41,7 @@ export interface ReplanSliceTaskInput {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  requiredWorkflowTools?: string[];
   fullPlanMd?: string;
 }
 
@@ -79,15 +81,20 @@ function validateParams(params: ReplanSliceParams): ReplanSliceParams {
     throw new Error("removedTaskIds must be an array");
   }
 
-  // Validate each updated task
-  for (let i = 0; i < params.updatedTasks.length; i++) {
-    const t = params.updatedTasks[i];
+  const updatedTasks = params.updatedTasks.map((task, i) => {
+    const t = task;
     if (!t || typeof t !== "object") throw new Error(`updatedTasks[${i}] must be an object`);
     if (!isNonEmptyString(t.taskId)) throw new Error(`updatedTasks[${i}].taskId is required`);
     if (!isNonEmptyString(t.title)) throw new Error(`updatedTasks[${i}].title is required`);
-  }
+    const requiredWorkflowTools = t.requiredWorkflowTools === undefined
+      ? []
+      : Array.from(new Set(validateStringArray(t.requiredWorkflowTools, `updatedTasks[${i}].requiredWorkflowTools`)));
+    const toolRequirementError = validateTaskToolRequirements(t.taskId, requiredWorkflowTools);
+    if (toolRequirementError) throw new Error(toolRequirementError);
+    return { ...t, requiredWorkflowTools };
+  });
 
-  const updatedIds = params.updatedTasks.map((task) => task.taskId);
+  const updatedIds = updatedTasks.map((task) => task.taskId);
   if (new Set(updatedIds).size !== updatedIds.length) {
     throw new Error("updatedTasks contains duplicate task IDs");
   }
@@ -100,7 +107,7 @@ function validateParams(params: ReplanSliceParams): ReplanSliceParams {
     throw new Error(`task ${overlappingId} cannot be both updated and removed`);
   }
 
-  return params;
+  return { ...params, updatedTasks };
 }
 
 export async function handleReplanSlice(
@@ -279,6 +286,7 @@ export async function handleReplanSlice(
               verify: updatedTask.verify || "",
               inputs: updatedTask.inputs || [],
               expectedOutput: updatedTask.expectedOutput || [],
+              requiredWorkflowTools: updatedTask.requiredWorkflowTools ?? [],
               fullPlanMd: updatedTask.fullPlanMd,
             });
           } else {
@@ -297,6 +305,7 @@ export async function handleReplanSlice(
               verify: updatedTask.verify || "",
               inputs: updatedTask.inputs || [],
               expectedOutput: updatedTask.expectedOutput || [],
+              requiredWorkflowTools: updatedTask.requiredWorkflowTools ?? [],
               fullPlanMd: updatedTask.fullPlanMd,
             });
             adoptLifecycleIfMissing(context, {

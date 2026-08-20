@@ -28,8 +28,8 @@ import { recordSchemaVersion } from "../resources/extensions/gsd/db-schema-metad
 import { openWorkflowDatabaseIsolated } from "../resources/extensions/gsd/db-workspace.ts";
 import { SCHEMA_VERSION, SchemaTooNewError } from "../resources/extensions/gsd/db/engine.ts";
 
-const V47_MESSAGE =
-  "gsd.db schema is v48, newer than the v47 this gsd-pi supports. " +
+const V49_MESSAGE =
+  "gsd.db schema is v49, newer than the v48 this gsd-pi supports. " +
   "Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.";
 
 // Real preflight probe: the same pieces the production jiti loader wires up,
@@ -83,14 +83,14 @@ test("gsd read progress --json on a newer-schema project exits non-zero with the
     assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
     const db = _getAdapter();
     assert.ok(db);
-    recordSchemaVersion(db, 48);
+    recordSchemaVersion(db, 49);
     closeDatabase();
 
     const run = await captureReadCli(readProgressArgv(base));
     assert.notEqual(run.exitCode, 0);
     assert.equal(run.stdout, "");
     assert.ok(
-      run.stderr.includes(V47_MESSAGE),
+      run.stderr.includes(V49_MESSAGE),
       `stderr should contain the exact engine message, got: ${run.stderr}`,
     );
   } finally {

@@ -768,7 +768,7 @@ test("workflow_import_applications rejects an incomplete Preview envelope", () =
 });
 
 test("legacy import surface registry pins the deterministic Preview envelope contract", () => {
-  assert.equal(SCHEMA_VERSION, 47, "legacy import contract targets the accepted v47 schema");
+  assert.equal(SCHEMA_VERSION, 48, "legacy import contract targets the accepted v48 schema");
   assert.equal(LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION, SCHEMA_VERSION);
   assert.equal(LEGACY_IMPORT_PREVIEW_SCHEMA_VERSION, 1);
   assert.deepEqual(LEGACY_IMPORT_CHANGE_ACTIONS, ["create", "update", "delete", "preserve"]);

@@ -38,6 +38,7 @@ import {
   planningOperationPayload,
 } from "../planning-domain-operation.js";
 import type { PlanningInvocation } from "../planning-invocation.js";
+import { validateTaskToolRequirements } from "../task-tool-requirements.js";
 
 export interface ReplanTaskParams {
   milestoneId: string;
@@ -50,6 +51,7 @@ export interface ReplanTaskParams {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  requiredWorkflowTools?: string[];
   /** Repository id(s) this task touches (parent workspace); recomputed from planned paths when omitted. */
   targetRepositories?: string[];
   reworkBriefRef?: string;
@@ -74,11 +76,17 @@ function validateParams(params: ReplanTaskParams): ReplanTaskParams {
   if (!isNonEmptyString(params?.estimate)) throw new Error("estimate is required");
   if (!isNonEmptyString(params?.verify)) throw new Error("verify is required");
   assertVerifyIsShellCheckable(params.verify);
+  const requiredWorkflowTools = params.requiredWorkflowTools === undefined
+    ? []
+    : Array.from(new Set(validateStringArray(params.requiredWorkflowTools, "requiredWorkflowTools")));
+  const toolRequirementError = validateTaskToolRequirements(params.taskId, requiredWorkflowTools);
+  if (toolRequirementError) throw new Error(toolRequirementError);
   return {
     ...params,
     files: validateStringArray(params.files, "files"),
     inputs: validateStringArray(params.inputs, "inputs"),
     expectedOutput: validateStringArray(params.expectedOutput, "expectedOutput"),
+    requiredWorkflowTools,
     ...(params.targetRepositories !== undefined
       ? { targetRepositories: validateRepositoryTargetIds("targetRepositories", params.targetRepositories) }
       : {}),
@@ -208,6 +216,7 @@ export async function handleReplanTask(
           verify: params.verify,
           inputs: params.inputs,
           expectedOutput: params.expectedOutput,
+          requiredWorkflowTools: params.requiredWorkflowTools ?? [],
           fullPlanMd: params.fullPlanMd,
           targetRepositories: effectiveTargetRepositories,
         });

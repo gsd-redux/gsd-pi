@@ -390,6 +390,7 @@ function renderTaskPlanMarkdown(task: TaskRow, taskGates: GateRow[] = []): strin
   lines.push(`estimated_steps: ${estimatedSteps}`);
   lines.push(`estimated_files: ${estimatedFiles}`);
   lines.push("skills_used: []");
+  lines.push(`required_workflow_tools: ${JSON.stringify(task.required_workflow_tools ?? [])}`);
   lines.push("---");
   lines.push("");
   lines.push(`# ${task.id}: ${task.title || task.id}`);

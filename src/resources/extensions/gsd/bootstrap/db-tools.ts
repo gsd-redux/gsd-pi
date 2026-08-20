@@ -1175,6 +1175,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			"For incremental planning, call gsd_plan_slice with slice metadata only, then call gsd_plan_task once per task.",
 			"When tasks is omitted or empty, the tool writes only slice planning metadata and preserves existing tasks.",
 			"When tasks is non-empty, the tool validates input, requires an existing parent slice, writes slice/task planning data, renders PLAN.md and task plan files from DB, and clears both state and parse caches after success.",
+			"Every task must declare requiredWorkflowTools; use [] for ordinary implementation tasks. Tools unavailable to execute-task are rejected before persistence.",
 			"Use the canonical name gsd_plan_slice; gsd_slice_plan is only an alias.",
 		],
 		parameters: Type.Object({
@@ -1205,6 +1206,10 @@ export function registerDbTools(pi: ExtensionAPI): void {
 						expectedOutput: Type.Array(Type.String(), {
 							description:
 								'Array<string> of files this task creates or overwrites; pass ["path"] or [], never prose or a single string',
+						}),
+						requiredWorkflowTools: Type.Array(Type.String(), {
+							description:
+								"Workflow tools required during execution; pass [] for ordinary tasks. Lifecycle mutations such as gsd_requirement_update are completion-owned and rejected here.",
 						}),
 						observabilityImpact: Type.Optional(
 							Type.String({ description: "Task observability impact" }),
@@ -1340,6 +1345,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use gsd_plan_task for task planning instead of writing task PLAN files directly.",
 			"Keep parameters flat and provide the full task planning payload.",
+			"Declare requiredWorkflowTools explicitly; use [] for ordinary implementation tasks. Tools unavailable to execute-task are rejected before persistence.",
 			"The tool validates input, requires an existing parent slice, writes task planning data, renders the slice PLAN file from DB, and clears both state and parse caches after success.",
 			"Use the canonical name gsd_plan_task; gsd_task_plan is only an alias.",
 		],
@@ -1364,6 +1370,10 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			expectedOutput: Type.Array(Type.String(), {
 				description:
 					'Array<string> of files this task creates or overwrites; pass ["path"] or [], never prose or a single string',
+			}),
+			requiredWorkflowTools: Type.Array(Type.String(), {
+				description:
+					"Workflow tools required during execution; pass [] for ordinary tasks. Lifecycle mutations such as gsd_requirement_update are completion-owned and rejected here.",
 			}),
 			observabilityImpact: Type.Optional(
 				Type.String({ description: "Task observability impact" }),
@@ -2162,7 +2172,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			"Use gsd_replan_slice (canonical) or gsd_slice_replan (alias) when a blocker is discovered and the slice plan needs rewriting.",
 			"The tool structurally enforces that completed tasks cannot be updated or removed — violations return specific error payloads naming the blocked task ID.",
 			"Parameters: milestoneId, sliceId, blockerTaskId, blockerDescription, whatChanged, updatedTasks (array), removedTaskIds (array).",
-			"updatedTasks items: taskId, title, description, estimate, files, verify, inputs, expectedOutput.",
+			"updatedTasks items: taskId, title, description, estimate, files, verify, inputs, expectedOutput, requiredWorkflowTools ([] for ordinary tasks).",
 		],
 		parameters: Type.Object({
 			milestoneId: Type.String({ description: "Milestone ID (e.g. M001)" }),
@@ -2193,6 +2203,9 @@ export function registerDbTools(pi: ExtensionAPI): void {
 					}),
 					expectedOutput: Type.Array(Type.String(), {
 						description: "Files this task creates or overwrites",
+					}),
+					requiredWorkflowTools: Type.Array(Type.String(), {
+						description: "Workflow tools required during task execution; use [] for ordinary tasks",
 					}),
 				}),
 				{ description: "Tasks to upsert (update existing or insert new)" },
@@ -2268,6 +2281,9 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			}),
 			expectedOutput: Type.Array(Type.String(), {
 				description: "Updated files this task creates or overwrites",
+			}),
+			requiredWorkflowTools: Type.Array(Type.String(), {
+				description: "Workflow tools required during task execution; use [] for ordinary tasks",
 			}),
 			reworkBriefRef: Type.Optional(
 				Type.String({
@@ -2387,14 +2403,14 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		label: "Reassess Roadmap",
 		description:
 			"Reassess the milestone roadmap after a slice completes. Structurally enforces preservation of completed slices — " +
-			"mutations to completed slice IDs are rejected with actionable error payloads. Writes assessment to DB, " +
+			"structural mutations to completed slice IDs are rejected, while explicit evidence-metadata corrections remain available. Writes assessment to DB, " +
 			"applies slice mutations, re-renders ROADMAP.md, and renders ROADMAP-ASSESSMENT.md.",
 		promptSnippet:
 			"Reassess a GSD roadmap with structural enforcement of completed slices",
 		promptGuidelines: [
 			"Use gsd_reassess_roadmap (canonical) or gsd_roadmap_reassess (alias) after a slice completes to reassess the roadmap.",
-			"The tool structurally enforces that completed slices cannot be modified or removed — violations return specific error payloads naming the blocked slice ID.",
-			"Parameters: milestoneId, completedSliceId, verdict, assessment, sliceChanges (object with modified, added, removed arrays).",
+			"The tool structurally enforces that completed slices cannot be modified or removed. Use metadataCorrections only for audited acceptance/evidence language; it cannot change status, tasks, or dependencies.",
+			"Parameters: milestoneId, completedSliceId, verdict, assessment, sliceChanges (object with modified, added, removed arrays), and optional metadataCorrections.",
 			"sliceChanges.modified items: sliceId, title, risk (optional), depends (optional), demo (optional).",
 		],
 		parameters: Type.Object({
@@ -2447,6 +2463,27 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				},
 				{ description: "Slice changes to apply" },
 			),
+			metadataCorrections: Type.Optional(Type.Object({
+				milestone: Type.Optional(Type.Object({
+					successCriteria: Type.Optional(Type.Array(Type.String(), { description: "Corrected milestone success criteria" })),
+					verificationContract: Type.Optional(Type.String({ description: "Corrected contract verification language" })),
+					verificationIntegration: Type.Optional(Type.String({ description: "Corrected integration verification language" })),
+					verificationOperational: Type.Optional(Type.String({ description: "Corrected operational verification language" })),
+					verificationUat: Type.Optional(Type.String({ description: "Corrected UAT verification language" })),
+					definitionOfDone: Type.Optional(Type.Array(Type.String(), { description: "Corrected definition-of-done criteria" })),
+					requirementCoverage: Type.Optional(Type.String({ description: "Corrected requirement coverage text" })),
+					boundaryMapMarkdown: Type.Optional(Type.String({ description: "Corrected boundary-map markdown" })),
+				}, { description: "Audited milestone acceptance-metadata corrections" })),
+				completedSlices: Type.Optional(Type.Array(Type.Object({
+					sliceId: Type.String({ description: "Completed slice whose evidence metadata is corrected" }),
+					demo: Type.Optional(Type.String({ description: "Corrected completed-slice demo language" })),
+					goal: Type.Optional(Type.String({ description: "Corrected completed-slice boundary goal" })),
+					successCriteria: Type.Optional(Type.String({ description: "Corrected completed-slice success criteria" })),
+					proofLevel: Type.Optional(Type.String({ description: "Corrected completed-slice proof language" })),
+					integrationClosure: Type.Optional(Type.String({ description: "Corrected completed-slice integration closure" })),
+					observabilityImpact: Type.Optional(Type.String({ description: "Corrected completed-slice verification/observability language" })),
+				}), { description: "Evidence-only corrections for completed slices; structural fields are unavailable" })),
+			}, { description: "Narrow DB-backed acceptance and completed-slice metadata corrections" })),
 			// Single-writer v3 audit trail (Stream 2): caller-provided actor identity + causation.
 			actorName: Type.Optional(
 				Type.String({

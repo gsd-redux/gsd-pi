@@ -38,6 +38,8 @@ If slice research is inlined, trust its architectural findings, but verify every
 
 ## Planning Rules
 
+**Task tool contract:** Every persisted task must also declare `requiredWorkflowTools`; use `[]` for ordinary implementation tasks. Never assign lifecycle mutations such as `gsd_requirement_update` to an execution task. Requirement terminalization belongs to `complete-slice` or `complete-milestone`, and incompatible declarations are rejected before persistence.
+
 1. If requirements are preloaded, identify owned and supporting Active requirements.
 2. Call `memory_query` with keywords from the slice title and source files.
 3. Use the inlined Output Template sections already present in this prompt. Do not read template files from disk.

@@ -294,6 +294,7 @@ export interface TaskPlanningRecord {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  requiredWorkflowTools: string[];
   observabilityImpact: string;
   fullPlanMd?: string;
   targetRepositories?: string[];
@@ -564,13 +565,13 @@ export function insertTask(t: {
       verification_result, duration, completed_at, blocker_discovered,
       deviations, known_issues, key_files, key_decisions, full_summary_md,
       description, estimate, files, verify, inputs, expected_output,
-      observability_impact, full_plan_md, target_repositories, sequence
+      required_workflow_tools, observability_impact, full_plan_md, target_repositories, sequence
     ) VALUES (
       :milestone_id, :slice_id, :id, :title, :status, :one_liner, :narrative,
       :verification_result, :duration, :completed_at, :blocker_discovered,
       :deviations, :known_issues, :key_files, :key_decisions, :full_summary_md,
       :description, :estimate, :files, :verify, :inputs, :expected_output,
-      :observability_impact, :full_plan_md, :target_repositories, :sequence
+      :required_workflow_tools, :observability_impact, :full_plan_md, :target_repositories, :sequence
     )
     ON CONFLICT(milestone_id, slice_id, id) DO UPDATE SET
       title = CASE WHEN NULLIF(:title, '') IS NOT NULL THEN :title ELSE tasks.title END,
@@ -610,6 +611,10 @@ export function insertTask(t: {
       verify = CASE WHEN NULLIF(:verify, '') IS NOT NULL THEN :verify ELSE tasks.verify END,
       inputs = CASE WHEN NULLIF(:inputs, '[]') IS NOT NULL THEN :inputs ELSE tasks.inputs END,
       expected_output = CASE WHEN NULLIF(:expected_output, '[]') IS NOT NULL THEN :expected_output ELSE tasks.expected_output END,
+      required_workflow_tools = CASE
+        WHEN :raw_required_workflow_tools IS NOT NULL THEN :required_workflow_tools
+        ELSE tasks.required_workflow_tools
+      END,
       observability_impact = CASE WHEN NULLIF(:observability_impact, '') IS NOT NULL THEN :observability_impact ELSE tasks.observability_impact END,
       full_plan_md = CASE WHEN NULLIF(:full_plan_md, '') IS NOT NULL THEN :full_plan_md ELSE tasks.full_plan_md END,
       sequence = :sequence,
@@ -640,6 +645,11 @@ export function insertTask(t: {
     ":verify": t.planning?.verify ?? "",
     ":inputs": JSON.stringify(t.planning?.inputs ?? []),
     ":expected_output": JSON.stringify(t.planning?.expectedOutput ?? []),
+    ":required_workflow_tools": JSON.stringify(t.planning?.requiredWorkflowTools ?? []),
+    ":raw_required_workflow_tools":
+      t.planning && "requiredWorkflowTools" in t.planning
+        ? JSON.stringify(t.planning.requiredWorkflowTools ?? [])
+        : null,
     ":observability_impact": t.planning?.observabilityImpact ?? "",
     ":full_plan_md": t.planning?.fullPlanMd ?? "",
     ":sequence": t.sequence ?? 0,
@@ -746,6 +756,7 @@ export function upsertTaskPlanning(milestoneId: string, sliceId: string, taskId:
       verify = COALESCE(:verify, verify),
       inputs = COALESCE(:inputs, inputs),
       expected_output = COALESCE(:expected_output, expected_output),
+      required_workflow_tools = COALESCE(:required_workflow_tools, required_workflow_tools),
       observability_impact = COALESCE(:observability_impact, observability_impact),
       full_plan_md = COALESCE(:full_plan_md, full_plan_md),
       target_repositories = COALESCE(:target_repositories, target_repositories)
@@ -761,6 +772,7 @@ export function upsertTaskPlanning(milestoneId: string, sliceId: string, taskId:
     ":verify": planning.verify ?? null,
     ":inputs": planning.inputs ? JSON.stringify(planning.inputs) : null,
     ":expected_output": planning.expectedOutput ? JSON.stringify(planning.expectedOutput) : null,
+    ":required_workflow_tools": planning.requiredWorkflowTools ? JSON.stringify(planning.requiredWorkflowTools) : null,
     ":observability_impact": planning.observabilityImpact ?? null,
     ":full_plan_md": planning.fullPlanMd ?? null,
     ":target_repositories": planning.targetRepositories ? JSON.stringify(planning.targetRepositories) : null,

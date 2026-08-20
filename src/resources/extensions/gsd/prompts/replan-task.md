@@ -19,7 +19,7 @@ Source: `{{taskPlanPath}}`
 ## Instructions
 
 1. Use the durable failure evidence, rationale, and Work Checkpoint above to correct the plan.
-2. Call `gsd_replan_task` with `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, and `expectedOutput`. Include `triggerReason` describing the recovery action.
+2. Call `gsd_replan_task` with `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, `expectedOutput`, and `requiredWorkflowTools`. Use `requiredWorkflowTools: []` for an ordinary implementation task; incompatible execution tools are rejected before persistence. Include `triggerReason` describing the recovery action.
 3. Preserve valid scope and constraints from the current plan, but replace the invalid steps. Do not widen the Task or redesign other tasks in the slice.
 4. After `gsd_replan_task` succeeds, stop. The orchestrator will claim a new execution Attempt from the replacement plan.
 

@@ -208,6 +208,7 @@ export function createBaseSchemaObjects(db: DbAdapter, hooks: BaseSchemaHooks): 
       verify TEXT NOT NULL DEFAULT '',
       inputs TEXT NOT NULL DEFAULT '[]',
       expected_output TEXT NOT NULL DEFAULT '[]',
+      required_workflow_tools TEXT NOT NULL DEFAULT '[]',
       observability_impact TEXT NOT NULL DEFAULT '',
       full_plan_md TEXT NOT NULL DEFAULT '',
       target_repositories TEXT NOT NULL DEFAULT '[]',

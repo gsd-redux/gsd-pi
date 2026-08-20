@@ -48,6 +48,8 @@ export interface TaskRow {
   verify: string;
   inputs: string[];
   expected_output: string[];
+  /** Defaults to [] for task rows created before schema v48. */
+  required_workflow_tools?: string[];
   observability_impact: string;
   full_plan_md: string;
   sequence: number;
@@ -137,6 +139,7 @@ export function rowToTask(row: DbRow): TaskRow {
     verify: (row["verify"] as string) ?? "",
     inputs: parseTaskArrayColumn(row["inputs"]),
     expected_output: parseTaskArrayColumn(row["expected_output"]),
+    required_workflow_tools: parseTaskArrayColumn(row["required_workflow_tools"]),
     observability_impact: (row["observability_impact"] as string) ?? "",
     full_plan_md: (row["full_plan_md"] as string) ?? "",
     sequence: (row["sequence"] as number) ?? 0,

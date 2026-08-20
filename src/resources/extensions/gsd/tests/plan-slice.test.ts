@@ -119,6 +119,7 @@ function validParams() {
         verify: 'node --test src/resources/extensions/gsd/tests/plan-slice.test.ts',
         inputs: ['src/resources/extensions/gsd/tools/plan-milestone.ts'],
         expectedOutput: ['src/resources/extensions/gsd/tools/plan-slice.ts'],
+        requiredWorkflowTools: [] as string[],
         observabilityImpact: 'Tests exercise cache invalidation and render failure paths.',
       },
       {
@@ -130,6 +131,7 @@ function validParams() {
         verify: 'node --test src/resources/extensions/gsd/tests/plan-task.test.ts',
         inputs: ['src/resources/extensions/gsd/tools/plan-task.ts'],
         expectedOutput: ['src/resources/extensions/gsd/tests/plan-task.test.ts'],
+        requiredWorkflowTools: [] as string[],
         observabilityImpact: 'Task-plan renders remain parse-compatible.',
       },
     ],
@@ -156,6 +158,7 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
     assert.equal(tasks[0]?.title, 'Write slice handler');
     assert.equal(tasks[0]?.description, 'Implement the slice planning handler.');
     assert.equal(tasks[1]?.estimate, '30m');
+    assert.deepEqual(tasks[0]?.required_workflow_tools, []);
     assert.deepEqual(slice?.target_repositories, ['project']);
     assert.deepEqual(tasks[0]?.target_repositories, ['project']);
 
@@ -167,6 +170,26 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
     assert.equal(parsedPlan.tasks[0]?.id, 'T01');
 
     // Flat-phase: no per-task plan files — tasks are checkboxes inside the slice plan.
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanSlice rejects tasks requiring lifecycle tools unavailable to execute-task before persistence', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    const input = validParams();
+    input.tasks[0]!.requiredWorkflowTools = ['gsd_requirement_update'];
+
+    const result = await handlePlanSlice(input, base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /task T01.*gsd_requirement_update.*execute-task/i);
+    assert.match(result.error, /complete-slice.*complete-milestone/i);
+    assert.equal(getSliceTasks('M001', 'S02').length, 0, 'tool-incompatible tasks must fail before DB persistence');
   } finally {
     cleanup(base);
   }

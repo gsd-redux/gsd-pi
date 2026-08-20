@@ -477,6 +477,7 @@ test("gsd_plan_slice — validates with only core params", () => {
         verify: "npm test",
         inputs: [],
         expectedOutput: ["src/x.ts"],
+        requiredWorkflowTools: [],
       },
     ],
   };

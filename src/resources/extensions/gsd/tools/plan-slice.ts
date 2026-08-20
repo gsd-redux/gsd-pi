@@ -41,6 +41,7 @@ import {
   type PlanningInvocation,
 } from "../planning-invocation.js";
 import { ensurePendingSliceQ8 } from "../db/writers/slice-companion-state.js";
+import { validateTaskToolRequirements } from "../task-tool-requirements.js";
 
 
 export interface PlanSliceTaskInput {
@@ -52,6 +53,8 @@ export interface PlanSliceTaskInput {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  /** Workflow tools the eventual execute-task unit must be able to call. */
+  requiredWorkflowTools?: string[];
   observabilityImpact?: string;
   fullPlanMd?: string;
   targetRepositories?: string[];
@@ -117,6 +120,7 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] | undefined {
     const verify = obj.verify;
     const inputs = obj.inputs;
     const expectedOutput = obj.expectedOutput;
+    const requiredWorkflowTools = obj.requiredWorkflowTools;
     const observabilityImpact = obj.observabilityImpact;
     const targetRepositories = obj.targetRepositories;
 
@@ -130,6 +134,9 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] | undefined {
     if (!isNonEmptyString(verify)) throw new Error(`tasks[${index}].verify must be a non-empty string`);
     const validatedInputs = validateStringArray(inputs, `tasks[${index}].inputs`);
     const validatedExpectedOutput = validateStringArray(expectedOutput, `tasks[${index}].expectedOutput`);
+    const validatedRequiredWorkflowTools = requiredWorkflowTools === undefined
+      ? []
+      : validateStringArray(requiredWorkflowTools, `tasks[${index}].requiredWorkflowTools`);
     if (observabilityImpact !== undefined && !isNonEmptyString(observabilityImpact)) {
       throw new Error(`tasks[${index}].observabilityImpact must be a non-empty string when provided`);
     }
@@ -147,6 +154,7 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] | undefined {
       verify,
       inputs: validatedInputs,
       expectedOutput: validatedExpectedOutput,
+      requiredWorkflowTools: Array.from(new Set(validatedRequiredWorkflowTools)),
       observabilityImpact: typeof observabilityImpact === "string" ? observabilityImpact : "",
       targetRepositories: validatedTargetRepositories ?? undefined,
     };
@@ -257,6 +265,7 @@ function toTaskRows(params: PlanSliceParams, defaultTargets: string[]): TaskRow[
     verify: task.verify,
     inputs: task.inputs,
     expected_output: task.expectedOutput,
+    required_workflow_tools: task.requiredWorkflowTools ?? [],
     observability_impact: task.observabilityImpact ?? "",
     full_plan_md: task.fullPlanMd ?? "",
     target_repositories: task.targetRepositories ?? params.targetRepositories ?? defaultTargets,
@@ -324,6 +333,13 @@ export async function handlePlanSlice(
   const defaultTargets = defaultRepositoryTargets(repositoryRegistry);
   const taskPayload = params.tasks ?? [];
   const hasTaskPayload = taskPayload.length > 0;
+  const toolRequirementError = taskPayload
+    .map((task) => validateTaskToolRequirements(task.taskId, task.requiredWorkflowTools ?? []))
+    .filter((error): error is string => error !== null)
+    .join("\n");
+  if (toolRequirementError) {
+    return { error: `tool-contract validation failed:\n${toolRequirementError}` };
+  }
   const repoValidationError = validateReferencedRepositories(params, repositoryRegistry, defaultTargets);
   if (repoValidationError) {
     return { error: `validation failed: ${repoValidationError}` };
@@ -542,6 +558,7 @@ export async function handlePlanSlice(
               verify: task.verify,
               inputs: task.inputs,
               expectedOutput: task.expectedOutput,
+              requiredWorkflowTools: task.requiredWorkflowTools ?? [],
               observabilityImpact: task.observabilityImpact ?? "",
               fullPlanMd: task.fullPlanMd,
               targetRepositories: task.targetRepositories ?? params.targetRepositories ?? defaultTargets,

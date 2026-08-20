@@ -573,3 +573,12 @@ export function applyMigrationV45AuthorityRecovery(db: DbAdapter): void {
 export function applyMigrationV47SameLeaseAttemptSettlement(db: DbAdapter): void {
   createAttemptSameLeaseSettlementSchemaV47(db);
 }
+
+export function applyMigrationV48TaskToolRequirements(db: DbAdapter): void {
+  ensureColumn(
+    db,
+    "tasks",
+    "required_workflow_tools",
+    "ALTER TABLE tasks ADD COLUMN required_workflow_tools TEXT NOT NULL DEFAULT '[]'",
+  );
+}

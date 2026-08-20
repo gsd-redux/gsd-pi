@@ -37,6 +37,7 @@ import {
   planningOperationPayload,
 } from "../planning-domain-operation.js";
 import type { PlanningInvocation } from "../planning-invocation.js";
+import { validateTaskToolRequirements } from "../task-tool-requirements.js";
 
 export interface PlanTaskParams {
   milestoneId: string;
@@ -49,6 +50,8 @@ export interface PlanTaskParams {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  /** Workflow tools the eventual execute-task unit must be able to call. */
+  requiredWorkflowTools?: string[];
   observabilityImpact?: string;
   /** Repository id(s) this task touches (parent workspace); omitted for single-repo projects. */
   targetRepositories?: string[];
@@ -146,6 +149,9 @@ function validateParams(params: PlanTaskParams): PlanTaskParams {
     files: validateStringArray(params.files, "files"),
     inputs: validateStringArray(params.inputs, "inputs"),
     expectedOutput: validateStringArray(params.expectedOutput, "expectedOutput"),
+    requiredWorkflowTools: params.requiredWorkflowTools === undefined
+      ? []
+      : Array.from(new Set(validateStringArray(params.requiredWorkflowTools, "requiredWorkflowTools"))),
     ...(params.targetRepositories !== undefined
       ? { targetRepositories: validateRepositoryTargetIds("targetRepositories", params.targetRepositories) }
       : {}),
@@ -169,6 +175,11 @@ export async function handlePlanTask(
     params = { ...params, verify: normalizeVerifyCommandForVenv(params.verify, basePath) };
   } catch (err) {
     return { error: `validation failed: ${(err as Error).message}` };
+  }
+
+  const toolRequirementError = validateTaskToolRequirements(params.taskId, params.requiredWorkflowTools ?? []);
+  if (toolRequirementError) {
+    return { error: `tool-contract validation failed: ${toolRequirementError}` };
   }
 
   const pathOnlyError = validatePathOnlyPlanningFields([
@@ -335,6 +346,7 @@ export async function handlePlanTask(
           verify: params.verify,
           inputs: params.inputs,
           expectedOutput: params.expectedOutput,
+          requiredWorkflowTools: params.requiredWorkflowTools ?? [],
           observabilityImpact: params.observabilityImpact ?? "",
           fullPlanMd: params.fullPlanMd,
           targetRepositories: persistedTargetRepositories,
