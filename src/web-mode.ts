@@ -402,6 +402,17 @@ function isWebNoAuthEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.GSD_WEB_NO_AUTH === '1'
 }
 
+function unauthenticatedLanRefusalReason(host: string): string {
+  return [
+    `refusing to disable auth on non-loopback host ${host}: this exposes terminal and file APIs to the network. Bind to 127.0.0.1, keep token auth on, or set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 to override. --no-auth alone is not enough.`,
+    'Unix: GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 gsd --web --host 0.0.0.0 --no-auth',
+    'PowerShell: $env:GSD_WEB_ALLOW_UNAUTHENTICATED_LAN="1"; gsd --web --host 0.0.0.0 --no-auth',
+    'CMD: set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1',
+    '     gsd --web --host 0.0.0.0 --no-auth',
+    'See docs/user-docs/web-interface.md.',
+  ].join('\n')
+}
+
 function isLoopbackHost(host: string): boolean {
   const h = host.trim().toLowerCase()
   return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]' || (isIP(h) === 4 && h.startsWith('127.'))
@@ -655,7 +666,7 @@ export async function launchWebMode(
       hostKind: 'unresolved',
       hostPath: null,
       hostRoot: null,
-      failureReason: `refusing to disable auth on non-loopback host ${host}: this exposes terminal and file APIs to the network. Bind to 127.0.0.1, keep token auth on, or set GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 to override. See docs/user-docs/web-interface.md.`,
+      failureReason: unauthenticatedLanRefusalReason(host),
       candidates: [],
     }
     emitLaunchStatus(stderr, failure)
