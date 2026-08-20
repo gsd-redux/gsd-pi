@@ -204,7 +204,7 @@ export function shouldClearToolInvocationErrorAfterSuccess(
   successfulToolName?: string,
 ): boolean {
   return !isRecordedScheduleWakeupContinuationError(recordedError)
-    || stripMcpToolPrefix(successfulToolName ?? "") === SCHEDULE_WAKEUP_TOOL_NAME;
+    || SCHEDULE_WAKEUP_TOOL_NAMES.has(stripMcpToolPrefix(successfulToolName ?? ""));
 }
 
 /**
