@@ -20,13 +20,15 @@ import { gsdHome } from "./gsd-home.js";
 import { findWorktreeSegment, isGsdWorktreePath, resolveExternalStateProjectGsdFromWorktreePath, resolveWorktreeProjectRoot } from "./worktree-root.js";
 import {
   LAYOUT_SEGMENTS,
-  phaseDirName,
   planFileName,
   milestoneIdToPhaseNum,
   milestoneIdUniqueSuffix,
   sliceIdToPlanNum,
-  derivePhaseSlug,
+  canonicalPhaseDirName,
 } from "./layout-policy.js";
+
+export { canonicalPhaseDirName };
+
 // ─── Directory Listing Cache ──────────────────────────────────────────────────
 
 const dirEntryCache = new Map<string, Dirent[]>();
@@ -806,21 +808,6 @@ function resolvePhaseDir(basePath: string, milestoneId: string): string | null {
     }
   }
   return null;
-}
-
-/**
- * Derive the canonical phase dir name for a milestone when it doesn't exist yet.
- * Used by the renderer to create new phase dirs, and by ensurePreconditions to
- * scaffold the correct NN-slug directory on disk before the first render.
- */
-export function canonicalPhaseDirName(milestoneId: string, title?: string): string {
-  const phaseNum = milestoneIdToPhaseNum(milestoneId);
-  const slug = derivePhaseSlug(title || milestoneId);
-  const suffix = milestoneIdUniqueSuffix(milestoneId);
-  if (suffix) {
-    return phaseDirName(phaseNum, `${suffix}-${slug}`);
-  }
-  return phaseDirName(phaseNum, slug);
 }
 
 export function resolveRuntimeFile(basePath: string): string {

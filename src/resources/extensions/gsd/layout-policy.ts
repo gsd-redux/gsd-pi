@@ -53,10 +53,12 @@ export function milestoneIdToPhaseNum(milestoneId: string): number {
   return m ? Number.parseInt(m[1]!, 10) : 1;
 }
 
+const TEAM_MILESTONE_ID_RE = /^M(\d{3})(?:-([a-z0-9]{6}))?$/i;
+const LEADING_MILESTONE_ID_TOKENS = /^(?:M\d{3}(?:-[a-z0-9]{6})?(?:[\s:_-]+|$))+/i;
+
 /** Team-mode suffix from milestone ids like M001-abc123. */
 export function milestoneIdUniqueSuffix(milestoneId: string): string | undefined {
-  const m = milestoneId.match(/^M(\d{3})(?:-([a-z0-9]{6}))?$/);
-  return m?.[2];
+  return milestoneId.match(TEAM_MILESTONE_ID_RE)?.[2]?.toLowerCase();
 }
 
 /**
@@ -76,11 +78,31 @@ export function sliceIdToPlanNum(sliceId: string): number {
  * same title on every run, or the directory churns on every projection.
  */
 export function derivePhaseSlug(title: string): string {
-  const slug = title
+  const trimmed = title.trim();
+  const withoutIds = trimmed.replace(LEADING_MILESTONE_ID_TOKENS, "").trim();
+  const source = withoutIds || trimmed;
+  const slug = source
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40)
     .replace(/-+$/g, "");
   return slug || "phase";
+}
+
+/**
+ * Canonical flat-phase directory name for a milestone.
+ * Team-suffix ids contribute the suffix once; title text that already
+ * contains the milestone id is not baked into the slug a second time.
+ */
+export function canonicalPhaseDirName(milestoneId: string, title?: string): string {
+  const phaseNum = milestoneIdToPhaseNum(milestoneId);
+  const suffix = milestoneIdUniqueSuffix(milestoneId);
+  const idSlug = derivePhaseSlug(milestoneId);
+  const slug = derivePhaseSlug(title || milestoneId);
+  const rest = slug === idSlug ? "" : slug;
+  if (suffix) {
+    return phaseDirName(phaseNum, rest ? `${suffix}-${rest}` : suffix);
+  }
+  return phaseDirName(phaseNum, rest || idSlug);
 }

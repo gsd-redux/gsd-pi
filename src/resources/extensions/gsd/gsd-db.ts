@@ -87,10 +87,8 @@ import { applyStatusTransition } from "./db/writers/status.js";
 export { projectCanonicalStatusToLegacy } from "./db/writers/status.js";
 import {
   LAYOUT_SEGMENTS,
-  derivePhaseSlug,
+  canonicalPhaseDirName,
   milestoneIdToPhaseNum,
-  milestoneIdUniqueSuffix,
-  phaseDirName,
 } from "./layout-policy.js";
 
 export function insertDecision(d: Omit<Decision, "seq">): void {
@@ -231,17 +229,10 @@ export function insertArtifact(a: {
   }));
 }
 
-function canonicalPhaseDirNameForDb(milestoneId: string, title: string): string {
-  const phaseNum = milestoneIdToPhaseNum(milestoneId);
-  const slug = derivePhaseSlug(title || milestoneId);
-  const suffix = milestoneIdUniqueSuffix(milestoneId);
-  return phaseDirName(phaseNum, suffix ? `${suffix}-${slug}` : slug);
-}
-
 function reconcileMilestonePhaseArtifactPaths(milestoneId: string, title: string): void {
   const db = getDbOrNull()!;
   const phaseNumPrefix = String(milestoneIdToPhaseNum(milestoneId)).padStart(2, "0");
-  const canonicalDir = canonicalPhaseDirNameForDb(milestoneId, title);
+  const canonicalDir = canonicalPhaseDirName(milestoneId, title);
   const staleRows = db.prepare(
     `SELECT path
        FROM artifacts
