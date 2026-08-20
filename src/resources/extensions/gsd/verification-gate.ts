@@ -146,16 +146,13 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
     }
   }
 
-  // 1b. Prose task verify backed by passing structured task evidence (#1591).
-  // Task-specific evidence must not be silently replaced by unrelated
-  // project-wide preference commands.
-  if (
+  // A prose verification requirement may be satisfied by the structured
+  // evidence staged for this Task. Keep this decision next to preference
+  // fallback below so unrelated project-wide checks cannot replace it (#1431).
+  const taskEvidenceSatisfiesVerify =
     hasTaskPlanProse &&
     !hasUnsafeTaskPlanCommand &&
-    hasQualifyingTaskEvidence(options.taskEvidence)
-  ) {
-    return { commands: [], source: "task-plan-prose" };
-  }
+    hasQualifyingTaskEvidence(options.taskEvidence);
 
   // 2. Preference commands
   if (options.preferenceCommands && options.preferenceCommands.length > 0) {
@@ -163,8 +160,15 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
       .map(c => c.trim())
       .filter(Boolean);
     if (filtered.length > 0) {
+      if (taskEvidenceSatisfiesVerify) {
+        return { commands: [], source: "task-plan-prose" };
+      }
       return { commands: filtered, source: "preference" };
     }
+  }
+
+  if (taskEvidenceSatisfiesVerify) {
+    return { commands: [], source: "task-plan-prose" };
   }
 
   // 3. package.json scripts
