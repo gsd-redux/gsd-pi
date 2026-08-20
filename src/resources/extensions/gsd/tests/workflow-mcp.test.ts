@@ -560,6 +560,7 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
               verify: "node --test",
               inputs: [],
               expectedOutput: ["src/bridge-status.md"],
+              requiredWorkflowTools: [],
             },
           ],
         },
