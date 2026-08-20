@@ -83,6 +83,7 @@ import {
 } from "./auto-worktree-entry.js";
 import { getAutoWorktreePath } from "./auto-worktree-path-resolution.js";
 import { teardownAutoWorktree } from "./auto-worktree-teardown.js";
+import { inspectUncommittedWorktreeState } from "./worktree-manager.js";
 import { resolveRoadmapForMilestoneMerge } from "./milestone-merge-roadmap.js";
 import type { MilestoneMergeTransactionRunner } from "./milestone-merge-transaction.js";
 
@@ -1708,14 +1709,33 @@ export class WorktreeLifecycle {
     try {
       autoCommitLifecycleBranch(this.deps, this.s.basePath, "stop", milestoneId);
     } catch (err) {
+      const errorText = err instanceof Error ? err.message : String(err);
       debugLog("WorktreeLifecycle", {
         action: "exitMilestone",
         milestoneId,
         phase: "auto-commit-failed",
-        error: err instanceof Error ? err.message : String(err),
+        error: errorText,
       });
+      const worktreePath = this.s.basePath;
+      if (inspectUncommittedWorktreeState(worktreePath).dirty) {
+        ctx.notify(
+          `Auto-commit before exiting ${milestoneId} failed: ${errorText}. ` +
+            `Worktree is still dirty and was left intact at ${worktreePath}. ` +
+            `It was not torn down or quarantined. Fix the commit in that worktree, then stop again.`,
+          "error",
+        );
+        this.restoreToProjectRoot();
+        debugLog("WorktreeLifecycle", {
+          action: "exitMilestone",
+          milestoneId,
+          result: "dirty-worktree-preserved",
+          worktreePath,
+          basePath: this.s.basePath,
+        });
+        return;
+      }
       ctx.notify(
-        `Auto-commit before exiting ${milestoneId} failed: ${err instanceof Error ? err.message : String(err)}. Branch ${lifecycleAutoWorktreeBranch(this.deps, milestoneId)} is preserved for recovery.`,
+        `Auto-commit before exiting ${milestoneId} failed: ${errorText}. Branch ${lifecycleAutoWorktreeBranch(this.deps, milestoneId)} is preserved for recovery.`,
         "warning",
       );
     }

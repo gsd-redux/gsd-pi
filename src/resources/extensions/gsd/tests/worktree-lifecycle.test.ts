@@ -2,7 +2,7 @@
 // File Purpose: Worktree Lifecycle Module — typed-result contract tests for enterMilestone (ADR-016).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -575,6 +575,48 @@ test("exitMilestone forwards preserveWorktree to teardown on non-merge exit", ()
 
   assert.deepEqual(result, { ok: true, merged: false, codeFilesChanged: false });
   assert.deepEqual(capturedOpts, { preserveBranch: true, preserveWorktree: true });
+});
+
+test("exitMilestone leaves a dirty worktree intact when auto-commit fails (#1492)", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "worktree" });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+
+  const s = makeSession({ basePath: base, originalBasePath: base });
+  const ctx = makeCtx();
+  const lifecycle = new WorktreeLifecycle(
+    s,
+    makeDeps({
+      isInAutoWorktree: () => true,
+      autoCommitCurrentBranch: () => {
+        throw new Error("gitleaks blocked");
+      },
+      teardownAutoWorktree: undefined,
+    }),
+  );
+
+  const entered = lifecycle.enterMilestone("M001", ctx);
+  assert.equal(entered.ok, true, `expected enter ok:true, got: ${JSON.stringify(entered)}`);
+  if (!entered.ok) return;
+  const wtPath = entered.path;
+  writeFileSync(join(wtPath, "uncommitted.ts"), "export const x = 1;\n");
+
+  const result = lifecycle.exitMilestone(
+    "M001",
+    { merge: false, preserveBranch: true },
+    ctx,
+  );
+
+  assert.deepEqual(result, { ok: true, merged: false, codeFilesChanged: false });
+  assert.equal(existsSync(wtPath), true, "dirty worktree must remain on disk");
+  assert.equal(existsSync(join(wtPath, "uncommitted.ts")), true);
+  assert.equal(existsSync(join(base, ".gsd", "quarantine", "worktrees")), false);
+  assert.ok(
+    ctx.messages.some(
+      (m) => m.level === "error" && m.msg.includes(wtPath) && m.msg.includes("left intact"),
+    ),
+    `expected error notify naming the worktree path, got: ${JSON.stringify(ctx.messages)}`,
+  );
 });
 
 // ─── Queries (issue #5587) ────────────────────────────────────────────────────
