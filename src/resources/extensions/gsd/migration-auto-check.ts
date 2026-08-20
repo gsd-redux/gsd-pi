@@ -15,6 +15,7 @@ import {
   resolveMilestoneFile,
   resolveSliceFile,
 } from "./paths.js";
+import { isHiddenFromRoadmap } from "./status-guards.js";
 
 export interface HierarchyCounts {
   milestones: number;
@@ -235,11 +236,17 @@ export function scanDbHierarchy(): HierarchyScan {
 
   for (const milestone of milestones) {
     scan.milestones.add(milestone.id);
-    const slices = getMilestoneSlices(milestone.id);
+    // Match renderRoadmapFromDb so skipped slices/tasks omitted from ROADMAP/PLAN
+    // are not counted as markdown-hierarchy drift (#1860).
+    const slices = getMilestoneSlices(milestone.id).filter(
+      (slice) => !isHiddenFromRoadmap(slice.status),
+    );
     scan.counts.slices += slices.length;
     for (const slice of slices) {
       scan.slices.add(`${milestone.id}/${slice.id}`);
-      const tasks = getSliceTasks(milestone.id, slice.id);
+      const tasks = getSliceTasks(milestone.id, slice.id).filter(
+        (task) => !isHiddenFromRoadmap(task.status),
+      );
       scan.counts.tasks += tasks.length;
       for (const task of tasks) {
         scan.tasks.add(`${milestone.id}/${slice.id}/${task.id}`);

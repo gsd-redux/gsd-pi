@@ -178,6 +178,76 @@ test("migration auto-check ignores unplanned DB milestones deliberately omitted 
   assert.deepEqual(result.beforeDb, { milestones: 1, slices: 1, tasks: 1 });
 });
 
+test("migration auto-check omits skipped slices and tasks that ROADMAP/PLAN omit (#1860)", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory({ projectContent: "# P\n", decisionsContent: "", requirements: [], milestones: [] }, base);
+    assert.equal(await ensureDbOpen(base), true);
+
+    insertMilestone({
+      id: "M001",
+      title: "Planned Milestone",
+      status: "active",
+      planning: { vision: "Keep planned work visible." },
+    });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      title: "Visible slice",
+      status: "complete",
+      risk: "low",
+      depends: [],
+      demo: "Visible work ships.",
+      sequence: 1,
+    });
+    insertTask({
+      id: "T01",
+      sliceId: "S01",
+      milestoneId: "M001",
+      title: "Visible task",
+      status: "complete",
+    });
+    // Skipped T02 is omitted from PLAN; skipped S02 (and its tasks) is omitted
+    // from ROADMAP. Rebuild reproduces that projection; the DB scan must match.
+    insertTask({
+      id: "T02",
+      sliceId: "S01",
+      milestoneId: "M001",
+      title: "Skipped task",
+      status: "skipped",
+    });
+    insertSlice({
+      id: "S02",
+      milestoneId: "M001",
+      title: "Skipped slice",
+      status: "skipped",
+      risk: "low",
+      depends: [],
+      demo: "",
+      sequence: 2,
+    });
+    insertTask({
+      id: "T01",
+      sliceId: "S02",
+      milestoneId: "M001",
+      title: "Hidden by skipped slice",
+      status: "complete",
+    });
+
+    const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.ts");
+    const rebuild = await rebuildMarkdownProjectionsFromDb(base);
+    assert.ok(rebuild.rendered > 0, "expected ROADMAP/PLAN projections to render");
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "none");
+    assert.equal(result.reason, "in-sync");
+    assert.deepEqual(result.markdown, { milestones: 1, slices: 1, tasks: 1 });
+    assert.deepEqual(result.beforeDb, { milestones: 1, slices: 1, tasks: 1 });
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("migration auto-check flags a populated DB with missing markdown and points at rebuild (not recover)", async () => {
   const base = makeBase();
   try {
