@@ -77,16 +77,17 @@ export interface LegacyImportPreviewCreateInput {
 export type LegacyImportPreviewErrorCode =
   | "LEGACY_IMPORT_PREVIEW_BASE_CHANGED"
   | "LEGACY_IMPORT_PREVIEW_EXPECTED_INVALID"
+  | "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID"
   | "LEGACY_IMPORT_PREVIEW_CHANGED";
 
 export class LegacyImportPreviewError extends Error {
-  readonly stage: "create" | "revalidate";
+  readonly stage: "create" | "resolve" | "revalidate";
   readonly code: LegacyImportPreviewErrorCode;
   readonly retryable: boolean;
   readonly context: Readonly<Record<string, LegacyImportValue>>;
 
   constructor(
-    stage: "create" | "revalidate",
+    stage: "create" | "resolve" | "revalidate",
     code: LegacyImportPreviewErrorCode,
     message: string,
     retryable: boolean,
@@ -622,12 +623,107 @@ function validateExpectedPreview(expected: unknown): asserts expected is LegacyI
   );
 }
 
+export interface LegacyImportPreviewResolutionChoice {
+  diagnosis_id: string;
+  disposition: "preserved";
+}
+
+/** Record reviewed choices on an immutable sealed Preview and seal the result. */
+export function resolveLegacyImportPreview(
+  expected: LegacyImportPreviewArtifact,
+  choices: readonly LegacyImportPreviewResolutionChoice[],
+): LegacyImportPreviewArtifact {
+  let artifact: LegacyImportPreviewArtifact;
+  let selected: readonly LegacyImportPreviewResolutionChoice[];
+  try {
+    artifact = structuredClone(expected);
+    selected = structuredClone(choices);
+  } catch {
+    throw new LegacyImportPreviewError(
+      "resolve",
+      "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID",
+      "legacy import Preview resolutions could not be detached",
+      false,
+    );
+  }
+  if (!isValidLegacyImportPreviewArtifact(artifact) || !Array.isArray(selected)) {
+    throw new LegacyImportPreviewError(
+      "resolve",
+      "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID",
+      "legacy import Preview resolutions require a valid sealed Preview",
+      false,
+    );
+  }
+
+  const byDiagnosis = new Map(artifact.preview.resolutions.map((resolution) => (
+    [resolution.diagnosis_id, resolution] as const
+  )));
+  const updates = new Map<string, LegacyImportPreviewResolution>();
+  for (const choice of selected) {
+    if (
+      !hasExactKeys(choice, ["diagnosis_id", "disposition"])
+      || !isCanonicalHash(choice.diagnosis_id)
+      || choice.disposition !== "preserved"
+      || updates.has(choice.diagnosis_id)
+    ) {
+      throw new LegacyImportPreviewError(
+        "resolve",
+        "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID",
+        "legacy import Preview contains an invalid or duplicate resolution choice",
+        false,
+      );
+    }
+    const current = byDiagnosis.get(choice.diagnosis_id);
+    if (current?.disposition !== "requires-user") {
+      throw new LegacyImportPreviewError(
+        "resolve",
+        "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID",
+        "legacy import Preview resolution choice does not identify a user-required diagnosis",
+        false,
+      );
+    }
+    updates.set(choice.diagnosis_id, {
+      diagnosis_id: choice.diagnosis_id,
+      disposition: choice.disposition,
+      ...(current.target === undefined ? {} : { target: current.target }),
+    });
+  }
+
+  const resolutions = artifact.preview.resolutions.map((resolution) => (
+    updates.get(resolution.diagnosis_id) ?? resolution
+  ));
+  const preview: LegacyImportPreviewEnvelope = {
+    ...artifact.preview,
+    counts: {
+      ...artifact.preview.counts,
+      unresolved: resolutions.filter((resolution) => (
+        resolution.disposition === "requires-user" || resolution.disposition === "unsupported"
+      )).length,
+    },
+    resolutions,
+  };
+  return deepFreeze({ preview, preview_hash: hashLegacyImportValue(preview) });
+}
+
 export function revalidateLegacyImportPreview(
   input: LegacyImportPreviewCreateInput,
   expected: LegacyImportPreviewArtifact,
 ): LegacyImportPreviewArtifact {
   validateExpectedPreview(expected);
-  const observed = createLegacyImportPreview(input);
+  const created = createLegacyImportPreview(input);
+  const createdResolutions = new Map(created.preview.resolutions.map((resolution) => (
+    [resolution.diagnosis_id, resolution] as const
+  )));
+  const choices = expected.preview.resolutions.flatMap((resolution) => {
+    const createdResolution = createdResolutions.get(resolution.diagnosis_id);
+    return createdResolution?.disposition === "requires-user"
+      && resolution.disposition === "preserved"
+      ? [{ diagnosis_id: resolution.diagnosis_id, disposition: "preserved" as const }]
+      : [];
+  });
+  const observed = choices.length === 0
+    ? created
+    : resolveLegacyImportPreview(created, choices);
   if (observed.preview_hash !== expected.preview_hash) {
     throw new LegacyImportPreviewError(
       "revalidate",

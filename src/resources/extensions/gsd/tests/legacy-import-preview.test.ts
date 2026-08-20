@@ -25,6 +25,7 @@ import {
   type LegacyImportBaseSnapshotSource,
 } from "../legacy-import-preview-base.ts";
 import { classifyLegacyImportChanges } from "../legacy-import-preview-classifier.ts";
+import { compileLegacyImportApplicationPlan } from "../legacy-import-application-plan.ts";
 import {
   collectLegacyImportDatabaseTargetEvidence,
 } from "../legacy-import-preview-database-target.ts";
@@ -46,6 +47,7 @@ import {
   hashLegacyImportValue,
   isValidLegacyImportPreviewArtifact,
   LegacyImportPreviewError,
+  resolveLegacyImportPreview,
   revalidateLegacyImportPreview,
   sealLegacyImportPreview,
   type LegacyImportPreviewArtifact,
@@ -1203,6 +1205,86 @@ test("legacy public Preview composes and revalidates one deterministic read-only
   } finally {
     closeDatabase();
   }
+});
+
+test("legacy public Preview records and revalidates a required preservation resolution", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "gsd-preview-resolution-"));
+  t.after(() => {
+    closeDatabase();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const gsdRoot = join(directory, ".gsd");
+  const milestone = join(gsdRoot, "milestones", "M001");
+  const slice = join(milestone, "slices", "S01");
+  mkdirSync(slice, { recursive: true });
+  writeFileSync(join(milestone, "M001-ROADMAP.md"), [
+    "# M001: Migration",
+    "",
+    "## Slices",
+    "",
+    "- [ ] **S01: Mixed content** `risk:low` `depends:[]`",
+  ].join("\n"));
+  writeFileSync(join(slice, "S01-RESEARCH.md"), "# Research\n\nPreserve these notes.\n");
+  assert.equal(openDatabase(join(directory, "canonical.db")), true);
+  const input: LegacyImportPreviewCreateInput = {
+    roots: [{
+      id: "mixed-content-gsd",
+      kind: "project",
+      physical_path: gsdRoot,
+      logical_path: ".gsd",
+      presence: "required",
+    }],
+  };
+
+  const pending = createLegacyImportPreview(input);
+  const diagnosis = pending.preview.diagnoses.find((entry) => (
+    entry.code === "ambiguous-task-membership"
+  ));
+  assert.ok(diagnosis);
+  const resolved = resolveLegacyImportPreview(pending, [{
+    diagnosis_id: diagnosis.diagnosis_id,
+    disposition: "preserved",
+  }]);
+
+  assert.equal(pending.preview.counts.unresolved, 1, "the original sealed Preview remains unchanged");
+  assert.equal(resolved.preview.counts.unresolved, 0);
+  assert.equal(resolved.preview.preview_id, pending.preview.preview_id);
+  assert.notEqual(resolved.preview_hash, pending.preview_hash);
+  assert.equal(
+    resolved.preview.resolutions.find((entry) => entry.diagnosis_id === diagnosis.diagnosis_id)?.disposition,
+    "preserved",
+  );
+  assert.doesNotThrow(() => compileLegacyImportApplicationPlan(resolved));
+  assert.deepEqual(revalidateLegacyImportPreview(input, resolved), resolved);
+  const assertInvalidResolution = (operation: () => unknown): void => {
+    assert.throws(operation, (error) => {
+      assert.ok(error instanceof LegacyImportPreviewError);
+      assert.equal(error.stage, "resolve");
+      assert.equal(error.code, "LEGACY_IMPORT_PREVIEW_RESOLUTION_INVALID");
+      return true;
+    });
+  };
+  assertInvalidResolution(() => resolveLegacyImportPreview(pending, [
+    { diagnosis_id: diagnosis.diagnosis_id, disposition: "preserved" },
+    { diagnosis_id: diagnosis.diagnosis_id, disposition: "preserved" },
+  ]));
+  assertInvalidResolution(() => resolveLegacyImportPreview(pending, [{
+    diagnosis_id: diagnosis.diagnosis_id,
+    disposition: "mapped",
+  // Exercise the runtime contract with a disposition intentionally excluded from the public choice type.
+  }] as never));
+  assertInvalidResolution(() => resolveLegacyImportPreview(pending, [{
+    diagnosis_id: `sha256:${"2".repeat(64)}` as LegacyImportSha256,
+    disposition: "preserved",
+  }]));
+  assertInvalidResolution(() => resolveLegacyImportPreview(resolved, [{
+    diagnosis_id: diagnosis.diagnosis_id,
+    disposition: "preserved",
+  }]));
+  assertInvalidResolution(() => resolveLegacyImportPreview(
+    { ...pending, preview_hash: ONE_HASH },
+    [],
+  ));
 });
 
 test("legacy public Preview leaves an anchor-incomplete v44 database supplemental-only", (t) => {

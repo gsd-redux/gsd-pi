@@ -38,6 +38,7 @@ import {
   openWorkflowDatabase,
   persistVerifiedRecoverRestoreApproval,
   prepareVerifiedRecoverApplication,
+  resolvePreparedVerifiedRecoverApplication,
 } from '../db-workspace.ts';
 import { executeLegacyImportRecoveryAction } from '../legacy-import-recovery-action.ts';
 import { _restoreLegacyImportLiveForTest } from '../legacy-import-live-restore.ts';
@@ -609,6 +610,34 @@ describe('gsd-recover', async () => {
       );
       assert.equal(existsSync(join(base, '.gsd', 'backups')), false, 'stale approval fails before backup preparation');
       assert.equal(getMilestone('M001'), null, 'stale approval cannot import changed markdown');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('prepared recover applies a sealed preservation resolution for mixed-content sources', () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_M001);
+      writeFile(base, 'milestones/M001/slices/S01/S01-RESEARCH.md', '# Research\n\nRetain these notes.\n');
+      openDatabase(join(base, '.gsd', 'gsd.db'));
+
+      const pending = prepareVerifiedRecoverApplication(base);
+      const diagnosis = pending.preview.preview.diagnoses.find((entry) => (
+        entry.code === 'ambiguous-task-membership'
+      ));
+      assert.ok(diagnosis);
+      const resolved = resolvePreparedVerifiedRecoverApplication(pending, [{
+        diagnosis_id: diagnosis.diagnosis_id,
+        disposition: 'preserved',
+      }]);
+
+      assert.equal(pending.preview.preview.counts.unresolved, 1);
+      assert.equal(resolved.preview.preview.counts.unresolved, 0);
+      const result = applyPreparedVerifiedRecoverApplication(resolved, resolved.preview.preview_hash);
+      assert.equal(result.preview.preview_hash, resolved.preview.preview_hash);
+      assert.ok(getMilestone('M001'));
     } finally {
       closeDatabase();
       cleanup(base);
