@@ -25,6 +25,7 @@ import {
   UNIT_TOOL_CONTRACTS,
   getUnitToolSurfaceContract,
 } from "../unit-tool-contracts.ts";
+import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
 import { UNIT_MANIFESTS } from "../unit-context-manifest.ts";
 import { phaseChainForUnit } from "../preferences-models.ts";
 
@@ -244,4 +245,25 @@ test("every registry row is reachable through the descriptor accessor", () => {
     assert.equal(getUnitPhaseChain(unitType), descriptor.phaseChain);
   }
   assert.equal(getUnitDescriptor("no-such-unit"), undefined);
+});
+
+test("complete-slice can settle Waiver rejections without SUMMARY fallback (#1796)", () => {
+  const completeSlice = getUnitToolSurfaceContract("complete-slice")?.allowedGsdTools ?? [];
+  const executeTask = getUnitToolSurfaceContract("execute-task")?.allowedGsdTools ?? [];
+  const waiverSettlementTools = ["gsd_slice_reopen", "gsd_task_complete", "gsd_journal_query"] as const;
+
+  for (const tool of waiverSettlementTools) {
+    assert.ok(
+      completeSlice.includes(tool),
+      `complete-slice allowedGsdTools must include ${tool}`,
+    );
+    assert.equal(
+      shouldBlockAutoUnitToolCall("complete-slice", tool).block,
+      false,
+      `complete-slice must not HARD BLOCK ${tool}`,
+    );
+  }
+
+  assert.ok(!executeTask.includes("gsd_slice_reopen"), "execute-task must not gain gsd_slice_reopen");
+  assert.ok(!executeTask.includes("gsd_journal_query"), "execute-task must not gain gsd_journal_query");
 });

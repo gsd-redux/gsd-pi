@@ -284,11 +284,14 @@ export const UNIT_REGISTRY = {
     toolContract: {
       allowedGsdTools: [
         "gsd_milestone_status",
+        "gsd_journal_query",
         "gsd_exec",
         "gsd_exec_search",
         "gsd_resume",
         "gsd_slice_complete",
+        "gsd_slice_reopen",
         "gsd_task_reopen",
+        "gsd_task_complete",
         "gsd_replan_slice",
         "gsd_replan_task",
         "gsd_rework_brief_save",
