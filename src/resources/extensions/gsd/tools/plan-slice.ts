@@ -41,6 +41,7 @@ import {
   type PlanningInvocation,
 } from "../planning-invocation.js";
 import { ensurePendingSliceQ8 } from "../db/writers/slice-companion-state.js";
+import { executeTaskIllegalPlanToolsError } from "../execute-task-plan-tool-guard.js";
 
 
 export interface PlanSliceTaskInput {
@@ -137,6 +138,12 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] | undefined {
       `tasks[${index}].targetRepositories`,
       targetRepositories,
     );
+
+    const illegalToolsError = executeTaskIllegalPlanToolsError(
+      { description, files: validatedFiles },
+      `tasks[${index}]`,
+    );
+    if (illegalToolsError) throw new Error(illegalToolsError);
 
     return {
       taskId,

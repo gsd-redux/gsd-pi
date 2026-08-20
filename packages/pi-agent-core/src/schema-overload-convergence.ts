@@ -24,6 +24,13 @@ export function isConvergingValidationFieldSet(previous: readonly string[], curr
   return current.every((field) => prev.has(field));
 }
 
+/** True when current fields are nonempty and not a subset of previous (rotating / different missing fields). */
+export function isRotatingValidationFieldSet(previous: readonly string[], current: readonly string[]): boolean {
+  if (current.length === 0) return false;
+  const prev = new Set(previous);
+  return current.some((field) => !prev.has(field));
+}
+
 export function decideSchemaOverloadBreaker(input: {
   consecutive: number;
   cap: number;
@@ -32,11 +39,13 @@ export function decideSchemaOverloadBreaker(input: {
   narrowedRetryGranted: boolean;
 }): { trip: boolean; grantNarrowedRetry: boolean } {
   if (input.consecutive < input.cap) return { trip: false, grantNarrowedRetry: false };
-  if (
-    !input.narrowedRetryGranted
-    && isConvergingValidationFieldSet(input.previousFields, input.currentFields)
-  ) {
-    return { trip: false, grantNarrowedRetry: true };
+  if (!input.narrowedRetryGranted) {
+    if (isConvergingValidationFieldSet(input.previousFields, input.currentFields)) {
+      return { trip: false, grantNarrowedRetry: true };
+    }
+    if (isRotatingValidationFieldSet(input.previousFields, input.currentFields)) {
+      return { trip: false, grantNarrowedRetry: true };
+    }
   }
   return { trip: true, grantNarrowedRetry: false };
 }
