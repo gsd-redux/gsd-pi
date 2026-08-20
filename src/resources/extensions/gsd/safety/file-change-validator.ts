@@ -8,6 +8,10 @@
  * Using diff-tree --root handles initial commits, shallow clones, and merge commits correctly
  * (Bug #4385 — git diff HEAD~1 failed on initial commits).
  *
+ * When the unit created no commit, HEAD is still the previous unit's changeset.
+ * Callers must pass `headBeforeCloseout` so that case returns an empty change set
+ * instead of auditing stale HEAD (#1431).
+ *
  * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
  */
 
@@ -36,6 +40,17 @@ export interface FileChangeAudit {
   unexpectedFiles: string[];
   missingFiles: string[];
   violations: FileViolation[];
+}
+
+export interface FileChangeAuditOptions {
+  /**
+   * HEAD SHA recorded immediately before the unit's closeout commit.
+   * When current HEAD still equals this SHA, the unit created no commit —
+   * return an empty change set instead of auditing the previous commit (#1431).
+   * Pass null when the baseline is unknown to skip the audit. Omit only for
+   * legacy callers that intentionally audit the current HEAD commit.
+   */
+  headBeforeCloseout?: string | null;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -67,6 +82,7 @@ export function validateFileChanges(
   expectedOutput: string[],
   plannedFiles: string[],
   fileChangeAllowlist: string[] = [],
+  options?: FileChangeAuditOptions,
 ): FileChangeAudit | null {
   const allExpected = new Set([...expectedOutput, ...plannedFiles]);
 
@@ -74,7 +90,7 @@ export function validateFileChanges(
   if (allExpected.size === 0) return null;
 
   // Get actual changed files from last commit
-  const actualFiles = getChangedFilesFromLastCommit(basePath);
+  const actualFiles = getChangedFilesFromLastCommit(basePath, options?.headBeforeCloseout);
   if (!actualFiles) return null;
 
   const configuredProjectsDir = process.env.GSD_STATE_DIR
@@ -141,8 +157,30 @@ export function validateFileChanges(
 
 // ─── Internals ──────────────────────────────────────────────────────────────
 
-function getChangedFilesFromLastCommit(basePath: string): string[] | null {
+/** Current committed HEAD SHA, or null when HEAD is missing/unborn. */
+export function readCommittedHeadSha(basePath: string): string | null {
   try {
+    const sha = execFileSync(
+      "git",
+      ["rev-parse", "--verify", "HEAD"],
+      { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    ).trim();
+    return sha || null;
+  } catch {
+    return null;
+  }
+}
+
+function getChangedFilesFromLastCommit(
+  basePath: string,
+  headBeforeCloseout?: string | null,
+): string[] | null {
+  try {
+    if (headBeforeCloseout === null) return null;
+    if (headBeforeCloseout) {
+      const head = readCommittedHeadSha(basePath);
+      if (!head || head === headBeforeCloseout) return [];
+    }
     const result = execFileSync(
       "git",
       ["diff-tree", "--root", "--no-commit-id", "-r", "--name-only", "HEAD"],
