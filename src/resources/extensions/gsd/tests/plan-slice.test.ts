@@ -776,6 +776,32 @@ test('handlePlanTask materializes the slice PLAN.md and clears the sketch flag o
   }
 });
 
+test('handlePlanSlice rejects tasks that require execute-task-illegal lifecycle tools (#1530)', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    const result = await handlePlanSlice({
+      ...validParams(),
+      tasks: [
+        {
+          ...validParams().tasks[0],
+          description: 'Terminalize R001 with gsd_requirement_update and reconcile milestone metadata via gsd_milestone_status.',
+        },
+      ],
+    }, base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: tasks\[0\] requires tools execute-task cannot call/);
+    assert.match(result.error, /gsd_requirement_update/);
+    assert.match(result.error, /gsd_milestone_status/);
+    assert.equal(getSliceTasks('M001', 'S02').length, 0, 'illegal lifecycle work must not persist as execute-task');
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice explains string task IO fields must be arrays', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
