@@ -78,7 +78,12 @@ import {
 import type { AutoSession, SidecarItem } from "./auto/session.js";
 import { getEvidence, clearEvidenceFromDisk, isExecutionToolName } from "./safety/evidence-collector.js";
 import { removeProjectionFileSync } from "./atomic-write.js";
-import { validateFileChanges, effectiveFileChangeAllowlist } from "./safety/file-change-validator.js";
+import {
+  validateFileChanges,
+  effectiveFileChangeAllowlist,
+  readCommittedHeadSha,
+  type FileChangeAudit,
+} from "./safety/file-change-validator.js";
 import { crossReferenceEvidence, type ClaimedEvidence } from "./safety/evidence-cross-ref.js";
 import { validateContent } from "./safety/content-validator.js";
 import { resolveSafetyHarnessConfig } from "./safety/safety-harness.js";
@@ -791,6 +796,71 @@ export function _hasExecutionToolCallsInSessionForTest(entries: readonly unknown
 
 export function shouldDeferCloseoutGitAction(unitType: string): boolean {
   return unitType === "execute-task";
+}
+
+function reportFileChangeWarnings(
+  ctx: ExtensionContext,
+  audit: FileChangeAudit | null,
+): void {
+  if (!audit || audit.violations.length === 0) return;
+  const warnings = audit.violations.filter(v => v.severity === "warning");
+  for (const v of warnings) {
+    logWarning("safety", `file-change: ${v.file} — ${v.reason}`);
+  }
+  if (warnings.length > 0) {
+    ctx.ui.notify(
+      `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
+      "warning",
+    );
+  }
+}
+
+function runExecuteTaskFileChangeSafety(
+  s: AutoSession,
+  ctx: ExtensionContext,
+  fileChangeAllowlist: string[],
+  preUnitHead: string | null,
+): void {
+  if (s.currentUnit?.type !== "execute-task") return;
+  const { milestone: sMid, slice: sSid, task: sTid } = parseUnitId(s.currentUnit.id);
+  if (!sMid || !sSid || !sTid) return;
+  try {
+    const sliceTaskRows = isDbAvailable()
+      ? getSliceTasks(sMid, sSid).filter((t) => isClosedStatus(t.status) || t.id === sTid)
+      : [];
+    if (sliceTaskRows.length > 0) {
+      const expectedOutput = getPlannedKeyFiles(
+        sliceTaskRows.map((taskRow) => ({
+          expected_output: taskRow.expected_output,
+          files: taskRow.files,
+        })),
+      );
+      const plannedFiles = getPlannedKeyFiles(
+        sliceTaskRows.map((taskRow) => ({
+          files: taskRow.files,
+        })),
+      );
+      reportFileChangeWarnings(
+        ctx,
+        validateFileChanges(s.basePath, expectedOutput, plannedFiles, fileChangeAllowlist, { preUnitHead }),
+      );
+      return;
+    }
+    const taskRow = getTask(sMid, sSid, sTid);
+    if (!taskRow) return;
+    reportFileChangeWarnings(
+      ctx,
+      validateFileChanges(
+        s.basePath,
+        taskRow.expected_output ?? [],
+        taskRow.files ?? [],
+        fileChangeAllowlist,
+        { preUnitHead },
+      ),
+    );
+  } catch (e) {
+    debugLog("postUnit", { phase: "safety-file-change", error: String(e) });
+  }
 }
 
 /** Unit types that only touch `.gsd/` internal state files (no code changes).
@@ -1823,73 +1893,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       if (safetyConfig.enabled) {
         const { milestone: sMid, slice: sSid, task: sTid } = parseUnitId(s.currentUnit.id);
 
-        const fileChangeAllowlist = effectiveFileChangeAllowlist(
-          safetyConfig.file_change_allowlist,
-          (prefs?.git as { manage_gitignore?: boolean } | undefined)?.manage_gitignore,
-        );
-
-        // File change validation (execute-task only, after unit execution)
-        if (safetyConfig.file_change_validation && s.currentUnit.type === "execute-task" && sMid && sSid && sTid) {
-          try {
-            const sliceTaskRows = isDbAvailable()
-              ? getSliceTasks(sMid, sSid).filter((t) => isClosedStatus(t.status) || t.id === sTid)
-              : [];
-
-            if (sliceTaskRows.length > 0) {
-              const expectedOutput = getPlannedKeyFiles(
-                sliceTaskRows.map((taskRow) => ({
-                  expected_output: taskRow.expected_output,
-                  files: taskRow.files,
-                })),
-              );
-              const plannedFiles = getPlannedKeyFiles(
-                sliceTaskRows.map((taskRow) => ({
-                  files: taskRow.files,
-                })),
-              );
-              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles, fileChangeAllowlist);
-              if (audit && audit.violations.length > 0) {
-                const warnings = audit.violations.filter(v => v.severity === "warning");
-                for (const v of warnings) {
-                  logWarning("safety", `file-change: ${v.file} — ${v.reason}`);
-                }
-                if (warnings.length > 0) {
-                  ctx.ui.notify(
-                    `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
-                    "warning",
-                  );
-                }
-              }
-            } else {
-              const taskRow = getTask(sMid, sSid, sTid);
-              if (taskRow) {
-                const expectedOutput = taskRow.expected_output ?? [];
-                const plannedFiles = taskRow.files ?? [];
-                const audit = validateFileChanges(
-                  s.basePath,
-                  expectedOutput,
-                  plannedFiles,
-                  fileChangeAllowlist,
-                );
-                if (audit && audit.violations.length > 0) {
-                  const warnings = audit.violations.filter(v => v.severity === "warning");
-                  for (const v of warnings) {
-                    logWarning("safety", `file-change: ${v.file} — ${v.reason}`);
-                  }
-                  if (warnings.length > 0) {
-                    ctx.ui.notify(
-                      `Safety: ${warnings.length} unexpected file change(s) outside task plan`,
-                      "warning",
-                    );
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            debugLog("postUnit", { phase: "safety-file-change", error: String(e) });
-          }
-        }
-
         // Evidence cross-reference (execute-task only)
         // Only compare against concrete command evidence persisted by the task
         // completion tool. A prose Verify field can be satisfied later by the
@@ -2641,6 +2644,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
   if (s.currentUnit) {
     if (shouldDeferCloseoutGitAction(s.currentUnit.type)) {
+      const preUnitHead = readCommittedHeadSha(s.basePath);
       const gitActionResult = await runCloseoutGitAction(pctx, s.currentUnit, { softFailure: true });
       if (gitActionResult === "dispatched") {
         return "stopped";
@@ -2656,6 +2660,21 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         }) === "retry"
       ) {
         return "retry";
+      }
+      try {
+        const prefs = loadEffectiveGSDPreferences()?.preferences;
+        const safetyConfig = resolveSafetyHarnessConfig(
+          prefs?.safety_harness as Record<string, unknown> | undefined,
+        );
+        if (safetyConfig.enabled && safetyConfig.file_change_validation) {
+          const fileChangeAllowlist = effectiveFileChangeAllowlist(
+            safetyConfig.file_change_allowlist,
+            (prefs?.git as { manage_gitignore?: boolean } | undefined)?.manage_gitignore,
+          );
+          runExecuteTaskFileChangeSafety(s, ctx, fileChangeAllowlist, preUnitHead);
+        }
+      } catch (e) {
+        debugLog("postUnit", { phase: "safety-file-change", error: String(e) });
       }
     }
 
