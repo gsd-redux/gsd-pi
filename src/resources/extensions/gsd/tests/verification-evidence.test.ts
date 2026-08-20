@@ -5,7 +5,7 @@
  *   1. writeVerificationJSON writes correct JSON shape (schemaVersion, taskId, timestamp, passed, discoverySource, checks)
  *   2. writeVerificationJSON creates directory if it doesn't exist
  *   3. writeVerificationJSON maps exitCode to verdict correctly (0 = pass, non-zero = fail)
- *   4. writeVerificationJSON excludes stdout/stderr from output
+ *   4. writeVerificationJSON persists bounded stdout/stderr excerpts
  *   5. writeVerificationJSON handles empty checks array
  *   6. writeVerificationJSON accepts optional unitId
  *   7. formatEvidenceTable returns markdown table with correct columns for checks
@@ -79,6 +79,8 @@ test("verification-evidence: writeVerificationJSON writes correct JSON shape", (
     assert.equal(json.checks[0].exitCode, 0);
     assert.equal(json.checks[0].durationMs, 2340);
     assert.equal(json.checks[0].verdict, "pass");
+    assert.equal(json.checks[0].stdoutExcerpt, undefined);
+    assert.equal(json.checks[0].stderrExcerpt, undefined);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -134,31 +136,51 @@ test("verification-evidence: writeVerificationJSON maps exitCode to verdict corr
   }
 });
 
-test("verification-evidence: writeVerificationJSON excludes stdout/stderr from output", () => {
-  const tmp = makeTempDir("ve-no-stdio");
-  try {
-    const result = makeResult({
-      checks: [
-        {
-          command: "echo hello",
-          exitCode: 0,
-          stdout: "hello\n",
-          stderr: "some warning",
-          durationMs: 50,
-        },
-      ],
-    });
+test("verification-evidence: writeVerificationJSON persists failed-command stdout/stderr excerpts", (t) => {
+  const tmp = makeTempDir("ve-stdio");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const result = makeResult({
+    passed: false,
+    checks: [
+      {
+        command: "failing-check",
+        exitCode: 1,
+        stdout: "hello\n",
+        stderr: "some warning",
+        durationMs: 50,
+      },
+    ],
+  });
 
-    writeVerificationJSON(result, tmp, "T01");
+  writeVerificationJSON(result, tmp, "T01");
 
-    const raw = readFileSync(join(tmp, "T01-VERIFY.json"), "utf-8");
-    assert.ok(!raw.includes('"stdout"'), "JSON should not contain stdout key");
-    assert.ok(!raw.includes('"stderr"'), "JSON should not contain stderr key");
-    assert.ok(!raw.includes("hello\\n"), "JSON should not contain stdout value");
-    assert.ok(!raw.includes("some warning"), "JSON should not contain stderr value");
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+  const json = JSON.parse(readFileSync(join(tmp, "T01-VERIFY.json"), "utf-8"));
+  assert.equal(json.checks[0].stdoutExcerpt, "hello\n");
+  assert.equal(json.checks[0].stderrExcerpt, "some warning");
+});
+
+test("verification-evidence: writeVerificationJSON bounds output excerpts and keeps failure tail", (t) => {
+  const tmp = makeTempDir("ve-bounded-stdio");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const stdout = `stdout-start\n${"A".repeat(10_000)}\nstdout-end`;
+  const stderr = `stderr-start\n${"B".repeat(10_000)}\nstderr-end`;
+  const result = makeResult({
+    passed: false,
+    checks: [{ command: "cargo test", exitCode: 1, stdout, stderr, durationMs: 120_000 }],
+  });
+
+  writeVerificationJSON(result, tmp, "T01");
+
+  const json = JSON.parse(readFileSync(join(tmp, "T01-VERIFY.json"), "utf-8"));
+  const check = json.checks[0];
+  assert.ok(Buffer.byteLength(check.stdoutExcerpt, "utf-8") <= 4 * 1024);
+  assert.ok(Buffer.byteLength(check.stderrExcerpt, "utf-8") <= 4 * 1024);
+  assert.match(check.stdoutExcerpt, /^stdout-start/);
+  assert.match(check.stdoutExcerpt, /…\[truncated\]/);
+  assert.match(check.stdoutExcerpt, /stdout-end$/);
+  assert.match(check.stderrExcerpt, /^stderr-start/);
+  assert.match(check.stderrExcerpt, /…\[truncated\]/);
+  assert.match(check.stderrExcerpt, /stderr-end$/);
 });
 
 test("verification-evidence: writeVerificationJSON handles empty checks array", () => {

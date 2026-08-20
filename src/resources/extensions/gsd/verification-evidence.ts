@@ -6,7 +6,7 @@
  *   - formatEvidenceTable:   returns a markdown evidence table string
  *
  * JSON schema uses schemaVersion: 1 for forward-compatibility.
- * stdout/stderr are intentionally excluded from the JSON to avoid unbounded file sizes.
+ * Failed-command output is persisted as bounded excerpts for forensics.
  */
 
 import { join } from "node:path";
@@ -20,6 +20,32 @@ export interface EvidenceCheckJSON {
   exitCode: number;
   durationMs: number;
   verdict: "pass" | "fail";
+  stdoutExcerpt?: string;
+  stderrExcerpt?: string;
+}
+
+/** Maximum bytes retained for each stdout/stderr excerpt in VERIFY.json. */
+const MAX_OUTPUT_EXCERPT_BYTES = 4 * 1024;
+const OUTPUT_TRUNCATION_MARKER = "\n…[truncated]\n";
+
+function boundedOutputExcerpt(value: string): string | undefined {
+  if (!value) return undefined;
+  const output = Buffer.from(value, "utf-8");
+  if (output.byteLength <= MAX_OUTPUT_EXCERPT_BYTES) return value;
+
+  const marker = Buffer.from(OUTPUT_TRUNCATION_MARKER, "utf-8");
+  const retainedBytes = MAX_OUTPUT_EXCERPT_BYTES - marker.byteLength;
+  const headBytes = Math.floor(retainedBytes / 2);
+  const tailBytes = retainedBytes - headBytes;
+  let headEnd = headBytes;
+  while (headEnd > 0 && (output[headEnd] & 0xc0) === 0x80) headEnd--;
+  let tailStart = output.byteLength - tailBytes;
+  while (tailStart < output.byteLength && (output[tailStart] & 0xc0) === 0x80) tailStart++;
+  return Buffer.concat([
+    output.subarray(0, headEnd),
+    marker,
+    output.subarray(tailStart),
+  ]).toString("utf-8");
 }
 
 export interface RuntimeErrorJSON {
@@ -102,8 +128,8 @@ export interface EvidenceJSON {
  * Creates the directory with mkdirSync({ recursive: true }) if it doesn't exist.
  * Flat-phase callers can pass sliceId to write S##-T##-VERIFY.json.
  *
- * stdout/stderr are excluded from the JSON — the full output lives in VerificationResult
- * in memory and is logged to stderr during the gate run.
+ * Failed-command stdout/stderr excerpts are bounded per stream so output is
+ * available to forensics without allowing artifacts to grow without limit.
  */
 export function writeVerificationJSON(
   result: VerificationResult,
@@ -122,12 +148,18 @@ export function writeVerificationJSON(
     timestamp: result.timestamp,
     passed: result.passed,
     discoverySource: result.discoverySource,
-    checks: result.checks.map((check) => ({
-      command: check.command,
-      exitCode: check.exitCode,
-      durationMs: check.durationMs,
-      verdict: check.exitCode === 0 ? "pass" : "fail",
-    })),
+    checks: result.checks.map((check) => {
+      const stdoutExcerpt = check.exitCode === 0 ? undefined : boundedOutputExcerpt(check.stdout);
+      const stderrExcerpt = check.exitCode === 0 ? undefined : boundedOutputExcerpt(check.stderr);
+      return {
+        command: check.command,
+        exitCode: check.exitCode,
+        durationMs: check.durationMs,
+        verdict: check.exitCode === 0 ? "pass" : "fail",
+        ...(stdoutExcerpt !== undefined ? { stdoutExcerpt } : {}),
+        ...(stderrExcerpt !== undefined ? { stderrExcerpt } : {}),
+      };
+    }),
     ...(retryAttempt !== undefined ? { retryAttempt } : {}),
     ...(maxRetries !== undefined ? { maxRetries } : {}),
   };
