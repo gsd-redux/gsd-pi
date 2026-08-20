@@ -148,7 +148,7 @@ test("branch isolation preserves the integration ref in an unborn repo", async (
   enterBranchModeForMilestone(dir, "M001");
 
   assert.equal(git(["branch", "--show-current"], dir), "milestone/M001");
-  assert.ok(git(["rev-parse", "--verify", "main^{commit}"]));
+  assert.ok(git(["rev-parse", "--verify", "main^{commit}"], dir));
 
   // Re-entry must remain idempotent after the baseline commit.
   enterBranchModeForMilestone(dir, "M001");
