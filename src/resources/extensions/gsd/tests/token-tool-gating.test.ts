@@ -365,6 +365,8 @@ test("buildMinimalAutoGsdToolSet includes closeout tool for complete-slice", () 
     "gsd_task_reopen",
     "gsd_replan_slice",
     "gsd_slice_complete",
+    "gsd_slice_reopen",
+    "gsd_journal_query",
     "gsd_complete_slice",
     "memory_query",
     "capture_thought",
@@ -372,11 +374,13 @@ test("buildMinimalAutoGsdToolSet includes closeout tool for complete-slice", () 
   ], "complete-slice");
 
   assert.ok(result.includes("gsd_slice_complete"));
+  assert.ok(result.includes("gsd_slice_reopen"));
   assert.ok(result.includes("gsd_task_reopen"));
+  assert.ok(result.includes("gsd_task_complete"));
+  assert.ok(result.includes("gsd_journal_query"));
   assert.ok(result.includes("gsd_replan_slice"));
   assert.ok(result.includes("subagent"));
   assert.ok(result.includes("gsd_capture_thought"));
-  assert.ok(!result.includes("gsd_task_complete"));
   assert.ok(!result.includes("gsd_complete_slice"));
 });
 
@@ -385,8 +389,11 @@ test("buildMinimalAutoGsdToolSet preserves workflow MCP-namespaced closeout tool
     "bash",
     "read",
     "mcp__gsd-workflow__gsd_task_reopen",
+    "mcp__gsd-workflow__gsd_task_complete",
     "mcp__gsd-workflow__gsd_replan_slice",
     "mcp__gsd-workflow__gsd_slice_complete",
+    "mcp__gsd-workflow__gsd_slice_reopen",
+    "mcp__gsd-workflow__gsd_journal_query",
     "mcp__gsd-workflow__gsd_complete_slice",
     "mcp__gsd-workflow__gsd_exec",
     "mcp__gsd-workflow__memory_query",
@@ -395,8 +402,11 @@ test("buildMinimalAutoGsdToolSet preserves workflow MCP-namespaced closeout tool
   ], "complete-slice");
 
   assert.ok(result.includes("mcp__gsd-workflow__gsd_task_reopen"));
+  assert.ok(result.includes("mcp__gsd-workflow__gsd_task_complete"));
   assert.ok(result.includes("mcp__gsd-workflow__gsd_replan_slice"));
   assert.ok(result.includes("mcp__gsd-workflow__gsd_slice_complete"));
+  assert.ok(result.includes("mcp__gsd-workflow__gsd_slice_reopen"));
+  assert.ok(result.includes("mcp__gsd-workflow__gsd_journal_query"));
   assert.ok(!result.includes("mcp__gsd-workflow__gsd_complete_slice"));
   assert.ok(result.includes("mcp__gsd-workflow__gsd_exec"));
   assert.ok(result.includes("mcp__gsd-workflow__memory_query"));
