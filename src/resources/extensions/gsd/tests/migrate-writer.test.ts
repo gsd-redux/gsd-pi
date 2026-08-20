@@ -152,7 +152,7 @@ test('Scenario A: Roadmap round-trip with 2 slices (1 done, 1 not)', () => {
   assert.deepStrictEqual(parsed.boundaryMap.length, 0, 'roadmap: boundaryMap empty');
 });
 
-test('Scenario B: Plan round-trip with 3 tasks (mixed done)', () => {
+test('Scenario B: Slice plan leaves task claims to the individual task plans', () => {
   const slice = makeSlice({
     id: 'S01',
     title: 'Auth System',
@@ -172,20 +172,11 @@ test('Scenario B: Plan round-trip with 3 tasks (mixed done)', () => {
   assert.deepStrictEqual(parsed.title, 'Auth System', 'plan: title');
   assert.deepStrictEqual(parsed.goal, 'Working authentication system', 'plan: goal');
   assert.deepStrictEqual(parsed.demo, 'Login works with valid credentials', 'plan: demo');
-  assert.deepStrictEqual(parsed.tasks.length, 3, 'plan: tasks count');
-
-  assert.deepStrictEqual(parsed.tasks[0].id, 'T01', 'plan: T01 id');
-  assert.deepStrictEqual(parsed.tasks[0].title, 'Setup Models', 'plan: T01 title');
-  assert.deepStrictEqual(parsed.tasks[0].done, true, 'plan: T01 done');
-  assert.deepStrictEqual(parsed.tasks[0].estimate, '15m', 'plan: T01 estimate');
-
-  assert.deepStrictEqual(parsed.tasks[1].id, 'T02', 'plan: T02 id');
-  assert.deepStrictEqual(parsed.tasks[1].done, false, 'plan: T02 done');
-  assert.deepStrictEqual(parsed.tasks[1].estimate, '30m', 'plan: T02 estimate');
-
-  assert.deepStrictEqual(parsed.tasks[2].id, 'T03', 'plan: T03 id');
-  assert.deepStrictEqual(parsed.tasks[2].done, true, 'plan: T03 done');
-  assert.deepStrictEqual(parsed.tasks[2].estimate, '20m', 'plan: T03 estimate');
+  assert.deepStrictEqual(parsed.tasks, [], 'plan: task claims are not duplicated');
+  assert.match(
+    formatTaskPlan(slice.tasks[0]!, slice.id, 'M001'),
+    /^# T01: Setup Models$[\s\S]*^Status: complete$/m,
+  );
 });
 
 test('Scenario C: Slice summary round-trip with full data', () => {
@@ -347,15 +338,17 @@ test('F13: formatState produces valid content', () => {
   assert.ok(output.includes('1/2'), 'edge: state shows slice progress');
 });
 
-test('F14: Task with no estimate → no est backtick in plan', () => {
+test('F14: Task metadata remains in its task plan when the estimate is empty', () => {
   const slice = makeSlice({
     tasks: [makeTask({ id: 'T01', title: 'Quick Fix', estimate: '' })],
   });
   const output = formatPlan(slice);
   const parsed = parsePlan(output);
-  assert.deepStrictEqual(parsed.tasks[0].id, 'T01', 'edge: task no estimate id');
-  assert.deepStrictEqual(parsed.tasks[0].estimate, '', 'edge: task no estimate empty');
+  assert.deepStrictEqual(parsed.tasks, [], 'edge: slice plan has no duplicate task claim');
+  assert.match(
+    formatTaskPlan(slice.tasks[0]!, slice.id, 'M001'),
+    /^# T01: Quick Fix$[\s\S]*^Status: pending$/m,
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-

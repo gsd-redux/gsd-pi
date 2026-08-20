@@ -14,6 +14,9 @@ import { findMilestoneIds } from "./milestone-ids.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
+  resolveTaskFiles,
+  resolveTasksDir,
+  taskIdFromTaskFileName,
 } from "./paths.js";
 
 export interface HierarchyCounts {
@@ -217,9 +220,17 @@ export function scanMarkdownHierarchy(basePath: string): HierarchyScan {
       const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
       if (!planPath || !existsSync(planPath)) continue;
       const plan = parsePlan(readFileSync(planPath, "utf-8"));
-      scan.counts.tasks += plan.tasks.length;
-      for (const task of plan.tasks) {
-        scan.tasks.add(`${milestoneId}/${slice.id}/${task.id}`);
+      const taskIds = new Set(plan.tasks.map((task) => task.id));
+      const tasksDir = resolveTasksDir(basePath, milestoneId, slice.id);
+      if (tasksDir !== null) {
+        for (const fileName of resolveTaskFiles(tasksDir, "PLAN")) {
+          const taskId = taskIdFromTaskFileName(fileName, "PLAN");
+          if (taskId !== null) taskIds.add(taskId);
+        }
+      }
+      scan.counts.tasks += taskIds.size;
+      for (const taskId of taskIds) {
+        scan.tasks.add(`${milestoneId}/${slice.id}/${taskId}`);
       }
     }
   }

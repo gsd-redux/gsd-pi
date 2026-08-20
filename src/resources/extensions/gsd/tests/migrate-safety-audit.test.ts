@@ -68,7 +68,7 @@ import {
 } from "../managed-projection-history.ts";
 import { renderAllFromDb, renderMilestoneArtifactsFromDb, renderRoadmapFromDb } from "../markdown-renderer.ts";
 import { gsdRoot } from "../paths.ts";
-import { _getAdapter, closeDatabase, getArtifact, getMilestone, insertArtifact, insertMilestone, openDatabase } from "../gsd-db.ts";
+import { _getAdapter, closeDatabase, getArtifact, getMilestone, getSliceTasks, insertArtifact, insertMilestone, openDatabase } from "../gsd-db.ts";
 import { _setDomainOperationFaultForTest, executeDomainOperation } from "../db/domain-operation.ts";
 import { hashLegacyImportValue } from "../legacy-import-preview.ts";
 import type { GSDProject } from "../migrate/types.ts";
@@ -539,6 +539,8 @@ test("completed milestone artifacts retain exact canonical bytes", async () => {
     const planning = createPlanningSource(base);
     const project = projectFixture();
     project.milestones[0]!.slices[0]!.done = true;
+    project.milestones[0]!.slices[0]!.tasks[0]!.done = true;
+    project.milestones[0]!.slices[0]!.research = "# Slice Research\n\nRetain these mixed-content notes.\n";
     const result = await executeMigrationWrite(planning, base, project, generatePreview(project));
     const expected = [
       "milestones/M001/M001-VALIDATION.md",
@@ -551,6 +553,11 @@ test("completed milestone artifacts retain exact canonical bytes", async () => {
         readFileSync(join(base, ".gsd", logicalPath), "utf8"),
       );
     }
+    assert.equal(getSliceTasks("M001", "S01")[0]?.status, "complete");
+    assert.equal(
+      getArtifact(".gsd/milestones/M001/slices/S01/S01-RESEARCH.md")?.full_content,
+      project.milestones[0]!.slices[0]!.research,
+    );
   } finally {
     cleanup(base);
   }

@@ -153,7 +153,7 @@ export function formatRoadmap(milestone: GSDMilestone): string {
 
 /**
  * Format a slice's PLAN.md (S01-PLAN.md).
- * Output must parse correctly through parsePlan().
+ * Task claims live only in the individual T##-PLAN.md files written below.
  */
 export function formatPlan(slice: GSDSlice): string {
   const lines: string[] = [];
@@ -167,18 +167,6 @@ export function formatPlan(slice: GSDSlice): string {
   lines.push('## Must-Haves');
   lines.push('');
   // No must-haves in migrated data — empty section
-  lines.push('');
-
-  lines.push('## Tasks');
-  lines.push('');
-  for (const task of slice.tasks) {
-    const check = task.done ? 'x' : ' ';
-    const estPart = task.estimate ? ` \`est:${task.estimate}\`` : '';
-    lines.push(`- [${check}] **${task.id}: ${task.title}**${estPart}`);
-    if (task.description) {
-      lines.push(`  - ${task.description}`);
-    }
-  }
   lines.push('');
 
   lines.push('## Files Likely Touched');
@@ -282,6 +270,7 @@ export function formatTaskPlan(task: GSDTask, sliceId: string, milestoneId: stri
   lines.push(`# ${task.id}: ${task.title}`);
   lines.push('');
   lines.push(`**Slice:** ${sliceId} — **Milestone:** ${milestoneId}`);
+  lines.push(`Status: ${task.done ? 'complete' : 'pending'}`);
   lines.push('');
   lines.push('## Description');
   lines.push('');
