@@ -23,6 +23,7 @@ import { handleDbRestoreBackup } from "../commands-maintenance.ts";
 import { closeDatabase, _getAdapter } from "../gsd-db.ts";
 import { openWorkflowDatabase, resolveProjectRootDbPath } from "../db-workspace.ts";
 import { recordSchemaVersion } from "../db-schema-metadata.ts";
+import { SCHEMA_VERSION } from "../db/engine.ts";
 import { openSqliteReadOnly } from "../sqlite-readonly.ts";
 
 const tempDirs = new Set<string>();
@@ -112,7 +113,7 @@ function maxSchemaVersionOf(dbPath: string): number {
 test("(a) restore with consent restores v45 contents and persists a receipt", async () => {
   const fixture = makeFixture();
   assert.deepEqual(milestoneIds(fixture.dbPath), ["M100"]);
-  assert.equal(maxSchemaVersionOf(fixture.dbPath), 47);
+  assert.equal(maxSchemaVersionOf(fixture.dbPath), SCHEMA_VERSION);
 
   const { ctx, notes } = makeCtx();
   await handleDbRestoreBackup(
@@ -126,7 +127,7 @@ test("(a) restore with consent restores v45 contents and persists a receipt", as
   assert.match(success.message, /restored gsd\.db\.backup-v45/);
   assert.match(success.message, /Backup schema: v45/);
   assert.match(success.message, /Receipt: import\.restore committed/);
-  assert.match(success.message, /stamps v47 on next open/);
+  assert.match(success.message, new RegExp(`stamps v${SCHEMA_VERSION} on next open`));
 
   // The handler closed the engine DB; read the restored file without migrating.
   assert.equal(maxSchemaVersionOf(fixture.dbPath), 45);
@@ -160,7 +161,7 @@ test("(b) restore without consent is refused with guidance; stale consent is ref
   assert.match(guidance.message, new RegExp(`--consent=proceed:destructive-database-restore:${fixture.backupSha}`));
   assert.ok(!missing.notes.some((note) => note.kind === "success"));
   assert.equal(sha256File(fixture.dbPath), beforeSha);
-  assert.equal(maxSchemaVersionOf(fixture.dbPath), 47);
+  assert.equal(maxSchemaVersionOf(fixture.dbPath), SCHEMA_VERSION);
   assert.deepEqual(milestoneIds(fixture.dbPath), ["M100"]);
   assert.equal(existsSync(`${fixture.dbPath}.recovery`), false);
 
@@ -201,7 +202,7 @@ test("(c) a corrupt backup fails verification and restores nothing", async () =>
   assert.ok(failure, `expected a verification failure, got ${JSON.stringify(notes)}`);
   assert.match(failure.message, /Nothing was restored/);
   assert.equal(sha256File(fixture.dbPath), beforeSha);
-  assert.equal(maxSchemaVersionOf(fixture.dbPath), 47);
+  assert.equal(maxSchemaVersionOf(fixture.dbPath), SCHEMA_VERSION);
   assert.deepEqual(milestoneIds(fixture.dbPath), ["M100"]);
   assert.equal(existsSync(`${fixture.dbPath}.recovery`), false);
 });
@@ -224,7 +225,7 @@ test("(d) list-style invocations show candidates and mutate nothing", async () =
   // Listing never opened or migrated the engine DB: the live database is
   // byte-identical and still holds the post-cutover contents.
   assert.equal(sha256File(fixture.dbPath), beforeSha);
-  assert.equal(maxSchemaVersionOf(fixture.dbPath), 47);
+  assert.equal(maxSchemaVersionOf(fixture.dbPath), SCHEMA_VERSION);
   assert.deepEqual(milestoneIds(fixture.dbPath), ["M100"]);
   assert.equal(existsSync(`${fixture.dbPath}.recovery`), false);
 });

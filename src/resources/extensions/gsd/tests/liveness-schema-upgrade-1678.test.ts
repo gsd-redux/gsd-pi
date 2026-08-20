@@ -12,7 +12,7 @@ import { getOpenWedge } from "../auto-liveness-backstop.ts";
 import { databaseMaintenanceIntentPath } from "../database-maintenance-fence.ts";
 import { runGSDDoctor } from "../doctor.ts";
 import { createDbAdapter, type DbAdapter } from "../db-adapter.ts";
-import { _setStartupInitializationBoundaryForTest } from "../db/engine.ts";
+import { SCHEMA_VERSION, _setStartupInitializationBoundaryForTest } from "../db/engine.ts";
 import {
   _getAdapter,
   closeAllDatabases,
@@ -203,13 +203,26 @@ test("#1678: opening a pre-v1.14 v46 database bootstraps liveness schema without
   assert.deepEqual(
     versionStamps(),
     {
-      schemaVersion: stampsBefore.schemaVersion + 1,
-      userVersion: stampsBefore.userVersion + 1,
+      schemaVersion: SCHEMA_VERSION,
+      userVersion: SCHEMA_VERSION,
       applicationId: stampsBefore.applicationId,
     },
-    "only the V47 same-lease trigger migration may move the version stamps",
+    "V47 and V48 migrations may move the version stamps to the current schema",
   );
-  assert.deepEqual(snapshotWorkflowRows(), rowsBefore, "startup repair must not rewrite workflow-owned rows");
+  const rowsAfter = snapshotWorkflowRows();
+  assert.deepEqual(
+    {
+      ...rowsAfter,
+      tasks: rowsAfter.tasks.map(({ required_workflow_tools: _requiredWorkflowTools, ...row }) => row),
+    },
+    rowsBefore,
+    "startup repair must not rewrite workflow-owned rows",
+  );
+  assert.deepEqual(
+    rowsAfter.tasks.map((row) => row.required_workflow_tools),
+    ["[]"],
+    "V48 adds required_workflow_tools with the empty default",
+  );
   assert.deepEqual(getOpenWedge(basePath), { ok: true, wedge: null });
   assert.equal(fixtureHash(), sealedHash, "upgrade must not mutate its sealed source fixture");
 });
