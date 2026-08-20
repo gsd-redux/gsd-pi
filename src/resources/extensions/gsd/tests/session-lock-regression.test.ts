@@ -7,12 +7,13 @@
  *   #1251  Same root cause as #1245
  *
  * Tests the acquire → validate → release lifecycle and edge cases
- * without requiring concurrent processes.
+ * including cross-process exclusion during re-entrant acquisition.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
@@ -23,6 +24,7 @@ import {
   readSessionLockData,
   updateSessionLock,
   isSessionLockHeld,
+  _setProperLockfileForTests,
 } from '../session-lock.ts';
 import { gsdRoot } from '../paths.ts';
 import { openDatabase, closeDatabase, _getAdapter } from "../gsd-db.ts";
@@ -337,7 +339,7 @@ describe('session-lock-regression', async () => {
       assert.ok(r1.acquired, 'first acquisition succeeds');
 
       const r2 = acquireSessionLock(base);
-      assert.ok(r2.acquired, 're-entrant acquisition succeeds');
+      assert.deepStrictEqual(r2, { acquired: true, reentrant: true }, 're-entrant acquisition succeeds');
 
       const valid = validateSessionLock(base);
       assert.ok(valid, 're-entrant acquisition does not corrupt validation state');
@@ -347,6 +349,31 @@ describe('session-lock-regression', async () => {
       rmSync(base, { recursive: true, force: true });
     }
   }
+
+  // ─── 9b. Equivalent path spellings share re-entrant ownership ─────────
+  test('canonical lock target identifies re-entry', (t) => {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+    t.after(() => {
+      try { releaseSessionLock(base); } catch { /* best-effort */ }
+      rmSync(base, { recursive: true, force: true });
+    });
+
+    assert.ok(acquireSessionLock(base).acquired, 'first acquisition succeeds');
+    updateSessionLock(base, 'execute-task', 'M001/S01/T01');
+
+    const equivalentBase = `${base}${sep}.`;
+    const result = acquireSessionLock(equivalentBase);
+    assert.deepStrictEqual(
+      result,
+      { acquired: true, reentrant: true },
+      'realpath-equivalent base path is treated as re-entrant',
+    );
+    assert.deepStrictEqual(readSessionLockData(base)?.unitId, 'bootstrap', 'metadata is refreshed atomically');
+    assert.ok(isSessionLockHeld(equivalentBase), 'canonical alias reports held ownership');
+
+    releaseSessionLock(equivalentBase);
+  });
 
   // ─── 10. Re-entrant acquisition refreshes lock artifacts ──────────────
   console.log('\n=== 10. re-entrant acquire refreshes lock artifacts ===');
@@ -376,4 +403,186 @@ describe('session-lock-regression', async () => {
       rmSync(base, { recursive: true, force: true });
     }
   }
+
+
+  test('healthy re-entry excludes a concurrent process until explicit release', {
+    skip: !properLockfileAvailable,
+  }, async (t) => {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-concurrency-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+    const target = gsdRoot(base);
+    assert.ok(acquireSessionLock(base).acquired, 'process A acquires the lock');
+
+    const contenderScript = String.raw`
+      const lockfile = require('proper-lockfile');
+      const target = process.argv[1];
+      let release = null;
+      let running = true;
+      let reportedBlocked = false;
+      process.stdout.write('ready\n');
+      function attempt() {
+        if (!running || release) return;
+        try {
+          release = lockfile.lockSync(target, { realpath: false, stale: 1800000, update: 10000 });
+          process.stdout.write('acquired\n');
+        } catch {
+          if (!reportedBlocked) {
+            reportedBlocked = true;
+            process.stdout.write('blocked\n');
+          }
+          setImmediate(attempt);
+        }
+      }
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (command) => {
+        if (command.includes('pause')) {
+          running = false;
+          process.stdout.write('paused\n');
+        }
+        if (command.includes('resume') && !release) {
+          running = true;
+          setImmediate(attempt);
+        }
+        if (command.includes('stop')) {
+          running = false;
+          try { if (release) release(); } catch {}
+          process.exit(0);
+        }
+      });
+      setImmediate(attempt);
+    `;
+    const child = spawn(process.execPath, ['-e', contenderScript, target], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let output = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const waitForOutput = (value: string, timeoutMs = 3_000): Promise<void> => new Promise((resolve, reject) => {
+      const interval = setInterval(() => {
+        if (output.includes(value)) {
+          clearTimeout(timeout);
+          clearInterval(interval);
+          resolve();
+        }
+      }, 10);
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        reject(new Error(
+          `Timed out waiting for contender output ${JSON.stringify(value)}; `
+          + `stdout=${JSON.stringify(output)} stderr=${JSON.stringify(stderr)}`,
+        ));
+      }, timeoutMs);
+      if (output.includes(value)) {
+        clearTimeout(timeout);
+        clearInterval(interval);
+        resolve();
+      }
+    });
+
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        await new Promise<void>((resolve, reject) => {
+          const forceExit = setTimeout(() => { child.kill(); }, 500);
+          const giveUp = setTimeout(() => reject(new Error('contender process did not exit')), 1_500);
+          child.once('close', () => {
+            clearTimeout(forceExit);
+            clearTimeout(giveUp);
+            resolve();
+          });
+          try { child.stdin.end('stop'); } catch { child.kill(); }
+        });
+      }
+      try { releaseSessionLock(base); } catch { /* best-effort */ }
+      rmSync(base, { recursive: true, force: true });
+    });
+
+    await waitForOutput('ready\n');
+    await waitForOutput('blocked\n');
+
+    for (let attempt = 0; attempt < 100; attempt++) {
+      assert.deepStrictEqual(
+        acquireSessionLock(base),
+        { acquired: true, reentrant: true },
+        `process A keeps ownership during re-entry ${attempt + 1}`,
+      );
+    }
+    child.stdin.write('pause\n');
+    await waitForOutput('paused\n');
+    assert.doesNotMatch(output, /acquired/, 'process B cannot acquire during process A re-entry');
+
+    releaseSessionLock(base);
+    child.stdin.write('resume\n');
+    await waitForOutput('acquired\n');
+    assert.match(output, /acquired/, 'process B acquires only after process A explicitly releases');
+  });
+
+  test('getSessionLockStatus re-acquires only after onCompromised drops ownership', (t) => {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-session-lock-recovery-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+    let held = false;
+    let lockCalls = 0;
+    let compromised: (() => void) | undefined;
+    let lockFile = '';
+    let removeMetadataOnBlockedAttempt = false;
+    const fakeLockfile = {
+      lockSync: (_path, options) => {
+        if (held) {
+          if (removeMetadataOnBlockedAttempt && lockFile) unlinkSync(lockFile);
+          throw new Error('already locked');
+        }
+        held = true;
+        lockCalls++;
+        compromised = options?.onCompromised;
+        return () => { held = false; };
+      },
+    } satisfies NonNullable<Parameters<typeof _setProperLockfileForTests>[0]>;
+    const realDateNow = Date.now;
+    let restoreLockfile = (): void => {};
+    t.after(() => {
+      Date.now = realDateNow;
+      try { releaseSessionLock(base); } catch { /* best-effort */ }
+      restoreLockfile();
+      rmSync(base, { recursive: true, force: true });
+    });
+
+    restoreLockfile = _setProperLockfileForTests(fakeLockfile);
+    assert.ok(acquireSessionLock(base).acquired, 'initial fake OS lock acquired');
+    lockFile = join(gsdRoot(base), 'auto.lock');
+    const lockDir = gsdRoot(base) + '.lock';
+    mkdirSync(lockDir, { recursive: true });
+    const metadata = readFileSync(lockFile, 'utf8');
+
+    Date.now = () => realDateNow() + 1_800_001;
+    unlinkSync(lockFile);
+    compromised?.();
+    writeFileSync(lockFile, metadata);
+    Date.now = realDateNow;
+
+    removeMetadataOnBlockedAttempt = true;
+    assert.deepStrictEqual(
+      getSessionLockStatus(base),
+      {
+        valid: false,
+        failureReason: 'compromised',
+        existingPid: process.pid,
+        expectedPid: process.pid,
+      },
+      'recovery does not replace a lock that is still held',
+    );
+    assert.deepStrictEqual(lockCalls, 1, 'held lock prevents replacement acquisition');
+    assert.ok(existsSync(lockDir), 'compromised recovery never removes the held lock directory');
+
+    writeFileSync(lockFile, metadata);
+    removeMetadataOnBlockedAttempt = false;
+    held = false;
+    assert.deepStrictEqual(
+      getSessionLockStatus(base),
+      { valid: true, recovered: true },
+      'status validation re-acquires after compromised ownership is gone',
+    );
+    assert.deepStrictEqual(lockCalls, 2, 'recovery performs one replacement acquisition');
+  });
 });
