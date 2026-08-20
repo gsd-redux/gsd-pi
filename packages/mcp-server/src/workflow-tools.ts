@@ -2456,6 +2456,9 @@ const taskSettleParams = {
   taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
   reason: nonEmptyString("reason").describe("Operator rationale recorded on the settled Attempt Result"),
   apply: z.boolean().optional().describe("Actually settle; omit or false for a dry run that changes nothing"),
+  reconcileLifecycle: z.boolean().optional().describe(
+    "After settling (or if already interrupted), adopt ready/completed to match tasks.status without deleting SUMMARYs",
+  ),
 };
 const taskSettleSchema = z.object(taskSettleParams);
 
@@ -3482,7 +3485,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_task_settle",
-    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true.",
+    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true. Optional reconcileLifecycle adopts ready/completed to match tasks.status without deleting SUMMARYs.",
     taskSettleParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskSettleSchema, args);

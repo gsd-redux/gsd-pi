@@ -1,10 +1,22 @@
 // Project/App: gsd-pi
 // File Purpose: Operator Task settle — human-gated, dry-run-first reconciliation
-// of a running Task Attempt whose executor is gone (#1749).
+// of a running Task Attempt whose executor is gone, plus optional lifecycle
+// adopt after an interrupted Attempt (#1749).
 
+import { executeDomainOperation } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+  type CanonicalLifecycleStatus,
+} from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
-import { settleTaskAttempt } from "./task-execution-domain-operation.js";
+import { TASK_LIFECYCLE_PROJECTION_KIND } from "./projection-identity.js";
+import {
+  readLatestTaskAttempt,
+  settleTaskAttempt,
+} from "./task-execution-domain-operation.js";
 
 export interface TaskSettleTask {
   milestoneId: string;
@@ -20,15 +32,35 @@ export interface TaskSettleRow {
   leaseHeld: boolean;
 }
 
+export interface TaskLifecycleReconcileRow {
+  currentStatus: string;
+  targetStatus: "paused" | "ready" | "completed";
+  rationale: string;
+}
+
 export interface TaskSettlePlan {
   task: TaskSettleTask;
   rows: TaskSettleRow[];
+  lifecycleRows: TaskLifecycleReconcileRow[];
+}
+
+export interface TaskSettleOptions {
+  reconcileLifecycle?: boolean;
 }
 
 interface RunningAttemptRow {
   attempt_id: string;
   worker_id: string | null;
   milestone_lease_token: number | null;
+}
+
+interface TaskLifecycleState {
+  legacyStatus: string;
+  lifecycleStatus: CanonicalLifecycleStatus | null;
+}
+
+function unitId(task: TaskSettleTask): string {
+  return `${task.milestoneId}/${task.sliceId}/${task.taskId}`;
 }
 
 function readRunningAttempts(task: TaskSettleTask): RunningAttemptRow[] {
@@ -98,13 +130,167 @@ function requireSingleRunningAttempt(task: TaskSettleTask): RunningAttemptRow | 
   return running[0];
 }
 
+function readTaskLifecycleState(task: TaskSettleTask): TaskLifecycleState {
+  const state = getDb().prepare(`
+    SELECT task.status AS task_status, lifecycle.lifecycle_status
+    FROM tasks task
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'task'
+     AND lifecycle.milestone_id = task.milestone_id
+     AND lifecycle.slice_id = task.slice_id
+     AND lifecycle.task_id = task.id
+    WHERE task.milestone_id = :milestone_id
+      AND task.slice_id = :slice_id
+      AND task.id = :task_id
+  `).get({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Record<string, unknown> | undefined;
+  if (!state) {
+    throw new Error(`gsd_task_settle: unknown Task ${unitId(task)}`);
+  }
+  return {
+    legacyStatus: String(state["task_status"]),
+    lifecycleStatus: state["lifecycle_status"]
+      ? String(state["lifecycle_status"]) as CanonicalLifecycleStatus
+      : null,
+  };
+}
+
+function targetCanonicalStatus(legacyStatus: string): "ready" | "completed" {
+  const normalized = normalizeLegacyLifecycleStatus(legacyStatus);
+  if (normalized === "pending") return "ready";
+  if (normalized === "completed") return "completed";
+  throw new Error(
+    `gsd_task_settle: reconcileLifecycle only repairs a pending/complete mismatch ` +
+    `after an interrupted Attempt; tasks.status is ${legacyStatus}`,
+  );
+}
+
+function lifecycleTransitionSteps(
+  from: CanonicalLifecycleStatus,
+  to: "ready" | "completed",
+): Array<"paused" | "ready" | "completed"> {
+  if (from === to) return [];
+  if (to === "ready") {
+    if (from === "in_progress") return ["paused", "ready"];
+    if (from === "paused") return ["ready"];
+  } else if (from === "in_progress") {
+    return ["completed"];
+  }
+  throw new Error(
+    `gsd_task_settle: cannot reconcile lifecycle ${from} → ${to} after an interrupted Attempt`,
+  );
+}
+
+function planLifecycleReconcile(
+  task: TaskSettleTask,
+  reason: string,
+  hasRunningAttempt: boolean,
+): TaskLifecycleReconcileRow[] {
+  const latest = readLatestTaskAttempt(task);
+  if (!hasRunningAttempt && latest?.outcome !== "interrupted") {
+    throw new Error(
+      "gsd_task_settle: reconcileLifecycle requires an interrupted Attempt " +
+      "(settle the running Attempt first)",
+    );
+  }
+  const state = readTaskLifecycleState(task);
+  const target = targetCanonicalStatus(state.legacyStatus);
+  const fromStatus = state.lifecycleStatus;
+  if (fromStatus === null) {
+    throw new Error(`gsd_task_settle: Task ${unitId(task)} has no canonical lifecycle to reconcile`);
+  }
+  if (fromStatus === target) return [];
+  const steps = lifecycleTransitionSteps(fromStatus, target);
+  const rows: TaskLifecycleReconcileRow[] = [];
+  let current: CanonicalLifecycleStatus = fromStatus;
+  for (const next of steps) {
+    rows.push({
+      currentStatus: current,
+      targetStatus: next,
+      rationale:
+        `${reason} (adopt ${target} to match tasks.status=${state.legacyStatus}; ` +
+        "SUMMARY projections are left in place)",
+    });
+    current = next;
+  }
+  return rows;
+}
+
+function applyLifecycleReconcile(
+  invocation: ExecutionInvocation,
+  task: TaskSettleTask,
+  reason: string,
+  rows: TaskLifecycleReconcileRow[],
+): void {
+  const entityId = unitId(task);
+  for (const step of rows) {
+    const idempotencyKey = `${invocation.idempotencyKey}:lifecycle:${step.targetStatus}`;
+    const fence = readDomainOperationFence(idempotencyKey);
+    executeDomainOperation({
+      operationType: "task.lifecycle.reconcile",
+      idempotencyKey,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: invocation.actorType,
+      ...(invocation.actorId ? { actorId: invocation.actorId } : {}),
+      sourceTransport: invocation.sourceTransport,
+      ...(invocation.traceId ? { traceId: invocation.traceId } : {}),
+      ...(invocation.turnId ? { turnId: invocation.turnId } : {}),
+      payload: {
+        milestoneId: task.milestoneId,
+        sliceId: task.sliceId,
+        taskId: task.taskId,
+        from: step.currentStatus,
+        to: step.targetStatus,
+        reason,
+      },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: task.milestoneId,
+        sliceId: task.sliceId,
+        taskId: task.taskId,
+        lifecycleStatus: step.targetStatus,
+      });
+      return {
+        events: [{
+          eventType: "task.lifecycle.reconciled",
+          entityType: "task",
+          entityId,
+          payload: {
+            from: step.currentStatus,
+            to: step.targetStatus,
+            reason,
+          },
+          destinations: ["projection"],
+        }],
+        projections: [{
+          projectionKey: `lifecycle/${entityId}`.toLowerCase(),
+          projectionKind: TASK_LIFECYCLE_PROJECTION_KIND,
+          rendererVersion: "1",
+        }],
+      };
+    });
+  }
+}
+
 /**
- * Read-only settle plan: the exact Attempt rows an apply would change. Zero
- * rows means the Task has no running Attempt — an apply is a no-op.
+ * Read-only settle plan: the exact Attempt and optional lifecycle rows an
+ * apply would change. Zero rows of both kinds means an apply is a no-op.
  */
-export function planTaskSettle(task: TaskSettleTask, reason: string): TaskSettlePlan {
+export function planTaskSettle(
+  task: TaskSettleTask,
+  reason: string,
+  options: TaskSettleOptions = {},
+): TaskSettlePlan {
   const attempt = requireSingleRunningAttempt(task);
-  if (!attempt) return { task, rows: [] };
+  const lifecycleRows = options.reconcileLifecycle
+    ? planLifecycleReconcile(task, reason, attempt !== null)
+    : [];
+  if (!attempt) return { task, rows: [], lifecycleRows };
   const leaseHeld = readLeaseHeld(attempt, task.milestoneId);
   const rationale = leaseHeld
     ? reason
@@ -118,6 +304,7 @@ export function planTaskSettle(task: TaskSettleTask, reason: string): TaskSettle
       rationale,
       leaseHeld,
     }],
+    lifecycleRows,
   };
 }
 
@@ -127,35 +314,63 @@ export function planTaskSettle(task: TaskSettleTask, reason: string): TaskSettle
  * milestone lease, so a plain attempt.settle is legal (V47 dispatch-scope
  * rule). A cross-process orphan whose lease is already gone belongs to the
  * replacement-lease interrupt path (#1748) — the next auto session settles it.
+ *
+ * Optional `reconcileLifecycle` then adopts ready/completed to match
+ * tasks.status after that interrupted Attempt, without reopening or deleting
+ * SUMMARY projections (#1749).
  */
 export function applyTaskSettle(input: {
   invocation: ExecutionInvocation;
   task: TaskSettleTask;
   reason: string;
-}): TaskSettlePlan & { settled: boolean; resultId?: string } {
-  const plan = planTaskSettle(input.task, input.reason);
-  if (plan.rows.length === 0) return { ...plan, settled: false };
-  const row = plan.rows[0];
-  if (!row.leaseHeld) {
-    throw new Error(
-      `gsd_task_settle: Attempt ${row.attemptId} was claimed under a milestone lease that is ` +
-      "no longer held, so this operator settle is not authorized. Start `/gsd auto` — the next " +
-      "session takes over the lease and interrupts the orphaned Attempt via the replacement-lease path.",
-    );
-  }
-  const settlement = settleTaskAttempt({
-    invocation: input.invocation,
-    attemptId: row.attemptId,
-    outcome: "interrupted",
-    failureClass: "operator-settle",
-    summary: input.reason,
-    output: {
-      operator: true,
-      milestoneId: input.task.milestoneId,
-      sliceId: input.task.sliceId,
-      taskId: input.task.taskId,
-      reason: input.reason,
-    },
+  reconcileLifecycle?: boolean;
+}): TaskSettlePlan & { settled: boolean; reconciled: boolean; resultId?: string } {
+  const plan = planTaskSettle(input.task, input.reason, {
+    reconcileLifecycle: input.reconcileLifecycle,
   });
-  return { ...plan, settled: true, resultId: settlement.resultId };
+  let settled = false;
+  let resultId: string | undefined;
+  if (plan.rows.length > 0) {
+    const row = plan.rows[0];
+    if (!row.leaseHeld) {
+      throw new Error(
+        `gsd_task_settle: Attempt ${row.attemptId} was claimed under a milestone lease that is ` +
+        "no longer held, so this operator settle is not authorized. Start `/gsd auto` — the next " +
+        "session takes over the lease and interrupts the orphaned Attempt via the replacement-lease path.",
+      );
+    }
+    const settlement = settleTaskAttempt({
+      invocation: input.invocation,
+      attemptId: row.attemptId,
+      outcome: "interrupted",
+      failureClass: "operator-settle",
+      summary: input.reason,
+      output: {
+        operator: true,
+        milestoneId: input.task.milestoneId,
+        sliceId: input.task.sliceId,
+        taskId: input.task.taskId,
+        reason: input.reason,
+      },
+    });
+    settled = true;
+    resultId = settlement.resultId;
+  }
+  let lifecycleRows = plan.lifecycleRows;
+  let reconciled = false;
+  if (input.reconcileLifecycle) {
+    const after = planTaskSettle(input.task, input.reason, { reconcileLifecycle: true });
+    lifecycleRows = after.lifecycleRows;
+    if (lifecycleRows.length > 0) {
+      applyLifecycleReconcile(input.invocation, input.task, input.reason, lifecycleRows);
+      reconciled = true;
+    }
+  }
+  return {
+    ...plan,
+    lifecycleRows,
+    settled,
+    reconciled,
+    ...(resultId ? { resultId } : {}),
+  };
 }

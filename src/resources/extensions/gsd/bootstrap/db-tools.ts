@@ -2588,6 +2588,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			"Run without apply first and read the planned rows before mutating.",
 			"Only settles while the Attempt's own milestone lease is still held; a cross-process orphan whose lease is gone belongs to the next auto session's replacement-lease interrupt.",
 			"A second apply is a no-op — the tool is idempotent.",
+			"reconcileLifecycle adopts ready/completed to match tasks.status after the interrupted Attempt without deleting SUMMARYs.",
 		],
 		parameters: Type.Object(
 			{
@@ -2601,6 +2602,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				apply: Type.Optional(
 					Type.Boolean({
 						description: "Actually settle. Omit or false for a dry run that changes nothing.",
+					}),
+				),
+				reconcileLifecycle: Type.Optional(
+					Type.Boolean({
+						description:
+							"After settling (or if already interrupted), adopt ready/completed to match tasks.status without deleting SUMMARYs.",
 					}),
 				),
 			},
