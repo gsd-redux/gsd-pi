@@ -748,27 +748,24 @@ test("loadManagedProjectionPaths returns empty without a history file when the n
   assert.deepEqual(JSON.parse(result.stdout), []);
 });
 
-// The no-native fallback must fail closed when a managed projection mutation
-// journal directory exists: journals can only be recovered through the native
-// identity lock, so reading the history file directly could silently drop
-// pending recovery state. This guards against accidental relaxation of that
-// safety policy back to a plain read.
-test("loadManagedProjectionPaths fails closed with a mutation journal when the native engine is unavailable", (t) => {
-  const base = mkdtempSync(join(tmpdir(), "gsd-history-journal-fail-closed-"));
+test("loadManagedProjectionPaths reads history when a stale mutation journal exists without native lock (#1755)", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-history-journal-fallback-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const migration = join(base, ".gsd", "migration");
-  mkdirSync(migration, { recursive: true });
+  mkdirSync(join(migration, "projection-mutations"), { recursive: true });
   writeFileSync(
     join(migration, "managed-outputs.json"),
     `${JSON.stringify(["phases/01-a/01-PLAN.md"])}\n`,
   );
-  // The presence of the journal directory alone must force fail-closed.
-  mkdirSync(join(migration, "projection-mutations"));
+  writeFileSync(join(migration, "projection-mutations", "dead.json"), "{}\n");
   const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
   const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
   const script = `
     const { loadManagedProjectionPaths } = await import(${JSON.stringify(moduleUrl)});
-    loadManagedProjectionPaths(process.argv[1]);
+    const paths = loadManagedProjectionPaths(process.argv[1]);
+    if (!paths.includes("phases/01-a/01-PLAN.md")) {
+      throw new Error("expected fallback history paths, got " + JSON.stringify(paths));
+    }
   `;
 
   const result = spawnSync(process.execPath, [
@@ -782,8 +779,7 @@ test("loadManagedProjectionPaths fails closed with a mutation journal when the n
     env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
   });
 
-  assert.notEqual(result.status, 0, "expected the mutation journal to force fail-closed");
-  assert.match(result.stderr, /native projection root identity locking is unavailable/);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
 // The native history read opens with AT_SYMLINK_NOFOLLOW, so the plain-fs

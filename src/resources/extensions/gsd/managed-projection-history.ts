@@ -1598,15 +1598,10 @@ function recoverManagedProjectionMutations(
 
 export function loadManagedProjectionPaths(targetRoot: string): string[] {
   if (!isProjectionRootIdentityLockAvailable()) {
-    // Mutation journals can only be recovered through the native identity
-    // lock; fail closed when recovery state exists, otherwise read the
-    // history file directly (same policy as loadUnboundProjectionEvidence).
-    if (existsSync(journalRoot(targetRoot))) {
-      throw new Error("native projection root identity locking is unavailable");
-    }
+    // Journals cannot be replayed without the native identity lock. Skip them
+    // and read history directly so a stale projection-mutations dir cannot
+    // wedge ROADMAP repair forever (#1755).
     const path = historyPath(targetRoot);
-    // Run the read under the write fence so it does not bypass maintenance/
-    // replacement intents, matching the native path and loadUnboundProjectionEvidence.
     return withProjectionMutationSync(path, () => readFallbackManagedProjectionPaths(path));
   }
   const path = historyPath(targetRoot);
@@ -1618,12 +1613,6 @@ export function loadManagedProjectionPaths(targetRoot: string): string[] {
 
 export function loadUnboundProjectionEvidence(targetRoot: string): UnboundProjectionEvidence[] {
   if (!isProjectionRootIdentityLockAvailable()) {
-    const projectionRoot = gsdProjectionRoot(targetRoot);
-    const hasUnsupportedRecoveryState = existsSync(join(projectionRoot, NATIVE_EVIDENCE_LOGICAL_ROOT))
-      || existsSync(journalRoot(targetRoot));
-    if (hasUnsupportedRecoveryState) {
-      throw new Error("native projection root identity locking is unavailable");
-    }
     return withProjectionMutationSync(
       historyPath(targetRoot),
       () => readFallbackUnboundProjectionEvidence(targetRoot),
