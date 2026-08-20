@@ -120,10 +120,7 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
   // 1. Task plan verify field (commands are untrusted — sanitize)
   if (taskPlanVerify) {
     const commands: string[] = [];
-    const candidates = taskPlanVerify
-      .split(/\r?\n/)
-      .map(c => c.trim())
-      .filter(Boolean);
+    const candidates = splitUnquotedLines(taskPlanVerify);
     for (const candidate of candidates) {
       const normalized = candidate.replace(INTERPRETER_PREFIX_RE, "").trim();
       const validation = validateVerificationCommand(normalized);
@@ -398,6 +395,48 @@ function hasUnsafeShellSyntax(cmd: string): boolean {
  * Split a candidate string on unquoted `;` into individual statements.
  * Used to re-classify prose-vs-command for candidates rejected as unsafe.
  */
+/** Split verify text on newlines that are not inside quotes (#1798). */
+export function splitUnquotedLines(text: string): string[] {
+  const lines: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\" && !inSingle) {
+      current += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+    if (ch === "\"" && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+    if (ch === "\n" && !inSingle && !inDouble) {
+      if (current.endsWith("\r")) current = current.slice(0, -1);
+      lines.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  lines.push(current);
+  return lines.map(s => s.trim()).filter(Boolean);
+}
+
 function splitUnquotedStatements(cmd: string): string[] {
   const statements: string[] = [];
   let current = "";

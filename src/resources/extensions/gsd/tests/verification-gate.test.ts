@@ -22,7 +22,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { discoverCommands, runVerificationGate, runVerificationGateForTargets, formatFailureContext, captureRuntimeErrors, runDependencyAudit, isLikelyCommand, validateVerificationCommand } from "../verification-gate.ts";
+import { discoverCommands, runVerificationGate, runVerificationGateForTargets, formatFailureContext, captureRuntimeErrors, runDependencyAudit, isLikelyCommand, validateVerificationCommand, splitUnquotedLines } from "../verification-gate.ts";
 import type { CaptureRuntimeErrorsOptions, DependencyAuditOptions } from "../verification-gate.ts";
 import { validatePreferences } from "../preferences.ts";
 
@@ -1153,6 +1153,27 @@ test("discoverCommands: #1671 reporter line is not executed; #1724 rg line is", 
   const rg = discoverCommands({ cwd: rgDir, taskPlanVerify: ISSUE_1724_RG });
   assert.deepEqual(rg.commands, [ISSUE_1724_RG]);
   assert.equal(rg.source, "task-plan");
+});
+
+const ISSUE_1798_VERIFY = `grep -q '"version": "1.0.0"' manifest.json && node --input-type=module --eval "import fs from 'node:fs'
+const m = JSON.parse(fs.readFileSync('manifest.json','utf8'))
+if (m.priority !== 100) throw new Error('priority')
+console.log('OK')" && npm run typecheck`;
+
+test("splitUnquotedLines keeps newlines inside quotes (#1798)", () => {
+  assert.deepEqual(splitUnquotedLines("npm test\nnpm run lint"), ["npm test", "npm run lint"]);
+  const lines = splitUnquotedLines(ISSUE_1798_VERIFY);
+  assert.equal(lines.length, 1, "quoted --eval body must stay one command");
+  assert.match(lines[0] ?? "", /npm run typecheck$/);
+});
+
+test("discoverCommands: quoted multi-line --eval stays one command (#1798)", () => {
+  const dir = makeTempDir("gsd-verify-1798");
+  const found = discoverCommands({ cwd: dir, taskPlanVerify: ISSUE_1798_VERIFY });
+  assert.equal(found.source, "task-plan");
+  assert.equal(found.commands.length, 1);
+  assert.match(found.commands[0] ?? "", /node --input-type=module --eval/);
+  assert.match(found.commands[0] ?? "", /npm run typecheck$/);
 });
 
 // ─── Additional Preference Validation Tests (T02) ──────────────────────────
