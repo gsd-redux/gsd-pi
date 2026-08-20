@@ -179,6 +179,8 @@ function sourcePaths(cwd: string, options: VerificationSourceSnapshotOptions): s
   const paths = gitOutput(cwd, [
     "ls-files",
     "--cached",
+    "--others",
+    "--exclude-standard",
     "-z",
     ...SOURCE_PATHSPEC,
     ...gsdBookkeepingExclusions(cwd),

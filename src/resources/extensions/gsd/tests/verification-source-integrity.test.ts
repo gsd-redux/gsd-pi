@@ -69,7 +69,7 @@ test("parent-workspace verification defaults to the orchestration root", () => {
   assert.equal(resolved.explicitTargetsRequested, false);
 });
 
-test("source revision changes for staged and unstaged content; untracked scratch does not (#1819)", () => {
+test("source revision changes for staged, unstaged, and untracked content", () => {
   const cwd = createRepository("changes");
   const base = capture([{ id: "root", cwd }]);
 
@@ -84,19 +84,21 @@ test("source revision changes for staged and unstaged content; untracked scratch
 
   writeFileSync(join(cwd, "untracked.txt"), "untracked\n");
   const untracked = capture([{ id: "root", cwd }]);
-  assert.equal(untracked.aggregateRevision, unstaged.aggregateRevision);
+  assert.notEqual(untracked.aggregateRevision, unstaged.aggregateRevision);
 });
 
 test("source revision is stable when the verified working tree is committed unchanged", () => {
   const cwd = createRepository("commit-stability");
   writeFileSync(join(cwd, "tracked.txt"), "verified\n");
   writeFileSync(join(cwd, "new-source.txt"), "new source\n");
-  git(cwd, ["add", "tracked.txt", "new-source.txt"]);
 
   const beforeCommit = capture([{ id: "root", cwd }]);
+  git(cwd, ["add", "tracked.txt", "new-source.txt"]);
+  const staged = capture([{ id: "root", cwd }]);
   git(cwd, ["commit", "-qm", "verified source"]);
   const afterCommit = capture([{ id: "root", cwd }]);
 
+  assert.equal(staged.aggregateRevision, beforeCommit.aggregateRevision);
   assert.equal(afterCommit.aggregateRevision, beforeCommit.aggregateRevision);
 });
 
@@ -118,8 +120,6 @@ test("candidate snapshots exclude only the generated dossier self-reference", ()
   mkdirSync(dossierDir, { recursive: true });
   const dossierPath = join(dossierDir, "m003-s07-cutover-dossier.json");
   writeFileSync(dossierPath, "first dossier\n");
-  git(cwd, ["add", "docs/dev/m003-s07-cutover-dossier.json"]);
-  git(cwd, ["commit", "-qm", "dossier"]);
   const targets = [{ id: "root", cwd }];
   const options = { excludePaths: ["docs/dev/m003-s07-cutover-dossier.json"] };
   const firstCandidate = capture(targets, options);
@@ -256,8 +256,8 @@ test("a .gsd symlink resolving to the repository parent still produces a source 
   assert.notEqual(after.aggregateRevision, before.aggregateRevision);
 });
 
-test("source snapshot ignores receipts/ and untracked scratch (#1819)", () => {
-  const cwd = createRepository("receipts-scratch");
+test("source snapshot ignores tracked receipts/** bookkeeping (#1819)", () => {
+  const cwd = createRepository("receipts-exclude");
   writeFileSync(join(cwd, "src.ts"), "export {}\n");
   git(cwd, ["add", "src.ts"]);
   git(cwd, ["commit", "-m", "src"]);
@@ -267,12 +267,11 @@ test("source snapshot ignores receipts/ and untracked scratch (#1819)", () => {
   writeFileSync(join(cwd, "receipts", "receipts.jsonl"), "{\"call\":1}\n");
   git(cwd, ["add", "receipts/receipts.jsonl"]);
   git(cwd, ["commit", "-m", "receipts"]);
-  writeFileSync(join(cwd, "scratch-notes.ts"), "throw new Error('scratch')\n");
 
   const after = capture([{ id: "root", cwd }]);
   assert.equal(
     after.aggregateRevision,
     before.aggregateRevision,
-    "receipts appends and untracked scratch must not move the source hash",
+    "tracked receipts must not move the source hash",
   );
 });
