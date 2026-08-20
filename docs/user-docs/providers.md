@@ -138,6 +138,10 @@ You can also add this to `~/.claude/settings.json` under `mcpServers` to make GS
 
 The MCP server provides GSD's full workflow tool surface — milestone planning, task completion, slice management, roadmap reassessment, journal queries, and more. Session management tools (`gsd_execute`, `gsd_status`, `gsd_result`, `gsd_cancel`) let Claude Code start and monitor GSD auto-mode sessions. See [Commands → MCP Server Mode](./commands.md#mcp-server-mode) for the full tool list.
 
+Task payloads sent through `gsd_plan_slice.tasks[]`, `gsd_plan_task`, `gsd_replan_slice.updatedTasks[]`, and `gsd_replan_task` must include `requiredWorkflowTools`. Use `[]` for ordinary implementation work. GSD rejects the planning mutation before persistence if any named workflow tool is unavailable to either normal Task execution variant; lifecycle mutations such as `gsd_requirement_update` belong to completion workflows and cannot be assigned to execution Tasks.
+
+`gsd_reassess_roadmap` accepts optional `metadataCorrections` for DB-backed correction of milestone acceptance fields or completed-slice evidence fields. This path cannot change statuses, Tasks, dependencies, or completed-slice structure. Milestone corrections invalidate stale milestone-validation evidence; completed-slice-only corrections preserve it. See the [database map](../db-map.md) for the accepted field groups and persistence behavior.
+
 Claude Code units that require workflow tools require a connected `gsd-workflow` MCP surface before the first model turn. GSD preflights the same inline `mcpServers.gsd-workflow` config that it passes to the Claude SDK, so generated or per-session server entries are validated even before Claude persists or discovers them by name. If the server is absent, pending, failed, disabled, missing required tools, or its preflight probe fails, GSD aborts and retries the unit rather than letting Claude Code improvise without the workflow tools; timeout messages include the last probe error when one is available.
 
 **Verify the connection:**

@@ -176,7 +176,7 @@ plan-slice  (per slice, sequential)
 | `research-milestone.md` | Strategic research before planning. Narrates findings. | `gsd_summary_save(RESEARCH)` |
 | `plan-milestone.md` | Decompose milestone into slices. Plans first slice inline if single-slice. | `gsd_plan_milestone`, `gsd_plan_slice`, `gsd_plan_task`, `gsd_decision_save` |
 | `parallel-research-slices.md` | Spawn one scout subagent per slice simultaneously. Retries once on failure. | `subagent` × N |
-| `plan-slice.md` | Decompose single slice into tasks. Progressive planning: sketches for S02+. | `memory_query`, `gsd_plan_slice`, `gsd_plan_task` |
+| `plan-slice.md` | Decompose one slice into tasks. Every persisted Task declares `requiredWorkflowTools` (`[]` for ordinary work), and planning rejects tools unavailable to both execution variants. Progressive planning uses sketches for S02+. | `memory_query`, `gsd_plan_slice`, `gsd_plan_task` |
 | `refine-slice.md` | Expand sketched slice plan into full task breakdown. | `gsd_plan_slice` |
 | `guided-discuss-slice.md` | Interview-driven slice scoping. | `ask_user_questions`, `gsd_summary_save(CONTEXT)` |
 | `guided-research-slice.md` | Scout a slice. | `memory_query`, `gsd_summary_save(RESEARCH)` |
@@ -238,14 +238,15 @@ complete-milestone
 | Prompt | Purpose | Key Tools Called |
 |--------|---------|-----------------|
 | `complete-slice.md` | Close slice after tasks pass. Compress summary; may reopen/replan pending task rework before closeout. | `gsd_slice_complete`, `gsd_task_reopen`, `gsd_replan_slice`, `gsd_replan_task`, `gsd_rework_brief_save`, `gsd_requirement_update` |
-| `reassess-roadmap.md` | Review roadmap post-slice. Validates success-criterion coverage. | `gsd_reassess_roadmap`, `gsd_requirement_update` |
+| `reassess-roadmap.md` | Review roadmap post-slice and validate success-criterion coverage. Uses `metadataCorrections` for DB-backed acceptance or completed-slice evidence fixes without changing completed structure; requirement status terminalization stays in completion units. | `gsd_reassess_roadmap` |
 | `complete-milestone.md` | Close milestone. Persist to DB. | `gsd_complete_milestone`, `gsd_requirement_update`, `capture_thought` |
 
 ### 5g. Maintenance & Repair
 
 | Prompt | Purpose | Key Tools Called |
 |--------|---------|-----------------|
-| `replan-slice.md` | Replan after blocker discovered mid-slice. Preserves completed tasks. | `gsd_replan_slice` |
+| `replan-slice.md` | Replan after a blocker discovered mid-slice. Preserves completed Tasks; every updated Task declares execution-compatible `requiredWorkflowTools`. | `gsd_replan_slice` |
+| `replan-task.md` | Replace one pending Task plan for a durable recovery action. Declares execution-compatible `requiredWorkflowTools` before a replacement Attempt can be claimed. | `gsd_replan_task` |
 | `rethink.md` | Reorder, park, unpark, skip, or discard milestones that have no adopted canonical lifecycle history. Adopted milestones must be parked instead. | `gsd_skip_slice`, writes `QUEUE-ORDER.json` as the durable reorder contract; state derivation mirrors it into DB sequence |
 | `worktree-merge.md` | Merge a worktree branch into a target branch from the main tree. | git merge (main tree CWD) |
 | `reassess-roadmap.md` | *(see Completion Flow above)* | — |
@@ -355,6 +356,9 @@ execute-task  ──[interrupted]──► guided-resume-task
 
 execute-task  ──[blocker]──────► replan-slice
                                     rewrites incomplete tasks only
+
+execute-task  ──[replan recovery action]──► replan-task
+                                               rewrites one pending task before replacement execution
 
 plan-milestone ──[any]─────────► rethink
                                     reorders / parks / discards milestones
