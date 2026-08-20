@@ -796,6 +796,11 @@ test("pruneRemovedBundledExtensions removes stale subdirectory extensions not in
       "manifest should contain installedExtensionDirs array",
     );
 
+    // Treat mcporter as a previously bundled dir so prune is manifest-based (#1853).
+    if (!manifest.installedExtensionDirs.includes("mcporter")) {
+      manifest.installedExtensionDirs = [...manifest.installedExtensionDirs, "mcporter"];
+    }
+
     // Bump the manifest version to force a re-sync (simulates upgrading GSD).
     manifest.gsdVersion = "0.0.0-force-resync";
     manifest.contentHash = "0000000000000000";
@@ -808,6 +813,37 @@ test("pruneRemovedBundledExtensions removes stale subdirectory extensions not in
       existsSync(staleExtDir),
       false,
       "stale subdirectory extension (mcporter/) should be pruned after upgrade",
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("pruneRemovedBundledExtensions preserves user-created extension directories (#1853)", async () => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-user-ext-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  try {
+    initResources(fakeAgentDir, join(tmp, "skills"));
+
+    const userExtDir = join(fakeAgentDir, "extensions", "my-local-ext");
+    mkdirSync(userExtDir, { recursive: true });
+    writeFileSync(join(userExtDir, "index.js"), "export default function (pi) {}\n");
+
+    const manifestPath = join(fakeAgentDir, "managed-resources.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    assert.ok(!manifest.installedExtensionDirs?.includes("my-local-ext"));
+    manifest.gsdVersion = "0.0.0-force-resync";
+    manifest.contentHash = "0000000000000000";
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    initResources(fakeAgentDir, join(tmp, "skills"));
+
+    assert.equal(existsSync(userExtDir), true, "user-created extension must survive boot prune");
+    assert.equal(
+      readFileSync(join(userExtDir, "index.js"), "utf-8"),
+      "export default function (pi) {}\n",
     );
   } finally {
     rmSync(tmp, { recursive: true, force: true });

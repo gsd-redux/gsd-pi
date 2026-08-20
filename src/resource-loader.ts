@@ -681,21 +681,12 @@ function pruneRemovedBundledExtensions(
   }
 
   if (manifest?.installedExtensionDirs) {
-    // Manifest-based: remove previously-installed subdirectory extensions that are no longer bundled
+    // Manifest-based: remove previously-installed subdirectory extensions that are no longer bundled.
+    // Do not sweep unknown directories — those are user-created (#1853).
     for (const prevDir of manifest.installedExtensionDirs) {
       removeDirIfStale(prevDir)
     }
   }
-
-  // Sweep-based: also remove any installed extension subdirectory not in the current bundle,
-  // even if it was never tracked in the manifest (e.g. installed by a pre-manifest version).
-  try {
-    if (existsSync(extensionsDir)) {
-      for (const e of readdirSync(extensionsDir, { withFileTypes: true })) {
-        if (e.isDirectory()) removeDirIfStale(e.name)
-      }
-    }
-  } catch { /* non-fatal */ }
 
   // Always remove known stale files regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
