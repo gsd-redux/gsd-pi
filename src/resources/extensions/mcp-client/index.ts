@@ -588,11 +588,18 @@ export default function (pi: ExtensionAPI) {
 			),
 		}),
 
-		async execute(_id, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			try {
 				const client = await getOrConnect(params.server, signal, ctx);
 				const result = await client.callTool(
-					{ name: params.tool, arguments: params.args ?? {} },
+					{
+						name: params.tool,
+						arguments: params.args ?? {},
+						_meta: {
+							"claudecode/toolUseId": toolCallId,
+							"io.opengsd/idempotency-key": `pi:${toolCallId}`,
+						},
+					},
 					undefined,
 					{ signal, timeout: 60000 },
 				);
