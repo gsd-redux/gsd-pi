@@ -557,6 +557,19 @@ function isInsideGsdWorktree(p: string): boolean {
   return name.length > 0;
 }
 
+/** Prefix used by executeMigrationWrite temp dirs (`mkdtempSync(join(targetRoot, prefix))`). */
+export const MIGRATION_STAGING_DIR_PREFIX = ".gsd-migrate-stage-";
+
+/**
+ * Detect a path inside a `.gsd-migrate-stage-*` temp dir.
+ *
+ * Staging lives under the target repo, so the git-root probe would otherwise
+ * resolve to the live repo `.gsd` and write staged projection there (#1866).
+ */
+function isInsideMigrationStaging(p: string): boolean {
+  return p.replaceAll("\\", "/").split("/").some((seg) => seg.startsWith(MIGRATION_STAGING_DIR_PREFIX));
+}
+
 function probeGsdRoot(rawBasePath: string): string {
   const contract = resolveGsdPathContract(rawBasePath);
   if (contract.isWorktree) return contract.projectGsd;
@@ -572,6 +585,10 @@ function probeGsdRoot(rawBasePath: string): string {
   //     state in the wrong location.
   if (isInsideGsdWorktree(rawBasePath)) return local;
 
+  // 1c. Migration staging (#1866) — temp dirs live inside the target repo, so
+  //     git-root / walk-up would return the live `.gsd`. Keep staging local.
+  if (isInsideMigrationStaging(rawBasePath)) return local;
+
   // Resolve symlinks so path comparisons work correctly across platforms
   // (e.g. macOS /var → /private/var). Use rawBasePath as fallback if not resolvable.
   let basePath: string;
@@ -579,6 +596,7 @@ function probeGsdRoot(rawBasePath: string): string {
 
   // Also check the resolved path for the worktree pattern (macOS /tmp → /private/tmp)
   if (basePath !== rawBasePath && isInsideGsdWorktree(basePath)) return local;
+  if (basePath !== rawBasePath && isInsideMigrationStaging(basePath)) return local;
 
   // 2. Git root anchor — used as both probe target and walk-up boundary
   //    Only walk if we're inside a git project — prevents escaping into

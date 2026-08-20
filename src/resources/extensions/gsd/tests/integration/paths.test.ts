@@ -277,4 +277,18 @@ describe('paths', () => {
       cleanup(root);
     }
   });
+
+  test('Case 12: migration staging under a git repo does not resolve to the live .gsd (#1866)', (t) => {
+    const root = tmp();
+    t.after(() => cleanup(root));
+    initGit(root);
+    const liveGsd = join(root, ".gsd");
+    mkdirSync(liveGsd);
+    writeFileSync(join(liveGsd, "PROJECT.md"), "# live\n");
+    const stagingRoot = mkdtempSync(join(root, ".gsd-migrate-stage-"));
+    _clearGsdRootCache();
+    const result = gsdRoot(stagingRoot);
+    assert.deepStrictEqual(result, join(stagingRoot, ".gsd"), "staging probe returns stagingRoot/.gsd");
+    assert.notDeepStrictEqual(result, liveGsd, "staging probe must not return the live git-root .gsd");
+  });
 });

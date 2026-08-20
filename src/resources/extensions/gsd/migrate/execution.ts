@@ -19,7 +19,7 @@ import {
 } from "../legacy-import-application-result.js";
 import { executeLegacyImportRecoveryAction } from "../legacy-import-recovery-action.js";
 import { captureCurrentLegacyImportBaseSnapshot } from "../legacy-import-preview-base.js";
-import { gsdRoot } from "../paths.js";
+import { gsdRoot, MIGRATION_STAGING_DIR_PREFIX } from "../paths.js";
 import { loadManagedProjectionPaths } from "../managed-projection-history.js";
 import { deriveState, invalidateStateCache } from "../state.js";
 import {
@@ -566,7 +566,6 @@ export async function assertMigrationDbReadiness(
   };
 }
 
-const MIGRATION_STAGING_PREFIX = ".gsd-migrate-stage-";
 /**
  * Staging trees younger than this may belong to a concurrent in-flight
  * migration; only older trees are treated as SIGKILL leak remnants.
@@ -575,7 +574,7 @@ const MIGRATION_STAGING_STALE_MS = 60 * 60 * 1000;
 
 export function sweepStaleMigrationStaging(targetRoot: string, now: number = Date.now()): void {
   for (const entry of readdirSync(targetRoot, { withFileTypes: true })) {
-    if (!entry.name.startsWith(MIGRATION_STAGING_PREFIX)) continue;
+    if (!entry.name.startsWith(MIGRATION_STAGING_DIR_PREFIX)) continue;
     if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
     const path = join(targetRoot, entry.name);
     if (now - lstatSync(path).mtimeMs < MIGRATION_STAGING_STALE_MS) continue;
@@ -594,11 +593,11 @@ export async function executeMigrationWrite(
   const projectionRootIdentity = proveMigrationProjectionRoot(targetRoot);
   sweepStaleMigrationStaging(targetRoot);
   pruneMigrationPublications(targetRoot, projectionRootIdentity);
-  const stagingRoot = mkdtempSync(join(targetRoot, ".gsd-migrate-stage-"));
+  const stagingRoot = mkdtempSync(join(targetRoot, MIGRATION_STAGING_DIR_PREFIX));
 
   try {
     const staged = await writeGSDDirectory(project, stagingRoot);
-    const stagedGsd = gsdRoot(stagingRoot);
+    const stagedGsd = join(stagingRoot, ".gsd");
     const requestHash = migrationPublicationRequestHash(sourcePath, stagedGsd);
     const retained = findMigrationPublication(sourcePath, targetRoot, requestHash, projectionRootIdentity);
     if (retained) {
