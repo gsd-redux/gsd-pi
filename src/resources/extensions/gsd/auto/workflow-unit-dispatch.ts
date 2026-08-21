@@ -18,6 +18,7 @@ export type DispatchContract = "legacy-direct" | "uok-scheduler";
 export type UnitPhaseResult = PhaseResult<{
   unitStartedAt?: number;
   requestDispatchedAt?: number;
+  retryAfterMs?: number;
 }>;
 
 export interface UnitDispatchScheduler {

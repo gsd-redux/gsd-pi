@@ -29,6 +29,7 @@ import {
   _zeroToolPseudoToolCallSnippetForTest,
 } from "../auto/unit-phase.ts";
 import { autoSession } from "../auto-runtime-state.ts";
+import { _resetPendingResolve, _setCurrentResolve } from "../auto/resolve.ts";
 import { getNextFallbackModel } from "../preferences.ts";
 import { clearGuidedUnitContext, getGuidedUnitContext, setGuidedUnitContext } from "../guided-unit-context.ts";
 import { initNotificationStore, readNotifications, _resetNotificationStore } from "../notification-store.ts";
@@ -666,6 +667,53 @@ test("rate-limit agent_end walks past unavailable fallback models before pausing
     process.chdir(originalCwd);
     clearTemporaryModelBlocksForTest();
     autoSession.reset();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("usage-limit agent_end resolves a credential-cooldown cancellation without pausing auto-mode", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-usage-limit-cooldown-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+
+  try {
+    process.chdir(base);
+    autoSession.reset();
+    autoSession.active = true;
+    autoSession.basePath = base;
+    autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+    const resultPromise = new Promise<any>((resolve) => _setCurrentResolve(resolve));
+
+    await handleAgentEnd({
+      setModel: async () => false,
+    } as any, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Codex usage_limit_reached: The usage limit has been reached",
+        retryAfterMs: 30_000,
+      }],
+    } as any, {
+      model: { provider: "openai-codex", id: "gpt-5.5" },
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {} },
+    } as any);
+
+    const result = await resultPromise;
+    assert.equal(autoSession.active, true, "provider recovery must leave loop-owned cooldown active");
+    assert.deepEqual(result, {
+      status: "cancelled",
+      errorContext: {
+        message: "Provider error: Codex usage_limit_reached: The usage limit has been reached",
+        category: "provider",
+        isTransient: true,
+        retryAfterMs: 30_000,
+      },
+    });
+  } finally {
+    _resetPendingResolve();
+    autoSession.reset();
+    process.chdir(originalCwd);
     rmSync(base, { recursive: true, force: true });
   }
 });

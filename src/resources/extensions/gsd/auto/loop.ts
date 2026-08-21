@@ -670,6 +670,41 @@ export async function autoLoop(
     const finishIncompleteIteration = (details: Record<string, unknown>): void => {
       emitIterationEnd(details);
     };
+    const waitForCredentialCooldown = async (
+      retryAfterMs: number | undefined,
+      errorMessage = "credential-cooldown",
+    ): Promise<"retry" | "stop"> => {
+      await closeRun("canceled", "credential-cooldown");
+      consecutiveCooldowns++;
+      const cooldownDecision = decideCooldownRecovery({
+        consecutiveCooldowns,
+        maxCooldownRetries: MAX_COOLDOWN_RETRIES,
+        retryAfterMs,
+        fallbackWaitMs: COOLDOWN_FALLBACK_WAIT_MS,
+      });
+      debugLog("autoLoop", {
+        phase: "cooldown-wait",
+        iteration,
+        consecutiveCooldowns,
+        retryAfterMs,
+      });
+      if (cooldownDecision.action === "stop") {
+        const crashNotePath = persistCrashNote(s, "cooldown-exhausted", errorMessage, observedUnitType, observedUnitId);
+        ctx.ui.notify(
+          `${cooldownDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
+          "error",
+        );
+        finishIncompleteIteration({ status: "stopped", reason: "credential-cooldown-exhausted" });
+        finishTurn("stopped", "timeout", errorMessage, "credential-cooldown-exhausted");
+        await deferStopAuto(ctx, pi, cooldownDecision.stopMessage);
+        return "stop";
+      }
+      ctx.ui.notify(cooldownDecision.notifyMessage, "warning");
+      await new Promise(resolve => setTimeout(resolve, cooldownDecision.waitMs));
+      finishIncompleteIteration({ status: "retry", reason: "cooldown-retry" });
+      finishTurn("retry", "timeout", errorMessage, "credential-cooldown");
+      return "retry";
+    };
 
     // ── Shared adjudication boundary (ADR-047) ──────────────────────────────
     // The try opens BEFORE the preflight exits (max-iteration, memory pressure,
@@ -1016,6 +1051,11 @@ export async function autoLoop(
           break;
         }
         if (unitPhaseResult.action === "retry") {
+          if (unitPhaseResult.reason === "credential-cooldown") {
+            const cooldown = await waitForCredentialCooldown(unitPhaseResult.data?.retryAfterMs);
+            if (cooldown === "stop") break;
+            continue;
+          }
           customDispatchSettled = settleDispatchIfNeeded(customDispatchSettled, () =>
             settleDispatchFailed(customDispatchId, unitPhaseResult.reason, {
               markFailed: markDispatchFailed,
@@ -1911,6 +1951,11 @@ export async function autoLoop(
         break;
       }
       if (unitPhaseResult.action === "retry") {
+        if (unitPhaseResult.reason === "credential-cooldown") {
+          const cooldown = await waitForCredentialCooldown(unitPhaseResult.data?.retryAfterMs);
+          if (cooldown === "stop") break;
+          continue;
+        }
         const retryStopReason = await closeRun("retry", unitPhaseResult.reason);
         if (retryStopReason) {
           finishRetryCloseoutStop(retryStopReason);
@@ -2129,40 +2174,9 @@ export async function autoLoop(
       // consecutive failure — but cap retries so we don't spin for hours
       // on persistent quota exhaustion.
       if (isTransientCooldownError(loopErr)) {
-        consecutiveCooldowns++;
         const retryAfterMs = getCooldownRetryAfterMs(loopErr);
-        const cooldownDecision = decideCooldownRecovery({
-          consecutiveCooldowns,
-          maxCooldownRetries: MAX_COOLDOWN_RETRIES,
-          retryAfterMs,
-          fallbackWaitMs: COOLDOWN_FALLBACK_WAIT_MS,
-        });
-        debugLog("autoLoop", {
-          phase: "cooldown-wait",
-          iteration,
-          consecutiveCooldowns,
-          retryAfterMs,
-          error: msg,
-        });
-
-        if (cooldownDecision.action === "stop") {
-          const crashNotePath = persistCrashNote(s, "cooldown-exhausted", msg, observedUnitType, observedUnitId);
-          ctx.ui.notify(
-            `${cooldownDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
-            "error",
-          );
-          finishTurn("stopped", "timeout", msg, "credential-cooldown-exhausted");
-          await deferStopAuto(ctx, pi, cooldownDecision.stopMessage);
-          break;
-        }
-
-        ctx.ui.notify(cooldownDecision.notifyMessage, "warning");
-        await new Promise(resolve => setTimeout(resolve, cooldownDecision.waitMs));
-        finishTurn("retry", "timeout", msg, "credential-cooldown");
-        finishIncompleteIteration({
-          status: "retry",
-          reason: "cooldown-retry",
-        });
+        const cooldown = await waitForCredentialCooldown(retryAfterMs, msg);
+        if (cooldown === "stop") break;
         continue; // Retry iteration without incrementing consecutiveErrors
       }
 

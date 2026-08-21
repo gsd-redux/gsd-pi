@@ -6159,7 +6159,7 @@ test("runUnitPhase remembers aborted milestone closeout for same-unit resume", a
   assert.equal(runtime?.lastProgressKind, "unit-aborted-pause");
 });
 
-test("runUnitPhase schedules default auto-resume for transient provider cancellations", async (t) => {
+test("runUnitPhase routes transient usage-limit cancellations through credential cooldown", async (t) => {
   _resetPendingResolve();
 
   const basePath = makeLoopTestBase("gsd-provider-resume-");
@@ -6198,9 +6198,10 @@ test("runUnitPhase schedules default auto-resume for transient provider cancella
       ...makeMockPi(),
       sendMessage: () => {
         queueMicrotask(() => resolveAgentEndCancelled({
-          message: "provider temporarily overloaded",
+          message: "Provider error: Codex usage_limit_reached: The usage limit has been reached",
           category: "provider",
           isTransient: true,
+          retryAfterMs: 30_000,
         }));
       },
     } as any;
@@ -6240,17 +6241,14 @@ test("runUnitPhase schedules default auto-resume for transient provider cancella
       { consecutiveFinalizeTimeouts: 0 },
     );
 
-    assert.equal(result.action, "break");
-    assert.equal((result as any).reason, "provider-pause");
-    assert.equal(deps.callLog.includes("pauseAuto"), true);
-    assert.ok(
-      timers.some((timer) => timer.delay === 30_000),
-      "transient provider pauses must schedule the default auto-resume delay",
-    );
-    assert.ok(
-      notifications.some((entry) => entry.message.includes("Auto-resuming in 30s")),
-      "default transient provider pause should announce the delayed resume",
-    );
+    assert.deepEqual(result, {
+      action: "retry",
+      reason: "credential-cooldown",
+      data: { retryAfterMs: 30_000 },
+    });
+    assert.equal(deps.callLog.includes("pauseAuto"), false);
+    assert.equal(timers.length, 0, "the auto loop owns the bounded cooldown wait");
+    assert.equal(notifications.length, 0);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
