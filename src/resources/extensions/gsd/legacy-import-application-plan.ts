@@ -194,6 +194,13 @@ interface PreparedTarget {
   identityFields: Set<string>;
 }
 
+interface LifecycleShadowClaim {
+  action: "create" | "update";
+  prepared: PreparedTarget;
+  values: Record<string, SqlValue>;
+  changeId: string;
+}
+
 type MutableLifecycleInstruction = {
   -readonly [Key in keyof LegacyImportApplicationLifecycleInstruction]:
     LegacyImportApplicationLifecycleInstruction[Key] extends readonly string[]
@@ -511,6 +518,25 @@ function addRowClaim(
   existing.changeIds.push(changeId);
 }
 
+function applyLifecycleShadowClaim(
+  rows: Map<string, MutableRowClaim>,
+  claim: LifecycleShadowClaim,
+): void {
+  const mapKey = `${claim.prepared.adapter.rowSet}\0${claim.prepared.key}`;
+  const existing = rows.get(mapKey);
+  if (existing === undefined) {
+    if (claim.action === "update") {
+      addRowClaim(rows, claim.prepared, "update", claim.values, claim.changeId);
+    }
+    return;
+  }
+  if (existing.action === "delete") {
+    fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import mixes lifecycle status with row deletion");
+  }
+  Object.assign(existing.values, claim.values);
+  existing.changeIds.push(claim.changeId);
+}
+
 function validateEvidence(preview: LegacyImportPreviewEnvelope): void {
   const sources = new Map(preview.sources.map((source) => [source.source_id, source]));
   for (const diagnosis of preview.diagnoses) {
@@ -793,6 +819,7 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
 
   const rows = new Map<string, MutableRowClaim>();
   const lifecycleClaims = new Map<string, MutableLifecycleInstruction>();
+  const lifecycleShadowClaims: LifecycleShadowClaim[] = [];
   const preserves: LegacyImportApplicationPreserveInstruction[] = [];
   const preserveChangeIds: string[] = [];
   for (const change of preview.changes) {
@@ -836,17 +863,15 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
       }
       const identity = lifecycleIdentity(itemKind, change.target.key);
       const lifecycleStatus = normalizedLifecycleStatus(change.normalized);
-      if (change.action === "update") {
-        const status = isRecord(change.normalized) ? change.normalized["status"] : change.normalized;
-        const prepared = preparedTarget({ kind: itemKind, key: change.target.key });
-        addRowClaim(
-          rows,
-          prepared,
-          "update",
-          rowPatch(prepared, { kind: itemKind, key: change.target.key, field: "status" }, status),
-          change.change_id,
-        );
-      }
+      const status = isRecord(change.normalized) ? change.normalized["status"] : change.normalized;
+      const shadowTarget = { kind: itemKind, key: change.target.key, field: "status" };
+      const shadowPrepared = preparedTarget(shadowTarget);
+      lifecycleShadowClaims.push({
+        action: change.action,
+        prepared: shadowPrepared,
+        values: rowPatch(shadowPrepared, shadowTarget, status),
+        changeId: change.change_id,
+      });
       const auxiliary = lifecycleAuxiliaryPatch(itemKind, change.target, change.normalized);
       if (auxiliary !== undefined) {
         addRowClaim(rows, auxiliary.prepared, "update", auxiliary.patch, change.change_id);
@@ -883,6 +908,8 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
     }
     addRowClaim(rows, prepared, change.action, patch, change.change_id);
   }
+
+  for (const claim of lifecycleShadowClaims) applyLifecycleShadowClaim(rows, claim);
 
   // Companion-authority pass: an import that creates a hierarchy row must also
   // mint the canonical companion rows that the workflow engine hard-requires

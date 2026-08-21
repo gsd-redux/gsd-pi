@@ -230,7 +230,7 @@ describe("legacy import Application plan", () => {
       id: "T01",
       milestone_id: "M001",
       slice_id: "S01",
-      status: "planned",
+      status: "complete",
       full_summary_md: "Verification passed.",
       title: "Persist notes",
     });

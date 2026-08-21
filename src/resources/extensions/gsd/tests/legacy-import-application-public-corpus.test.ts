@@ -509,7 +509,7 @@ test("public Application commits and exactly replays all 12 eligible fresh corpu
         assert.deepEqual(db().prepare(`SELECT title, status, full_summary_md FROM tasks
           WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'`).get(), {
           title: "Persist notes",
-          status: "planned",
+          status: "complete",
           full_summary_md: "The note persistence task passed its stated verification.",
         });
         assert.equal(db().prepare("SELECT status FROM requirements WHERE id = 'R001'").get()?.["status"], "validated");
