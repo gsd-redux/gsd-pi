@@ -96,6 +96,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:<version> --version
 - **Concurrent-publish guard** — every `npm publish` step treats "cannot publish over the previously published version" as an idempotent skip, but only after re-reading the dist-tag; if the tag does not point at the expected version the job fails loudly
 - **dist-tag mutation is not automated** — npm trusted publishing authenticates `npm publish`, not dist-tag moves. When a version already exists and the tag points elsewhere, the workflow stops and prints the manual escape hatch: `npm dist-tag add @opengsd/gsd-pi@<version> <channel>`
 - **Security hardening** — `${{ }}` expressions are passed through `env:` variables rather than interpolated directly into `run:` blocks, to prevent command injection vectors
+- **Merge-queue PR uses `RELEASE_PAT`** — `GITHUB_TOKEN` cannot create PRs on this repo. The GitHub Release is created after the tag and before that PR so a PR-create failure cannot leave npm published with no GitHub Release
 
 ### CI job tiers
 
@@ -203,7 +204,7 @@ For `@dev` or `@next`, roll back the same way (`npm dist-tag add`) or re-run **N
 | Environment: `next` | No protection rules (used by `channel=next`) |
 | Environment: `prod` | Required reviewers: maintainers — this is the approval gate for `@latest` |
 | Secret: `NPM_TOKEN` | Not required for trusted publishing; set for token-fallback bootstrap/manual native publishes (`publish_auth=token`) |
-| Secret: `RELEASE_PAT` | Prod release checkout — needed to push the release commit and tag |
+| Secret: `RELEASE_PAT` | Prod release checkout, tag push, and the merge-queue version-bump PR when branch rules reject a direct push to `main`. `GITHUB_TOKEN` cannot create PRs on this repo. |
 | Secret: `ANTHROPIC_API_KEY` | Prod environment only (non-blocking live LLM tests) |
 | Secret: `OPENAI_API_KEY` | Prod environment only (non-blocking live LLM tests) |
 | Secret: `DISCORD_CHANGELOG_WEBHOOK` | Optional — release announcement; the step tolerates a missing webhook |

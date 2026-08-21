@@ -740,35 +740,46 @@ jobs:
           RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
         run: git push origin "v${RELEASE_VERSION}"
 
-      - name: Push release commit to main
+      # GitHub Release before the merge-queue PR: a PR-create failure must not
+      # leave npm + tag published with no GitHub Release (v1.16.1).
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
+        run: |
+          if gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1; then
+            echo "GitHub release v${RELEASE_VERSION} already exists."
+            exit 0
+          fi
+          gh release create "v${RELEASE_VERSION}" \
+            --title "v${RELEASE_VERSION}" \
+            --notes-file release-metadata/release-notes.md \
+            --latest
+
+      - name: Push release commit to main
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
           RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
         run: |
           if git push origin main; then
             echo "Release commit pushed to main."
             exit 0
           fi
-          # main enforces a merge queue plus required checks and the Actions
-          # token is not on the ruleset bypass list, so a direct push is
-          # rejected. The tag and npm are already consistent, so land the
-          # version bump through the queue instead of failing the release.
+          # main enforces a merge queue plus required checks and is not on the
+          # ruleset bypass list. GITHUB_TOKEN cannot create PRs unless the repo
+          # setting "Allow GitHub Actions to create and approve pull requests"
+          # is on (it is not). RELEASE_PAT can, same as the back-merge step.
           BRANCH="release/v${RELEASE_VERSION}"
           git push origin "HEAD:refs/heads/${BRANCH}"
-          gh pr create --base main --head "${BRANCH}" \
-            --title "release: v${RELEASE_VERSION}" \
-            --body "Version bump for v${RELEASE_VERSION}. Direct push to main was rejected by branch rules, so the release commit lands through the merge queue. npm, the \`v${RELEASE_VERSION}\` tag and the GitHub release are already published."
+          EXISTING=$(gh pr list --head "${BRANCH}" --json number --jq '.[0].number // empty')
+          if [ -n "${EXISTING}" ]; then
+            echo "PR #${EXISTING} for ${BRANCH} already exists."
+          else
+            gh pr create --base main --head "${BRANCH}" \
+              --title "release: v${RELEASE_VERSION}" \
+              --body "Version bump for v${RELEASE_VERSION}. Direct push to main was rejected by branch rules, so the release commit lands through the merge queue. npm, the \`v${RELEASE_VERSION}\` tag and the GitHub release are already published."
+          fi
           echo "::warning::Direct push to main was rejected; the v${RELEASE_VERSION} version bump is waiting in branch ${BRANCH} and must be merged."
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
-        run: |
-          gh release create "v${RELEASE_VERSION}" \
-            --title "v${RELEASE_VERSION}" \
-            --notes-file release-metadata/release-notes.md \
-            --latest
 
       - name: Post to Discord
         env:
