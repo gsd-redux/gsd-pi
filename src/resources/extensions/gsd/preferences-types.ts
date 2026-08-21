@@ -86,6 +86,30 @@ export interface ContextModeConfig {
 export function isContextModeEnabled(prefs: { context_mode?: ContextModeConfig } | null | undefined): boolean {
   return prefs?.context_mode?.enabled !== false;
 }
+
+/**
+ * Automatic GitHub Copilot live-catalog refresh at GSD session start
+ * (GSD-W018). Extends the explicit, user-invoked `/gsd copilot-models sync`
+ * (GSD-W014) command — this setting only controls whether a refresh ALSO
+ * runs automatically when a GSD session starts (terminal session or the
+ * first `@gsd` invocation in an editor chat context).
+ */
+export type CopilotCatalogRefreshMode = "off" | "if_stale" | "always";
+
+export interface CopilotCatalogPreferences {
+  /**
+   * - "off" (default): never refresh automatically; explicit
+   *   `/gsd copilot-models sync` remains the only trigger.
+   * - "if_stale": refresh at most once per session, only when the
+   *   account-scoped snapshot is older than `stale_after_ms`.
+   * - "always": refresh once for every newly started GSD session.
+   */
+  refresh_on_session_start?: CopilotCatalogRefreshMode;
+  /** Surface a non-blocking notification when the refresh finds catalog changes. Default: true. */
+  notify_on_changes?: boolean;
+  /** Staleness threshold in ms for "if_stale" mode. Default: 21_600_000 (6h). Range: 60_000–604_800_000 (1min–7d). */
+  stale_after_ms?: number;
+}
 import type { GitHubSyncConfig } from "../github-sync/types.js";
 
 // ─── Workflow Modes ──────────────────────────────────────────────────────────
@@ -185,6 +209,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "language",
   "context_window_override",
   "context_mode",
+  "copilot_catalog",
   "planning_depth",
   "claude_code_mcp",
   "workspace",
@@ -537,6 +562,8 @@ export interface GSDPreferences {
    * disabled with `context_mode.enabled: false`.
    */
   context_mode?: ContextModeConfig;
+  /** Automatic GitHub Copilot live-catalog refresh at session start (GSD-W018). Default: off. */
+  copilot_catalog?: CopilotCatalogPreferences;
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   /**

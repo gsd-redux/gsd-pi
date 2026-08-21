@@ -570,6 +570,47 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
   ctx.ui.setStatus("gsd-fast", formatServiceTierFooterStatus(getEffectiveServiceTier(), ctx.model?.id));
 }
 
+/**
+ * GSD-W018: optionally refresh the GitHub Copilot live model catalog at
+ * session start, gated by `copilot_catalog.refresh_on_session_start`
+ * (default "off"). Fire-and-forget by design — never awaited on the startup
+ * path — so a slow/unavailable network never delays the welcome banner.
+ * Covers both a terminal/CLI session start and the first `@gsd` invocation
+ * from an editor chat context, since both converge on this same
+ * `session_start` event (the VS Code chat participant starts/connects to the
+ * same underlying agent session rather than running a separate lifecycle).
+ */
+function triggerCopilotCatalogSessionRefresh(ctx: ExtensionContext, basePath: string): void {
+  void (async () => {
+    try {
+      const { loadEffectiveGSDPreferences } = await import("../preferences.js");
+      const prefs = loadEffectiveGSDPreferences(basePath);
+      const {
+        startCopilotCatalogSessionRefresh,
+        resolveCopilotCatalogRefreshMode,
+        resolveCopilotCatalogNotifyOnChanges,
+      } = await import("../copilot-catalog-session-refresh.js");
+
+      if (resolveCopilotCatalogRefreshMode(prefs?.preferences) === "off") return;
+      const notifyOnChanges = resolveCopilotCatalogNotifyOnChanges(prefs?.preferences);
+
+      const result = await startCopilotCatalogSessionRefresh({
+        ctx,
+        basePath,
+        preferences: prefs?.preferences,
+      });
+      if (!notifyOnChanges || !result.ok || result.changedModelIds.length === 0) return;
+      ctx.ui.notify(
+        `GitHub Copilot model catalog: ${result.changedModelIds.length} model(s) changed since the last check. Run /gsd copilot-models changes for details.`,
+        "info",
+      );
+    } catch {
+      // Non-fatal: session startup must never fail because of this, and the
+      // coordinator itself never surfaces auth/network failures as errors.
+    }
+  })();
+}
+
 async function applyDisabledModelProviderPolicy(ctx: ExtensionContext): Promise<void> {
   try {
     const { resolveDisabledModelProvidersFromPreferences } = await import("../preferences.js");
@@ -1076,6 +1117,7 @@ export function registerHooks(
     clearDeferredDestructiveConfirmationPause();
     await resetAskUserQuestionsTurnCache();
     await syncServiceTierStatus(ctx);
+    triggerCopilotCatalogSessionRefresh(ctx, basePath);
     await applyDisabledModelProviderPolicy(ctx);
     await applyCompactionThresholdOverride(ctx);
     await prepareWorkflowMcpForHookContext(ctx, basePath);
