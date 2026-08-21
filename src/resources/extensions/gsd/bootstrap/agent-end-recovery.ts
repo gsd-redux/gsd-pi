@@ -32,6 +32,7 @@ import {
   resolveAgentEndCancelled,
 } from "../auto/resolve.js";
 import { shouldIgnoreAgentEndForActiveUnit } from "../auto/unit-runner-events.js";
+import { isTaskExecutionReadyForHostVerification } from "../auto/task-execution-cutover.js";
 import { resolveModelId } from "../auto-model-selection.js";
 import { resolveProjectRoot } from "../worktree.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
@@ -691,6 +692,25 @@ export async function handleAgentEnd(
 
     // ── 1. Classify, preserving non-empty errorMessage precedence ──────
     const cls = classifyError(rawErrorMsg || displayMsg, explicitRetryAfterMs);
+
+    // The provider can fail after gsd_task_complete has durably moved the
+    // canonical Attempt to `verify`. Resolve the in-flight unit without
+    // pausing so unit-phase can finish host verification and publication.
+    const currentUnit = getAutoDashboardData().currentUnit;
+    if (
+      isTransient(cls) &&
+      currentUnit &&
+      isTaskExecutionReadyForHostVerification(currentUnit.type, currentUnit.id)
+    ) {
+      resetRetryState(retryState);
+      resolveAgentEndCancelled({
+        message: displayMsg || rawErrorMsg || "Transient provider error after durable Task completion",
+        category: "provider",
+        isTransient: true,
+        retryAfterMs: "retryAfterMs" in cls ? cls.retryAfterMs : undefined,
+      });
+      return;
+    }
 
     // ── 1a. Unsupported-model: provider rejected this model for the current
     //        account/plan at request time (#4513).  Persist a block so the

@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
@@ -16,6 +16,7 @@ import {
 } from "../db/writers/lifecycle-commands.ts";
 import { claimTaskAttempt, readTaskAttempt } from "../task-execution-domain-operation.ts";
 import { applyTaskSettle, planTaskSettle } from "../task-settle.ts";
+import { resolveTaskCompletionAuthority } from "../task-completion-compatibility-adapter.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 
 const tempDirs = new Set<string>();
@@ -225,27 +226,128 @@ test("a typo'd task id errors without writes", () => {
   );
 });
 
-test("apply refuses when the Attempt's lease is no longer held", () => {
+test("apply reclaims an expired lease and interrupts its orphaned Attempt (#1907)", () => {
+  const { attemptId, dispatchId } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  db().exec(`
+    UPDATE milestone_leases
+    SET status = 'held', expires_at = '2000-01-01T00:00:00.000Z'
+    WHERE milestone_id = 'M001'
+  `);
+
+  const plan = planTaskSettle(TASK, "operator repair");
+  assert.equal(plan.rows[0].leaseHeld, false);
+  assert.match(plan.rows[0].rationale, /orphaned.*apply will reclaim/i);
+  assert.throws(
+    () => resolveTaskCompletionAuthority(TASK, "completion/orphaned"),
+    /orphaned running Attempt.*gsd_task_settle.*reclaimable.*\/gsd auto/s,
+  );
+
+  const applied = applyTaskSettle({
+    invocation: invocation("settle/apply/released"),
+    task: TASK,
+    reason: "operator repair",
+  });
+  assert.equal(applied.settled, true);
+  assert.equal(readTaskAttempt(attemptId)?.state, "settled");
+  assert.deepEqual(
+    row(`
+      SELECT recovery_worker_id AS worker, recovery_milestone_lease_token AS token
+      FROM workflow_execution_attempts WHERE attempt_id = '${attemptId}'
+    `),
+    { worker: "worker-1", token: 8 },
+  );
+  assert.equal(row("SELECT status FROM milestone_leases WHERE milestone_id = 'M001'").status, "released");
+  assert.throws(
+    () => resolveTaskCompletionAuthority(TASK, "completion/no-running"),
+    /no running Attempt.*\/gsd auto/s,
+  );
+});
+
+test("apply reclaims a released lease and interrupts its orphaned Attempt (#1907)", () => {
   const { attemptId, dispatchId } = seedRunningAttempt();
   orphanClaimedAttempt(dispatchId);
   db().exec("UPDATE milestone_leases SET status = 'released' WHERE milestone_id = 'M001'");
 
   const plan = planTaskSettle(TASK, "operator repair");
   assert.equal(plan.rows[0].leaseHeld, false);
-  assert.match(plan.rows[0].rationale, /no longer held/);
+  assert.match(plan.rows[0].rationale, /orphaned.*apply will reclaim/i);
 
+  const applied = applyTaskSettle({
+    invocation: invocation("settle/apply/released"),
+    task: TASK,
+    reason: "operator repair",
+  });
+  assert.equal(applied.settled, true);
+  assert.equal(readTaskAttempt(attemptId)?.state, "settled");
+  assert.equal(row("SELECT status FROM milestone_leases WHERE milestone_id = 'M001'").status, "released");
+});
+
+test("apply refuses an expired lease while its original worker is live (#1907)", () => {
+  const { attemptId, dispatchId } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  db().prepare(`
+    UPDATE workers
+    SET host = :host, pid = :pid, last_heartbeat_at = :heartbeat
+    WHERE worker_id = 'worker-1'
+  `).run({
+    ":host": hostname(),
+    ":pid": process.pid,
+    ":heartbeat": new Date().toISOString(),
+  });
+  db().exec(`
+    UPDATE milestone_leases
+    SET status = 'held', expires_at = '2000-01-01T00:00:00.000Z'
+    WHERE milestone_id = 'M001'
+  `);
+
+  const plan = planTaskSettle(TASK, "operator repair");
+  assert.equal(plan.rows[0].leaseHeld, false);
+  assert.match(plan.rows[0].rationale, /apply will refuse/i);
   assert.throws(
     () => applyTaskSettle({
-      invocation: invocation("settle/apply/released"),
+      invocation: invocation("settle/apply/live-owner"),
       task: TASK,
       reason: "operator repair",
     }),
-    /no longer held.*not authorized|replacement-lease/s,
+    /live worker or replacement lease.*\/gsd auto/s,
+  );
+  assert.equal(readTaskAttempt(attemptId)?.state, "running");
+});
+
+test("apply refuses to steal a live replacement lease (#1907)", () => {
+  const { attemptId, dispatchId } = seedRunningAttempt();
+  orphanClaimedAttempt(dispatchId);
+  db().exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-2', 'test-host', 2, '2026-07-13T00:05:00.000Z', 'test',
+      '2099-07-13T00:05:00.000Z', 'active', '/tmp/project'
+    );
+    UPDATE milestone_leases
+    SET worker_id = 'worker-2', fencing_token = 8, status = 'held',
+        expires_at = '2099-07-13T00:06:00.000Z'
+    WHERE milestone_id = 'M001';
+  `);
+
+  const plan = planTaskSettle(TASK, "operator repair");
+  assert.equal(plan.rows[0].leaseHeld, false);
+  assert.match(plan.rows[0].rationale, /apply will refuse/i);
+
+  assert.throws(
+    () => applyTaskSettle({
+      invocation: invocation("settle/apply/live-replacement"),
+      task: TASK,
+      reason: "operator repair",
+    }),
+    /live worker or replacement lease.*\/gsd auto/s,
   );
   assert.equal(
     readTaskAttempt(attemptId)?.state,
     "running",
-    "the refused apply leaves the Attempt untouched",
+    "the live peer's Attempt remains untouched",
   );
 });
 

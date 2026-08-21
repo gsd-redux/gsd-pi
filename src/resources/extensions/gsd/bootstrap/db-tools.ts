@@ -2623,7 +2623,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			"Settle an orphaned running Task Attempt (dry-run first, apply: true to mutate)",
 		promptGuidelines: [
 			"Run without apply first and read the planned rows before mutating.",
-			"Only settles while the Attempt's own milestone lease is still held; a cross-process orphan whose lease is gone belongs to the next auto session's replacement-lease interrupt.",
+			"Settles under the Attempt's held lease, or safely reclaims an expired/released lease when its worker is no longer live; never steals a live peer's lease.",
 			"A second apply is a no-op — the tool is idempotent.",
 			"reconcileLifecycle adopts ready/completed to match tasks.status after the interrupted Attempt without deleting SUMMARYs.",
 		],

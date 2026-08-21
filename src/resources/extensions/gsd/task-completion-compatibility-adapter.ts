@@ -158,7 +158,20 @@ export function resolveTaskCompletionAuthority(
              WHERE attempt.lifecycle_id = lifecycle.lifecycle_id
                AND attempt.project_id = lifecycle.project_id
                AND attempt.attempt_state = 'running'
-           ) AS has_running_attempt
+           ) AS has_running_attempt,
+           EXISTS (
+             SELECT 1
+             FROM workflow_execution_attempts attempt
+             JOIN milestone_leases lease
+               ON lease.milestone_id = lifecycle.milestone_id
+              AND lease.worker_id = attempt.worker_id
+              AND lease.fencing_token = attempt.milestone_lease_token
+              AND lease.status = 'held'
+              AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE attempt.lifecycle_id = lifecycle.lifecycle_id
+               AND attempt.project_id = lifecycle.project_id
+               AND attempt.attempt_state = 'running'
+           ) AS has_held_running_attempt
     FROM workflow_item_lifecycles lifecycle
     WHERE lifecycle.item_kind = 'task'
       AND lifecycle.milestone_id = :milestone_id
@@ -176,8 +189,18 @@ export function resolveTaskCompletionAuthority(
     }
     return "legacy";
   }
-  if (Number(lifecycle["has_running_attempt"]) === 1) return "canonical";
-  throw new Error("Canonical Task completion requires a running or replay-matched Attempt");
+  if (Number(lifecycle["has_held_running_attempt"]) === 1) return "canonical";
+  if (Number(lifecycle["has_running_attempt"]) === 1) {
+    throw new Error(
+      "Canonical Task completion found an orphaned running Attempt whose milestone lease is no " +
+      "longer held. Dry-run gsd_task_settle and apply it only if the lease is reported " +
+      "reclaimable; otherwise re-enter `/gsd auto` to recover under the current lease.",
+    );
+  }
+  throw new Error(
+    "Canonical Task completion has no running Attempt to close. Re-enter `/gsd auto` to resume " +
+    "the Task from its durable checkpoint.",
+  );
 }
 
 function runningAttemptId(task: TaskCompletionIdentity): string {

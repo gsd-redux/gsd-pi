@@ -5,6 +5,12 @@
 
 import { executeDomainOperation } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { isAutoWorkerLive } from "./db/auto-workers.js";
+import {
+  claimMilestoneLease,
+  getMilestoneLease,
+  releaseMilestoneLease,
+} from "./db/milestone-leases.js";
 import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
 import {
   adoptOrTransitionLifecycle,
@@ -105,6 +111,30 @@ function readLeaseHeld(row: RunningAttemptRow, milestoneId: string): boolean {
     ":fencing_token": row.milestone_lease_token,
   });
   return lease !== undefined;
+}
+
+function canReclaimLease(row: RunningAttemptRow, milestoneId: string): boolean {
+  if (!row.worker_id || row.milestone_lease_token === null) return false;
+  if (isAutoWorkerLive(row.worker_id)) return false;
+  const lease = getMilestoneLease(milestoneId);
+  if (!lease || lease.fencing_token < row.milestone_lease_token) return false;
+  return lease.status !== "held" || Date.parse(lease.expires_at) <= Date.now();
+}
+
+function claimRecoveryLease(
+  row: RunningAttemptRow,
+  milestoneId: string,
+): { workerId: string; milestoneLeaseToken: number } | null {
+  if (!canReclaimLease(row, milestoneId) || !row.worker_id || row.milestone_lease_token === null) {
+    return null;
+  }
+  const claimed = claimMilestoneLease(row.worker_id, milestoneId);
+  if (!claimed.ok) return null;
+  if (claimed.token <= row.milestone_lease_token) {
+    releaseMilestoneLease(row.worker_id, milestoneId, claimed.token);
+    return null;
+  }
+  return { workerId: row.worker_id, milestoneLeaseToken: claimed.token };
 }
 
 function requireSingleRunningAttempt(task: TaskSettleTask): RunningAttemptRow | null {
@@ -364,7 +394,11 @@ export function planTaskSettle(
   const leaseHeld = readLeaseHeld(attempt, task.milestoneId);
   const rationale = leaseHeld
     ? reason
-    : `${reason} (warning: the Attempt's milestone lease is no longer held — apply will refuse)`;
+    : canReclaimLease(attempt, task.milestoneId)
+      ? `${reason} (the orphaned Attempt's worker is gone and its milestone lease is ` +
+        "expired or released — apply will reclaim it with a newer fencing token)"
+      : `${reason} (warning: the Attempt's milestone lease is no longer held, but a live ` +
+        "worker or replacement lease prevents safe recovery — apply will refuse)";
   return {
     task,
     rows: [{
@@ -380,11 +414,11 @@ export function planTaskSettle(
 }
 
 /**
- * Settle the Task's one running Attempt as `interrupted`. Only the own-lease
- * path is authorized: the worker that claimed the Attempt still holds its
- * milestone lease, so a plain attempt.settle is legal (V47 dispatch-scope
- * rule). A cross-process orphan whose lease is already gone belongs to the
- * replacement-lease interrupt path (#1748) — the next auto session settles it.
+ * Settle the Task's one running Attempt as `interrupted`. The own-lease path
+ * uses a plain attempt.settle (V47 dispatch-scope rule). If the owner is no
+ * longer live and its lease is expired or released, the operator reclaims the
+ * lease with a newer fencing token and uses attempt.interrupt (#1907). A live
+ * owner or replacement lease remains fail-closed.
  *
  * Optional `reconcileLifecycle` then adopts ready/completed to match
  * tasks.status after that interrupted Attempt, without reopening or deleting
@@ -403,29 +437,50 @@ export function applyTaskSettle(input: {
   let resultId: string | undefined;
   if (plan.rows.length > 0) {
     const row = plan.rows[0];
-    if (!row.leaseHeld) {
+    const attempt = requireSingleRunningAttempt(input.task);
+    if (!attempt || attempt.attempt_id !== row.attemptId) {
+      throw new Error("gsd_task_settle: running Attempt changed after the dry-run plan; retry the operation");
+    }
+    const recovery = row.leaseHeld
+      ? null
+      : claimRecoveryLease(attempt, input.task.milestoneId);
+    if (!row.leaseHeld && !recovery) {
       throw new Error(
         `gsd_task_settle: Attempt ${row.attemptId} was claimed under a milestone lease that is ` +
-        "no longer held, so this operator settle is not authorized. Start `/gsd auto` — the next " +
-        "session takes over the lease and interrupts the orphaned Attempt via the replacement-lease path.",
+        "no longer held, but a live worker or replacement lease prevents safe recovery. " +
+        "Re-enter `/gsd auto` to recover under the current replacement lease.",
       );
     }
-    const settlement = settleTaskAttempt({
-      invocation: input.invocation,
-      attemptId: row.attemptId,
-      outcome: "interrupted",
-      failureClass: "operator-settle",
-      summary: input.reason,
-      output: {
-        operator: true,
-        milestoneId: input.task.milestoneId,
-        sliceId: input.task.sliceId,
-        taskId: input.task.taskId,
-        reason: input.reason,
-      },
-    });
-    settled = true;
-    resultId = settlement.resultId;
+    try {
+      const settlement = settleTaskAttempt({
+        invocation: input.invocation,
+        attemptId: row.attemptId,
+        outcome: "interrupted",
+        failureClass: "operator-settle",
+        summary: input.reason,
+        output: {
+          operator: true,
+          milestoneId: input.task.milestoneId,
+          sliceId: input.task.sliceId,
+          taskId: input.task.taskId,
+          reason: input.reason,
+        },
+        ...(recovery ? { recovery: {
+          workerId: recovery.workerId,
+          milestoneLeaseToken: recovery.milestoneLeaseToken,
+        } } : {}),
+      });
+      settled = true;
+      resultId = settlement.resultId;
+    } finally {
+      if (recovery) {
+        releaseMilestoneLease(
+          recovery.workerId,
+          input.task.milestoneId,
+          recovery.milestoneLeaseToken,
+        );
+      }
+    }
   }
   let lifecycleRows = plan.lifecycleRows;
   let proof = plan.proof;

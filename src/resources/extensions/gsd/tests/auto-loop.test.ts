@@ -65,6 +65,7 @@ import {
 import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
 import { handleReplanTask } from "../tools/replan-task.js";
 import { appendCapture, markCaptureResolved } from "../captures.js";
+import { autoSession } from "../auto-runtime-state.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -2506,10 +2507,13 @@ test("custom-engine recovery fails loudly when dispatch terminalization cannot b
   }
 });
 
-test("autoLoop publishes a canonical Task only after host verification without legacy dispatch re-settlement", async () => {
+test("autoLoop resumes canonical closeout when a transient provider error follows durable Task completion (#1907)", async () => {
   _resetPendingResolve();
 
+  const originalCwd = process.cwd();
   const ctx = makeMockCtx();
+  ctx.model = { provider: "openai-codex", id: "gpt-5.6-sol" };
+  ctx.modelRegistry = { getAvailable: () => [] };
   ctx.ui.setStatus = () => {};
   ctx.ui.setWidget = () => {};
   ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
@@ -2585,7 +2589,28 @@ test("autoLoop publishes a canonical Task only after host verification without l
     });
     assert.equal(getTask("M001", "S01", "T01")?.status, "in_progress");
 
-    resolveAgentEnd(makeEvent());
+    autoSession.reset();
+    autoSession.active = true;
+    autoSession.basePath = basePath;
+    autoSession.originalBasePath = basePath;
+    autoSession.currentUnit = {
+      type: "execute-task",
+      id: "M001/S01/T01",
+      startedAt: Date.now(),
+    };
+    const { handleAgentEnd } = await import("../bootstrap/agent-end-recovery.js");
+    process.chdir(basePath);
+    try {
+      await handleAgentEnd(pi, {
+        messages: [{
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "Provider error: Codex usage_limit_reached: The usage limit has been reached",
+        }],
+      } as AgentEndEvent, ctx);
+    } finally {
+      process.chdir(originalCwd);
+    }
     await loopPromise;
 
     const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
@@ -2599,8 +2624,14 @@ test("autoLoop publishes a canonical Task only after host verification without l
     assert.equal(attempt.state, "settled");
     assert.equal(attempt.outcome, "succeeded");
     assert.equal(attempt.nextStage, "settled");
+    assert.equal(pi.calls.length, 1, "the completed executor is not re-dispatched");
+    assert.equal(deps.callLog.includes("pauseAuto"), false, "durable closeout bypasses provider pause");
+    assert.equal(autoSession.active, true, "provider handling does not pause the active auto session");
+    assert.equal(autoSession.paused, false, "provider handling leaves no stale paused state");
     assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
   } finally {
+    process.chdir(originalCwd);
+    autoSession.reset();
     try { closeDatabase(); } catch { /* noop */ }
     rmSync(basePath, { recursive: true, force: true });
   }

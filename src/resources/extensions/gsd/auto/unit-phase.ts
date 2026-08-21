@@ -596,7 +596,27 @@ export async function runUnitPhase(
     sessionFile,
   );
 
-  if (unitResult.status === "cancelled") {
+  // The provider can fail after gsd_task_complete atomically staged success.
+  // In that case execution is already durable and the canonical Attempt is at
+  // `verify`; continue closeout instead of dispatching the implementation again.
+  const resumeDurableTaskCloseout =
+    unitResult.status === "cancelled" &&
+    unitResult.errorContext?.category === "provider" &&
+    unitResult.errorContext.isTransient === true &&
+    isTaskExecutionReadyForHostVerification(unitType, unitId);
+  if (resumeDurableTaskCloseout) {
+    debugLog("autoLoop", {
+      phase: "provider-error-after-durable-task-completion",
+      unitType,
+      unitId,
+    });
+    ctx.ui.notify(
+      `Provider failed after ${unitType} ${unitId} durably recorded completion; resuming at host verification.`,
+      "warning",
+    );
+  }
+
+  if (unitResult.status === "cancelled" && !resumeDurableTaskCloseout) {
     if (_isPauseOriginCancelledResult(s.paused, unitResult.errorContext)) {
       if (!pausedBeforeRun) {
         const pauseContext = {
@@ -954,9 +974,11 @@ export async function runUnitPhase(
   }
 
   const unitEndStatus =
-    !artifactVerified && unitResult.status === "completed"
-      ? "no-artifact"
-      : unitResult.status;
+    resumeDurableTaskCloseout
+      ? "completed"
+      : !artifactVerified && unitResult.status === "completed"
+        ? "no-artifact"
+        : unitResult.status;
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitEndStatus, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
 
   // ── Safety harness: checkpoint cleanup or rollback ──
