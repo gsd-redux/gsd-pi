@@ -1135,6 +1135,43 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Copilot Catalog Session Refresh (GSD-W018) ─────────────────────────
+  if (preferences.copilot_catalog !== undefined) {
+    if (typeof preferences.copilot_catalog === "object" && preferences.copilot_catalog !== null) {
+      const catalog = preferences.copilot_catalog as unknown as Record<string, unknown>;
+      const validCatalog: Record<string, unknown> = {};
+      const validRefreshModes = new Set(["off", "if_stale", "always"]);
+
+      if (catalog.refresh_on_session_start !== undefined) {
+        if (typeof catalog.refresh_on_session_start === "string" && validRefreshModes.has(catalog.refresh_on_session_start)) {
+          validCatalog.refresh_on_session_start = catalog.refresh_on_session_start;
+        } else {
+          errors.push('copilot_catalog.refresh_on_session_start must be one of: off, if_stale, always');
+        }
+      }
+      if (catalog.notify_on_changes !== undefined) {
+        if (typeof catalog.notify_on_changes === "boolean") validCatalog.notify_on_changes = catalog.notify_on_changes;
+        else errors.push("copilot_catalog.notify_on_changes must be a boolean");
+      }
+      if (catalog.stale_after_ms !== undefined) {
+        const ms = catalog.stale_after_ms;
+        if (typeof ms === "number" && ms >= 60_000 && ms <= 604_800_000) validCatalog.stale_after_ms = Math.floor(ms);
+        else errors.push("copilot_catalog.stale_after_ms must be a number between 60000 and 604800000");
+      }
+      for (const key of Object.keys(catalog)) {
+        if (key !== "refresh_on_session_start" && key !== "notify_on_changes" && key !== "stale_after_ms") {
+          warnings.push(`unknown copilot_catalog key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(validCatalog).length > 0) {
+        validated.copilot_catalog = validCatalog as any;
+      }
+    } else {
+      errors.push("copilot_catalog must be an object");
+    }
+  }
+
   // ─── Parallel Config ────────────────────────────────────────────────────
   if (preferences.parallel && typeof preferences.parallel === "object") {
     const p = preferences.parallel as unknown as Record<string, unknown>;
