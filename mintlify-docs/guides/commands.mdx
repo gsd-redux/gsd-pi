@@ -10,6 +10,7 @@ description: "Every GSD command, keyboard shortcut, and CLI flag."
 | `/gsd` | Step mode — execute one unit at a time, pause between each |
 | `/gsd next` | Explicit step mode (same as `/gsd`) |
 | `/gsd auto` | Autonomous mode — research, plan, execute, commit, repeat |
+| `/gsd auto --resume-wedge <wedge-id>` | Resume a reported liveness wedge after its originating guard clears; the exact open wedge ID is required |
 | `/gsd quick [--discuss] [--research] [--validate] [--full] <task>` | Execute a quick task with GSD guarantees; optionally add discussion, research, plan checking, and post-execution verification (`--full` enables all three stages) |
 | `/gsd stop` | Stop auto mode gracefully |
 | `/gsd pause` | Pause auto mode (preserves state, `/gsd auto` to resume) |

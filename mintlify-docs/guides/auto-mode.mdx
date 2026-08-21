@@ -104,15 +104,27 @@ Auto mode persists worker state, unit-dispatch state, and paused-session metadat
 
 ### Provider error recovery
 
-| Error type   | Examples                      | Action                                      |
-| ------------ | ----------------------------- | ------------------------------------------- |
-| Rate limit   | 429, "too many requests"      | Auto-resume after retry-after header or 60s |
-| Server error | 500, 502, 503, "overloaded"   | Auto-resume after 30s                       |
-| Permanent    | "unauthorized", "invalid key" | Pause indefinitely (requires manual resume) |
+| Error type          | Examples                                          | Action                                                                 |
+| ------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
+| Rate or usage limit | 429, "too many requests", Codex `usage_limit_reached` | Try a fallback model; otherwise enter cooldown and retry the same unit |
+| Server error        | 500, 502, 503, "overloaded"                       | Auto-resume after 30s                                                  |
+| Permanent           | "unauthorized", "invalid key"                    | Pause indefinitely (requires manual resume)                            |
+
+For a transient Codex usage-limit error with no available model fallback, auto mode stays active instead of pausing the session. It waits for the provider's retry hint plus a small buffer when the hint is at most 60 seconds, or 35 seconds when no usable hint is available, then retries from the current checkpoint. The cooldown budget allows five consecutive retries. If the limit is still exhausted on the next attempt, auto mode stops and records a crash note when possible; run `/gsd auto` after capacity returns to resume from the last checkpoint.
 
 ### Stuck detection
 
 A sliding-window analysis detects stuck loops — catching cycles like A→B→A→B as well as single-unit repeats. On detection, GSD retries once with a diagnostic prompt. If it fails again, auto mode stops with the exact file it expected.
+
+### Liveness wedge recovery
+
+When the same non-advancing guard recurs with unchanged inputs, the liveness backstop stops auto mode and reports a wedge ID, the originating guard, and a sanctioned recovery action. Fix the reported blocker first, then acknowledge that exact wedge and request re-entry:
+
+```
+/gsd auto --resume-wedge <wedge-id>
+```
+
+Plain `/gsd auto` cannot resume an open wedge, and a different wedge ID is refused. GSD also refuses acknowledgment when no wedge is open, the workflow database or auto orchestration is unavailable, the originating guard has no read-only recheck, or that recheck shows the blocker is unchanged. A successful recheck acknowledges the wedge and resets only its block-signature counter before auto mode continues.
 
 ### Artifact verification retries
 
@@ -190,7 +202,8 @@ Set `reactive_execution.enabled: true` explicitly to use the earlier two-ready-t
   </Step>
   <Step title="Resume">
     ``` /gsd auto ``` Auto mode reads DB-backed runtime state and picks up where
-    it left off.
+    it left off. A liveness wedge is the exception: resolve its blocker and use
+    ``` /gsd auto --resume-wedge <wedge-id> ``` with the exact reported ID.
   </Step>
   <Step title="Stop">
     ``` /gsd stop ``` Stops auto mode gracefully. Can be run from a different
