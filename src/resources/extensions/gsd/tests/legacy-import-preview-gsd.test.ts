@@ -1535,6 +1535,40 @@ describe("legacy .gsd captured-byte interpretation", () => {
     assert.equal(interpretation.resolutions[0]?.disposition, "requires-user");
   });
 
+  test("imports legacy CLOSED milestone headings and phase status tables", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/01-foundation/01-ROADMAP.md": [
+        "## ✅ v2.7.0 milestone (CLOSED 2026-08-18 — shipped)",
+        "",
+        "| Phase | Name | Status |",
+        "| --- | --- | --- |",
+        "| 1 | Foundation | Complete |",
+        "| 2 | Follow-up | Pending |",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "milestone" || candidate.target.kind === "slice")
+        .map((candidate) => [candidate.target, candidate.normalized]),
+      [
+        [
+          { kind: "milestone", key: "M001" },
+          { id: "M001", source_alias: "01", status: "complete", title: "v2.7.0 milestone" },
+        ],
+        [
+          { kind: "slice", key: "M001/S01" },
+          { id: "S01", milestone_id: "M001", status: "complete", title: "Foundation" },
+        ],
+        [
+          { kind: "slice", key: "M001/S02" },
+          { id: "S02", milestone_id: "M001", status: "pending", title: "Follow-up" },
+        ],
+      ],
+    );
+    assert.deepEqual(interpretation.diagnoses, []);
+  });
+
   test("quarantines every occurrence of a duplicate requirement identity", (t) => {
     const captured = captureCase(t, "registries");
     const interpretation = interpretLegacyGsdCapture(captured.capture);

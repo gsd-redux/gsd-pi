@@ -277,12 +277,16 @@ function interpretMultiRoadmap(
   const completedRows = file.lines.filter((line) => /^-\s+\[[xX]\]\s+\*\*Phase\s+\d+:/u.test(line.text));
   const emojiRows = file.lines.filter((line) => /^-\s+[✅🚧]\s+\*\*v[\d.]+/u.test(line.text));
   const rangeRows = file.lines.filter((line) => /^-\s+[✅🚧]\s+v[\d.]+/u.test(line.text));
+  const closedTableHeadings = file.lines.filter((line) => (
+    /^##\s+(?:✅\s+)?v\d+(?:\.\d+)*\s+milestone\s+\(\s*CLOSED\b[^)]*\)\s*$/iu.test(line.text)
+  ));
   const grammars = [
     headingLines.length > 0 ? "heading" : undefined,
     detailsLines.length > 0 ? "details" : undefined,
     summaryHeading !== undefined && summarySubheads.length > 0 ? "summary" : undefined,
     summaryHeading !== undefined && summarySubheads.length === 0 && completedRows.length > 0 ? "completed-range" : undefined,
     emojiRows.length > 0 || rangeRows.length > 0 ? "emoji-range" : undefined,
+    closedTableHeadings.length > 0 ? "closed-status-table" : undefined,
   ].filter((value): value is string => value !== undefined);
   if (grammars.length === 0) return false;
   if (grammars.length > 1) {
@@ -451,6 +455,37 @@ function interpretMultiRoadmap(
           status: "complete", sequence,
         }, "completed-range-slice", line.start, line.end);
       }
+    });
+    return true;
+  }
+
+  if (grammars[0] === "closed-status-table") {
+    const rowPattern = /^\|\s*(?:S\d+|\d+(?:\.\d+)*)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/iu;
+    if (closedTableHeadings.some((heading, index) => {
+      const next = closedTableHeadings[index + 1]?.start ?? file.bytes.length;
+      return !file.lines.some((line) => line.start > heading.start && line.start < next && rowPattern.test(line.text));
+    })) return malformedRoadmap(file, candidates, diagnoses);
+
+    closedTableHeadings.forEach((heading, milestoneIndex) => {
+      const headingMatch = /^##\s+(?:✅\s+)?(v\d+(?:\.\d+)*)\s+milestone/iu.exec(heading.text)!;
+      const next = closedTableHeadings[milestoneIndex + 1]?.start ?? file.bytes.length;
+      const phases = file.lines.filter((line) => line.start > heading.start && line.start < next)
+        .flatMap((line) => {
+          const row = rowPattern.exec(line.text);
+          return row === null ? [] : [{ line, row }];
+        });
+      const id = milestoneKey(milestoneIndex);
+      addCandidate(candidates, file, { kind: "milestone", key: id }, {
+        grammar: "closed-status-table", id, title: `${headingMatch[1]} milestone`, status: "complete", sequence: milestoneIndex + 1,
+      }, "closed-status-table-milestone", heading.start, heading.end);
+      phases.forEach(({ line, row }, sliceIndex) => {
+        const slice = `S${String(sliceIndex + 1).padStart(2, "0")}`;
+        addCandidate(candidates, file, { kind: "slice", key: `${id}/${slice}` }, {
+          grammar: "closed-status-table", id: slice, milestone_id: id, title: row[1].trim(),
+          status: /^(?:✅\s*)?(?:complete|completed|done|closed)$/iu.test(row[2].trim()) ? "complete" : "pending",
+          sequence: sliceIndex + 1,
+        }, "closed-status-table-slice", line.start, line.end);
+      });
     });
     return true;
   }

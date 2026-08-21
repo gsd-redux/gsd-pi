@@ -127,24 +127,30 @@ function claimFor(file: SourceFile): HierarchyClaim | undefined {
   if (layout === undefined || !roadmapPath(file.entry.logical_path) || file.encoding !== "utf-8") {
     return undefined;
   }
-  const heading = firstMatch(file, /^#\s+((?:M)?\d+(?:-[a-z0-9]+)?):\s+(.+)$/u);
+  const canonicalHeading = firstMatch(file, /^#\s+((?:M)?\d+(?:-[a-z0-9]+)?):\s+(.+)$/u);
+  const legacyHeading = canonicalHeading === undefined
+    ? firstMatch(file, /^##\s+(?:✅\s+)?(v\d+(?:\.\d+)*)\s+milestone\s+\(\s*(CLOSED)\b[^)]*\)\s*$/iu)
+    : undefined;
+  const heading = canonicalHeading ?? legacyHeading;
   if (heading === undefined) return undefined;
-  const canonicalId = canonicalMilestoneId(heading.match[1]);
-  if (canonicalId === undefined) return undefined;
   const directory = directorySegment(file.entry.logical_path, layout);
-  const status = firstMatch(file, /^Status:\s*(\S.*?)\s*$/u);
+  const sourceAlias = canonicalHeading?.match[1] ?? /^(?:M)?\d+/u.exec(directory)?.[0];
+  if (sourceAlias === undefined) return undefined;
+  const canonicalId = canonicalMilestoneId(sourceAlias);
+  if (canonicalId === undefined) return undefined;
+  const status = legacyHeading === undefined ? firstMatch(file, /^Status:\s*(\S.*?)\s*$/u) : undefined;
   return {
     file,
     layout,
     directory,
     canonicalId,
-    sourceAlias: heading.match[1],
-    title: heading.match[2].trim(),
+    sourceAlias,
+    title: canonicalHeading?.match[2].trim() ?? `${legacyHeading!.match[1]} milestone`,
     heading: heading.line,
-    status: status?.match[1].trim().toLowerCase(),
-    statusLine: status?.line,
+    status: legacyHeading === undefined ? status?.match[1].trim().toLowerCase() : "complete",
+    statusLine: legacyHeading?.line ?? status?.line,
     teamId: canonicalId.includes("-"),
-    bareNumericAlias: layout === "flat" && !heading.match[1].startsWith("M"),
+    bareNumericAlias: layout === "flat" && !sourceAlias.startsWith("M"),
     bareNumericPath: layout === "flat" && /^\d/u.test(directory),
   };
 }
@@ -258,6 +264,21 @@ function roadmapSlices(file: SourceFile): SliceClaim[] {
       });
       continue;
     }
+    const legacyTable = /^\|\s*(S\d+|\d+(?:\.\d+)*)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/iu.exec(line.text);
+    if (legacyTable !== null) {
+      claims.push({
+        id: legacyTable[1].toUpperCase().startsWith("S")
+          ? legacyTable[1].toUpperCase()
+          : `S${String(claims.length + 1).padStart(2, "0")}`,
+        title: legacyTable[2].trim(),
+        status: /^(?:✅\s*)?(?:complete|completed|done|closed)$/iu.test(legacyTable[3].trim())
+          ? "complete"
+          : "pending",
+        line,
+        span: matchSpan(line, legacyTable),
+      });
+      continue;
+    }
     const prose = /^The milestone has one slice,\s*(S\d+)\s+([^,]+),.+$/u.exec(line.text);
     if (prose !== null) {
       claims.push({
@@ -322,6 +343,7 @@ function emitHybridClaim(
   addCandidate(candidates, claim.file, { kind: "milestone", key: claim.canonicalId }, {
     id: claim.canonicalId,
     layout: claim.layout,
+    ...(claim.status === undefined ? {} : { status: claim.status }),
     title: claim.title,
   }, reason, { start: claim.heading.start, end: claim.heading.end });
   for (const slice of roadmapSlices(claim.file)) {
@@ -494,10 +516,22 @@ function emitFlatRoadmap(
   let normalized: LegacyImportValue = { id: claim.canonicalId, title: claim.title };
   if (claim.bareNumericAlias) {
     reason = "flat-bare-numeric-milestone";
-    normalized = { id: claim.canonicalId, source_alias: claim.sourceAlias, title: claim.title };
+    normalized = {
+      id: claim.canonicalId,
+      source_alias: claim.sourceAlias,
+      ...(claim.status === undefined ? {} : { status: claim.status }),
+      title: claim.title,
+    };
   } else if (claim.directory.startsWith("M")) {
     reason = "flat-descriptor-milestone";
-    normalized = { id: claim.canonicalId, source_alias: claim.directory, title: claim.title };
+    normalized = {
+      id: claim.canonicalId,
+      source_alias: claim.directory,
+      ...(claim.status === undefined ? {} : { status: claim.status }),
+      title: claim.title,
+    };
+  } else if (claim.status !== undefined) {
+    normalized = { id: claim.canonicalId, status: claim.status, title: claim.title };
   }
   addCandidate(
     candidates,
@@ -743,6 +777,7 @@ function nestedPlanParent(
 function emitNestedRoadmap(claim: HierarchyClaim, candidates: PendingCandidate[]): Set<string> {
   addCandidate(candidates, claim.file, { kind: "milestone", key: claim.canonicalId }, {
     id: claim.canonicalId,
+    ...(claim.status === undefined ? {} : { status: claim.status }),
     title: claim.title,
   }, "nested-milestone-heading", { start: claim.heading.start, end: claim.heading.end });
   const slices = roadmapSlices(claim.file);

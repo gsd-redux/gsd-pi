@@ -469,6 +469,42 @@ describe("legacy preview planning", () => {
     }
   });
 
+  test("legacy preview planning imports CLOSED milestone status tables", (t) => {
+    const interpretation = interpretLegacyPlanningCapture(captureFiles(t, {
+      "ROADMAP.md": [
+        "# Roadmap",
+        "",
+        "## ✅ v2.7.0 milestone (CLOSED 2026-08-18 — shipped)",
+        "",
+        "| Phase | Name | Status |",
+        "| --- | --- | --- |",
+        "| 1 | Foundation | Complete |",
+        "| 2 | Follow-up | Pending |",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "milestone" || candidate.target.kind === "slice")
+        .map((candidate) => [candidate.target, candidate.normalized]),
+      [
+        [
+          { kind: "milestone", key: "M001" },
+          { grammar: "closed-status-table", id: "M001", sequence: 1, status: "complete", title: "v2.7.0 milestone" },
+        ],
+        [
+          { kind: "slice", key: "M001/S01" },
+          { grammar: "closed-status-table", id: "S01", milestone_id: "M001", sequence: 1, status: "complete", title: "Foundation" },
+        ],
+        [
+          { kind: "slice", key: "M001/S02" },
+          { grammar: "closed-status-table", id: "S02", milestone_id: "M001", sequence: 2, status: "pending", title: "Follow-up" },
+        ],
+      ],
+    );
+    assert.deepEqual(interpretation.diagnoses, []);
+  });
+
   test("legacy preview planning pairs a summary with its exact flat task", (t) => {
     const capture = captureFiles(t, {
       "ROADMAP.md": "# Roadmap\n\n- [ ] 01 — First\n- [ ] 02 — Second\n",
