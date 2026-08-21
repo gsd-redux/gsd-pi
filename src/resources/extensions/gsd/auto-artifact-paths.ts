@@ -325,7 +325,7 @@ export function diagnoseExpectedArtifact(
     case "run-uat":
       return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (UAT assessment result)`;
     case "validate-milestone":
-      return `${relMilestoneFile(base, mid, "VALIDATION")} (milestone validation report)`;
+      return `a canonical validation result persisted via gsd_validate_milestone (projected to ${relMilestoneFile(base, mid, "VALIDATION")})`;
     case "complete-milestone":
       return `${relMilestoneFile(base, mid, "SUMMARY")} (milestone summary)`;
     default:

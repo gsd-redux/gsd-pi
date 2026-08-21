@@ -237,26 +237,36 @@ export async function recoverTimedOutUnit(
       harnessAbort: undefined,
     });
 
-    const steeringLines = isEscalation
+    const steeringLines = unitType === "validate-milestone"
       ? [
-          `**FINAL ${reason === "idle" ? "IDLE" : "HARD TIMEOUT"} RECOVERY — last chance before skip.**`,
-          `You are still executing ${unitType} ${unitId}.`,
-          `Recovery attempt ${recoveryAttempts + 1} of ${maxRecoveryAttempts} — next failure skips this unit.`,
-          `Expected durable output: ${expected}.`,
-          "You MUST write the artifact file NOW, even if incomplete.",
-          "Write whatever you have — partial research, preliminary findings, best-effort analysis.",
-          "A partial artifact is infinitely better than no artifact.",
-          "If you are truly blocked, write the file with a BLOCKER section explaining why.",
-        ]
-      : [
-          `**${reason === "idle" ? "IDLE" : "HARD TIMEOUT"} RECOVERY — stay in auto-mode.**`,
+          `**${isEscalation ? "FINAL " : ""}${reason === "idle" ? "IDLE" : "HARD TIMEOUT"} RECOVERY — persist the canonical validation now.**`,
           `You are still executing ${unitType} ${unitId}.`,
           `Recovery attempt ${recoveryAttempts + 1} of ${maxRecoveryAttempts}.`,
-          `Expected durable output: ${expected}.`,
-          "Stop broad exploration.",
-          "Write the required artifact now.",
-          "If blocked, write the partial artifact and explicitly record the blocker instead of going silent.",
-        ];
+          "Finish reviewer aggregation and synthesize the verdict from the reviewers' findings.",
+          "Call `gsd_validate_milestone` with the complete validation result.",
+          "Do not manually write VALIDATION.md; it is a projection rendered by the canonical persistence operation.",
+          "If canonical persistence cannot be completed, stop and leave the unit fail-closed.",
+        ]
+      : isEscalation
+        ? [
+            `**FINAL ${reason === "idle" ? "IDLE" : "HARD TIMEOUT"} RECOVERY — last chance before skip.**`,
+            `You are still executing ${unitType} ${unitId}.`,
+            `Recovery attempt ${recoveryAttempts + 1} of ${maxRecoveryAttempts} — next failure skips this unit.`,
+            `Expected durable output: ${expected}.`,
+            "You MUST write the artifact file NOW, even if incomplete.",
+            "Write whatever you have — partial research, preliminary findings, best-effort analysis.",
+            "A partial artifact is infinitely better than no artifact.",
+            "If you are truly blocked, write the file with a BLOCKER section explaining why.",
+          ]
+        : [
+            `**${reason === "idle" ? "IDLE" : "HARD TIMEOUT"} RECOVERY — stay in auto-mode.**`,
+            `You are still executing ${unitType} ${unitId}.`,
+            `Recovery attempt ${recoveryAttempts + 1} of ${maxRecoveryAttempts}.`,
+            `Expected durable output: ${expected}.`,
+            "Stop broad exploration.",
+            "Write the required artifact now.",
+            "If blocked, write the partial artifact and explicitly record the blocker instead of going silent.",
+          ];
 
     const recoveryTrigger = getInFlightToolCount() === 0;
     if (recoveryTrigger) {
@@ -270,8 +280,11 @@ export async function recoverTimedOutUnit(
       },
       { triggerTurn: recoveryTrigger, deliverAs: "steer" },
     );
+    const recoveryTarget = unitType === "validate-milestone"
+      ? "finish reviewer aggregation and call gsd_validate_milestone"
+      : `produce ${expected}`;
     ctx.ui.notify(
-      `${reason === "idle" ? "Idle" : "Timeout"} recovery: steering ${unitType} ${unitId} to produce ${expected} (attempt ${attemptNumber}, session ${recoveryAttempts + 1}/${maxRecoveryAttempts}).`,
+      `${reason === "idle" ? "Idle" : "Timeout"} recovery: steering ${unitType} ${unitId} to ${recoveryTarget} (attempt ${attemptNumber}, session ${recoveryAttempts + 1}/${maxRecoveryAttempts}).`,
       "warning",
     );
     return "recovered";
