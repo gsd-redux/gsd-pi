@@ -525,6 +525,45 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(s.pendingVerificationRetry, null);
   });
 
+  test("shell parse execution fault pauses without consuming a verification retry", async () => {
+    createBasicTask();
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    const recordTaskTechnicalVerdict = mock.fn(() => verdictReceipt("fail"));
+    const routeTaskFailure = mock.fn(() => recoveryReceipt("remediate"));
+    vctx.runVerificationGate = () => ({
+      passed: false,
+      checks: [{
+        command: `node -e '"const'`,
+        exitCode: 1,
+        stdout: "",
+        stderr: "[eval]:1\nUnterminated string constant\nSyntaxError: Invalid or unexpected token",
+        durationMs: 10,
+        failureClass: "shell-parse",
+      }],
+      discoverySource: "preference",
+      timestamp: Date.now(),
+    });
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      recordTaskTechnicalVerdict,
+      routeTaskFailure,
+    };
+
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.match(pauseAutoMock.mock.calls[0]?.arguments[2]?.message ?? "", /shell could not parse/i);
+    assert.equal(recordTaskTechnicalVerdict.mock.callCount(), 0);
+    assert.equal(routeTaskFailure.mock.callCount(), 0);
+    assert.equal(s.verificationRetryCount.has("execute-task:M001/S01/T01"), false);
+    assert.equal(s.pendingVerificationRetry, null);
+  });
+
   test("source drift records an inconclusive verdict and routes to retry", async () => {
     const driftPath = join(tempDir, "drift-during-verification.txt");
     createBasicTask(`node -e "require('node:fs').writeFileSync('${driftPath}', 'changed')"`);

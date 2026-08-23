@@ -993,6 +993,20 @@ export async function runPostUnitVerification(
       result.passed = false;
     }
 
+    if (verdict.reason === "execution-fault") {
+      s.verificationRetryCount.delete(retryKey);
+      s.verificationRetryFailureHashes.delete(retryKey);
+      s.pendingVerificationRetry = null;
+      const message = `Verification gate execution fault: ${verdict.failureContext}`;
+      ctx.ui.notify(message, "error");
+      process.stderr.write(`verification-gate: pausing — ${verdict.failureContext}\n`);
+      await pauseAuto(ctx, pi, {
+        message,
+        category: "unknown",
+      });
+      return "pause";
+    }
+
     if (uokFlags.gates) {
       const gateRunner = new UokGateRunner();
       gateRunner.register({

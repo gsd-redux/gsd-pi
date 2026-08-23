@@ -89,8 +89,8 @@ export interface VerificationCheck {
   stdout: string;
   stderr: string;
   durationMs: number;
-  /** Infrastructure failure that prevented the command from producing a requirement verdict. */
-  failureClass?: "timeout" | "command-not-found";
+  /** Infrastructure/execution faults that prevented the command from producing a requirement verdict. */
+  failureClass?: "timeout" | "command-not-found" | "shell-parse";
 }
 
 /** A runtime error captured from bg-shell processes or browser console */

@@ -93,6 +93,32 @@ test("missing verification command pauses for the operator instead of retrying t
   assert.match(verdict.failureContext, /grep -q expected app\.css/);
 });
 
+test("shell parse failure is a non-retryable execution fault", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "preference",
+      checks: [
+        {
+          command: `node -e '"const'`,
+          exitCode: 1,
+          stdout: "",
+          stderr: "[eval]:1\nUnterminated string constant\nSyntaxError: Invalid or unexpected token",
+          durationMs: 10,
+          failureClass: "shell-parse",
+        },
+      ],
+    }),
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "execution-fault");
+  assert.equal(verdict.retryable, false);
+  assert.match(verdict.failureContext, /shell could not parse/i);
+  assert.match(verdict.failureContext, /node -e/);
+});
+
 test("blocking runtime errors provide failure context when host checks pass", () => {
   const verdict = decideVerificationVerdict(
     "execute-task",
