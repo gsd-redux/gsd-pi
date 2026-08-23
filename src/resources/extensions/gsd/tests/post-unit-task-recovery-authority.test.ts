@@ -5,13 +5,23 @@ import test from "node:test";
 
 import { postUnitPreVerification, type PostUnitContext } from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
 import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.ts";
+import {
+  _getAdapter,
   closeDatabase,
   insertMilestone,
   insertSlice,
   insertTask,
   openDatabase,
 } from "../gsd-db.ts";
+import {
+  claimTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
 import { cleanup, makeTempRepo } from "./test-utils.ts";
 
 function createTaskContext(basePath: string, pauseCalls: string[]): PostUnitContext {
@@ -79,7 +89,14 @@ test("DB-backed execute-task missing an Attempt Result bypasses generic artifact
 
   assert.equal(result, "continue");
   assert.equal(pctx.s.pendingVerificationRetry, null);
-  assert.equal(pctx.s.verificationRetryCount.size, 0);
+  // The host verification gate's auto-fix counter shares this key and must
+  // stay attempt-independent — deleting it here reset the retry bound to
+  // "attempt 1/2" on every new Attempt (#1971).
+  assert.equal(
+    pctx.s.verificationRetryCount.get("execute-task:M001/S01/T01"),
+    3,
+    "host auto-fix retry counter must survive the durable-authority deferral",
+  );
   assert.deepEqual(pauseCalls, []);
 });
 
@@ -117,5 +134,115 @@ test("DB-backed execute-task deterministic errors cannot write an artifact place
   );
   assert.equal(pctx.s.pendingVerificationRetry, null);
   assert.equal(pctx.s.lastToolInvocationError, null);
+  assert.deepEqual(pauseCalls, []);
+});
+
+// ── #1971: a staged Attempt awaiting host verification must not reset the
+// host auto-fix retry counter. Artifact readiness ("verify") only proves the
+// Attempt staged a Result — the host verification gate has not run yet, so the
+// "verification succeeded" clear must skip the shared retry key or every new
+// gsd_task_complete resets the bound to "attempt 1/2" and exhaustion is never
+// visibly reached.
+function stageAwaitingVerificationAttempt(): void {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  adapter.exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-1', 'test-host', 1, '2026-07-12T00:00:00.000Z', 'test',
+      '2026-07-12T00:00:00.000Z', 'active', '/tmp/project'
+    );
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES (
+      'M001', 'worker-1', 7, '2026-07-12T00:00:00.000Z',
+      '2099-07-12T00:00:00.000Z', 'held'
+    );
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-1971', 'turn-1971', 'worker-1', 7, 'M001', 'S01', 'T01',
+      'execute-task', 'M001/S01/T01', 'claimed', 1, '2026-07-12T00:00:00.000Z'
+    );
+  `);
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.ready",
+    idempotencyKey: "fixture-1971/task-ready",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+    });
+    return {
+      events: [{
+        eventType: "test.task.ready",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: { taskId: "T01" },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test-1971/m001/s01/t01",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  const dispatchRow = adapter
+    .prepare("SELECT MAX(id) AS id FROM unit_dispatches")
+    .get() as { id: number };
+  const claimed = claimTaskAttempt({
+    invocation: { idempotencyKey: "fixture-1971/claim", sourceTransport: "internal", actorType: "agent" },
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(dispatchRow.id),
+  });
+  settleTaskAttempt({
+    invocation: { idempotencyKey: "fixture-1971/settle", sourceTransport: "internal", actorType: "agent" },
+    attemptId: claimed.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "task work staged",
+    output: {},
+  });
+}
+
+test("staged awaiting-verification Attempt preserves the host auto-fix retry counter (#1971)", async (t) => {
+  const basePath = scaffoldDbBackedTask();
+  t.after(() => {
+    closeDatabase();
+    cleanup(basePath);
+  });
+  stageAwaitingVerificationAttempt();
+  const pauseCalls: string[] = [];
+  const pctx = createTaskContext(basePath, pauseCalls);
+  // As if the host gate already failed this unit once ("auto-fix attempt 1/2").
+  pctx.s.verificationRetryCount.set("execute-task:M001/S01/T01", 1);
+
+  const result = await postUnitPreVerification(pctx, {
+    skipSettleDelay: true,
+    skipWorktreeSync: true,
+  });
+
+  assert.equal(result, "continue");
+  assert.equal(
+    pctx.s.verificationRetryCount.get("execute-task:M001/S01/T01"),
+    1,
+    "a new staged Attempt must not reset the host auto-fix retry counter",
+  );
   assert.deepEqual(pauseCalls, []);
 });

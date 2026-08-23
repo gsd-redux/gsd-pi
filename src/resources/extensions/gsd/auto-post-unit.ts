@@ -451,6 +451,16 @@ function gitCommitRemediationRetryKey(unitType: string, unitId: string): string 
   return `git-commit:${verificationRetryKey(unitType, unitId)}`;
 }
 
+/**
+ * DB-backed execute-task verification recovery is owned by the durable
+ * authority (Attempt/Result/Verdict/Recovery rows) and the host verification
+ * gate — not the legacy artifact retry ladder. Its shared retry key must not
+ * be cleared by post-unit artifact verification (#1971).
+ */
+function isDurableVerificationTask(unitType: string): boolean {
+  return unitType === "execute-task" && isDbAvailable();
+}
+
 function stripKnownIdPrefix(value: string | undefined | null, id: string): string | undefined {
   const raw = String(value ?? "").trim();
   if (!raw) return undefined;
@@ -2291,15 +2301,19 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // root artifact write. If a premature write hits the write gate in the
       // same turn, the user wait is the meaningful state; pause instead of
       // writing a placeholder over PROJECT/REQUIREMENTS.
-      if (!triggerArtifactVerified && s.currentUnit.type === "execute-task" && isDbAvailable()) {
+      if (!triggerArtifactVerified && isDurableVerificationTask(s.currentUnit.type)) {
         const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
         if (s.pendingVerificationRetry?.unitId === s.currentUnit.id) {
           s.pendingVerificationRetry = null;
         }
         s.lastToolInvocationError = null;
         s.toolUnavailableRetries = 0;
-        s.verificationRetryCount.delete(retryKey);
-        s.verificationRetryFailureHashes.delete(retryKey);
+        // Deliberately keep verificationRetryCount / verificationRetryFailureHashes:
+        // the host verification gate's auto-fix counter shares this key and must
+        // stay attempt-independent (per unit + failure). Deleting it here reset
+        // the bound to "attempt 1/2" on every new Attempt, so exhaustion was
+        // never visibly reached (#1971). The gate clears both itself on
+        // pass/pause/abort.
         s.exhaustedVerificationUnits.delete(retryKey);
         saveCustomVerifyRetryCounts(s, {
           logFailure: err => debugLog("postUnit", {
@@ -2616,8 +2630,17 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           s.pendingVerificationRetry = null;
         }
         s.toolUnavailableRetries = 0;
-        s.verificationRetryCount.delete(retryKey);
-        s.verificationRetryFailureHashes.delete(retryKey);
+        // For a DB-backed execute-task, artifact readiness only proves the
+        // Attempt staged a Result at the verify stage — the host verification
+        // gate has not run yet. Its auto-fix retry counter shares this key and
+        // must stay attempt-independent (per unit + failure): every
+        // gsd_task_complete creates a NEW Attempt, so clearing here reset the
+        // bound to "attempt 1/2" on each retry and exhaustion was never
+        // visibly reached (#1971). The gate clears both on pass/pause/abort.
+        if (!isDurableVerificationTask(s.currentUnit.type)) {
+          s.verificationRetryCount.delete(retryKey);
+          s.verificationRetryFailureHashes.delete(retryKey);
+        }
         s.exhaustedVerificationUnits.delete(retryKey);
         saveCustomVerifyRetryCounts(s, { logFailure: err => debugLog("postUnit", { phase: "save-verify-retries-failed", error: err instanceof Error ? err.message : String(err) }) });
 

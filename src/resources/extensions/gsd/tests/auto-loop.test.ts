@@ -4342,7 +4342,7 @@ test("autoLoop handles verification retry by continuing loop", async (t) => {
   }
 });
 
-test("autoLoop stops machine-terminal verification abort without pausing or publishing", async () => {
+test("autoLoop pauses a machine-terminal verification abort with a terminal notification (#1971)", async () => {
   _resetPendingResolve();
   mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
   try {
@@ -4351,13 +4351,23 @@ test("autoLoop stops machine-terminal verification abort without pausing or publ
     ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
     const pi = makeMockPi();
     const s = makeLoopSession();
-    let pauseCalls = 0;
+    const pauseMessages: string[] = [];
     let postVerificationCalls = 0;
     let publicationCalls = 0;
 
     const deps = makeMockDeps({
-      runPostUnitVerification: async () => "abort" as const,
-      pauseAuto: async () => { pauseCalls++; },
+      runPostUnitVerification: async () => {
+        s.lastTaskRecoveryAbortId = "recovery-action-1";
+        return "abort" as const;
+      },
+      pauseAuto: async (
+        _ctx?: unknown,
+        _pi?: unknown,
+        errorContext?: { message?: string },
+      ) => {
+        // Production pauseAuto notifies the errorContext message itself.
+        pauseMessages.push(errorContext?.message ?? "");
+      },
       postUnitPostVerification: async () => {
         postVerificationCalls++;
         s.active = false;
@@ -4373,10 +4383,16 @@ test("autoLoop stops machine-terminal verification abort without pausing or publ
     mock.timers.tick(30_000);
     await loopPromise;
 
-    assert.equal(pauseCalls, 0);
+    // The loop must never silent-idle after a terminal abort (#1971): auto-mode
+    // pauses with a message carrying the recoveryActionId so the operator sees
+    // the /gsd recover instruction and /gsd auto can resume afterwards.
+    assert.equal(pauseMessages.length, 1, "verification abort must pause auto-mode");
+    assert.ok(
+      pauseMessages[0]?.includes("/gsd recover recovery-action-1"),
+      `expected the pause message to name the recovery action, got: ${JSON.stringify(pauseMessages)}`,
+    );
     assert.equal(postVerificationCalls, 0);
     assert.equal(publicationCalls, 0);
-    assert.equal(s.active, true, "verification abort ends the loop without inventing a human pause state");
   } finally {
     mock.timers.reset();
   }

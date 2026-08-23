@@ -275,6 +275,17 @@ export async function runFinalize(
       const abortReason = abortId
         ? `verification-abort (recoveryActionId: ${abortId}; resume with /gsd recover ${abortId})`
         : "verification-abort";
+      // Never exit silently: breaking without a terminal notification left a
+      // headless session idling with nothing scheduled until an external
+      // timeout — the loop exits on the first abort, so the ADR-047 trip-at-2
+      // backstop can never fire in-session (#1971). Pause with the sanctioned
+      // exit so the operator sees the recovery instruction and /gsd auto can
+      // resume after `/gsd recover`. pauseAuto notifies the errorContext
+      // message itself, so no separate notify here.
+      const abortMessage = abortId
+        ? `Verification auto-fix retries are exhausted — durable recovery aborted this task. Resume with /gsd recover ${abortId} after fixing the failure.`
+        : "Verification was aborted by durable task recovery.";
+      await deps.pauseAuto(ctx, pi, { message: abortMessage, category: "unknown" });
       debugLog("autoLoop", { phase: "exit", reason: abortReason });
       clearFinalizingUnit();
       return { action: "break", reason: abortReason };

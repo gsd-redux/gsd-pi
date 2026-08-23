@@ -7,6 +7,7 @@ import {
 } from "../auto-verification.ts";
 import { DEFAULT_COMMAND_TIMEOUT_MS } from "../constants.ts";
 import { describeHostVerificationRationale } from "../verification-verdict.ts";
+import { cleanup, makeTempRepo } from "./test-utils.ts";
 
 function createVerificationContext(currentUnit: { type: string; id: string } | null) {
 	return {
@@ -216,4 +217,91 @@ test("verification_timeout_ms unset stays 120s; set value is enforced (#1759)", 
 	assert.equal(_resolveVerificationTimeoutMsForTest(undefined), DEFAULT_COMMAND_TIMEOUT_MS);
 	assert.equal(_resolveVerificationTimeoutMsForTest({}), DEFAULT_COMMAND_TIMEOUT_MS);
 	assert.equal(_resolveVerificationTimeoutMsForTest({ verification_timeout_ms: 2500 }), 2500);
+});
+
+test("identical gate failures count 1/2, then 2/2, then exhaust into a durable abort (#1971)", async (t) => {
+	const basePath = makeTempRepo("gsd-auto-fix-retry-bound-");
+	t.after(() => cleanup(basePath));
+	const notifications: string[] = [];
+	let routeCalls = 0;
+	let attemptNumber = 0;
+	let paused = false;
+	const session = {
+		basePath,
+		canonicalProjectRoot: basePath,
+		currentUnit: { type: "execute-task", id: "M001/S01/T01" },
+		lastTaskRecoveryAbortId: null as string | null,
+		pendingVerificationRetry: null as { unitId: string } | null,
+		verificationRetryCount: new Map<string, number>(),
+		verificationRetryFailureHashes: new Map<string, string>(),
+	};
+	const taskAuthority = {
+		readLatestTaskAttempt: () => ({
+			// Every gsd_task_complete creates a NEW Attempt; the retry bound must
+			// be per unit + failure, not per attemptId.
+			attemptId: `attempt-${attemptNumber}`,
+			resultId: `result-${attemptNumber}`,
+			state: "settled",
+			outcome: "succeeded",
+			nextStage: "verify",
+		}),
+		readTaskTechnicalVerdict: () => null,
+		recordTaskTechnicalVerdict: () => ({
+			verdictId: `verdict-${attemptNumber}`,
+			evidenceId: `evidence-${attemptNumber}`,
+		}),
+		invalidateTaskTechnicalPass: () => { throw new Error("must not invalidate"); },
+		routeTaskFailure: () => {
+			routeCalls++;
+			// Mirrors the durable remediation budget (recovery-policy.ts:
+			// verification-failed → remediate, maxUses 2, per task + fingerprint).
+			if (routeCalls <= 2) {
+				return { action: "remediate", status: "applied", recoveryActionId: `ra-${routeCalls}` };
+			}
+			return { action: "abort", status: "applied", resumeAuthorized: false, recoveryActionId: "ra-3" };
+		},
+	};
+	const runGate = async () => runPostUnitVerification({
+		s: session,
+		ctx: { ui: { notify: (message: string) => notifications.push(message) } },
+		pi: {},
+		taskAuthority,
+		runVerificationGate: () => ({
+			passed: false,
+			checks: [{
+				command: "npm test",
+				exitCode: 1,
+				stdout: "",
+				stderr: "Cannot find module './later-task-module'",
+				durationMs: 10,
+			}],
+			discoverySource: "task-plan",
+			timestamp: Date.now(),
+		}),
+	} as never, async () => {
+		paused = true;
+	});
+
+	attemptNumber = 1;
+	assert.equal(await runGate(), "retry");
+	assert.ok(
+		notifications.some((message) => message.includes("auto-fix attempt 1/")),
+		`first failure must announce attempt 1, got: ${JSON.stringify(notifications)}`,
+	);
+	// The auto-loop consumes the pending retry when it re-dispatches the unit.
+	session.pendingVerificationRetry = null;
+
+	attemptNumber = 2;
+	assert.equal(await runGate(), "retry");
+	assert.ok(
+		notifications.some((message) => message.includes("auto-fix attempt 2/")),
+		`second identical failure must announce attempt 2, not reset to 1 (got: ${JSON.stringify(notifications)})`,
+	);
+	session.pendingVerificationRetry = null;
+
+	attemptNumber = 3;
+	assert.equal(await runGate(), "abort", "the exhausted durable budget must surface as abort");
+	assert.equal(session.lastTaskRecoveryAbortId, "ra-3");
+	assert.equal(session.verificationRetryCount.size, 0, "abort clears the per-unit retry counter");
+	assert.equal(paused, false, "the gate defers the pause to the finalize abort path");
 });
