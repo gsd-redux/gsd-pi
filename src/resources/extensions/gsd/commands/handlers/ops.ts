@@ -132,7 +132,13 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     return true;
   }
   if (trimmed === "recover" || trimmed.startsWith("recover ")) {
-    await handleRecover(ctx, projectRoot(), trimmed.replace(/^recover\s*/, "").trim());
+    const args = trimmed.replace(/^recover\s*/, "").trim();
+    if (args && !args.startsWith("--")) {
+      const { handleTaskRecoveryResume } = await import("../../commands-task-recovery.js");
+      await handleTaskRecoveryResume(args, ctx, projectRoot());
+    } else {
+      await handleRecover(ctx, projectRoot(), args);
+    }
     return true;
   }
   if (trimmed === "rebuild" || trimmed.startsWith("rebuild ")) {

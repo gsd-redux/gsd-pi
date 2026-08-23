@@ -47,6 +47,8 @@ import { verifyExpectedArtifact, readTerminalTaskRecoveryAbort } from "../artifa
 import { formatTextStatus } from "../commands/handlers/core.ts";
 import type { GSDState } from "../types.ts";
 import { refreshRecoveryDbForArtifact } from "../auto-recovery.ts";
+import { withCommandCwd } from "../commands/context.ts";
+import { handleOpsCommand } from "../commands/handlers/ops.ts";
 
 const tempDirs = new Set<string>();
 
@@ -190,6 +192,41 @@ function seedFailedAttempt(): {
     kernelCheckpointId: String(current.kernel_checkpoint_id),
   };
 }
+
+test("/gsd recover authorizes an eligible task abort for a TUI operator", async () => {
+  const scope = seedFailedAttempt();
+  const abort = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/cli/abort"),
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "executor session terminated",
+    evidence: { source: "executor" },
+    rationale: "require an explicit repaired retry",
+  });
+  assert.equal(abort.action, "abort");
+
+  const notifications: Array<{ message: string; level: string }> = [];
+  const answers = [
+    "Repaired the executor lifecycle and verified the task can be retried.",
+    "pnpm test task-recovery passed",
+  ];
+  const ctx = {
+    ui: {
+      input: async () => answers.shift(),
+      notify: (message: string, level: string) => notifications.push({ message, level }),
+    },
+  };
+
+  const handled = await withCommandCwd(scope.basePath, () =>
+    handleOpsCommand(`recover ${abort.recoveryActionId}`, ctx as never, {} as never));
+
+  assert.equal(handled, true);
+  assert.equal(readTaskRecoveryRoute(scope.attemptId)?.resumeAuthorized, true);
+  assert.ok(notifications.some(({ message, level }) =>
+    level === "success" && message.includes(abort.recoveryActionId)));
+});
 
 for (const recoveryCase of [
   { failureKind: "tool-unavailable" as const, action: "retry" },

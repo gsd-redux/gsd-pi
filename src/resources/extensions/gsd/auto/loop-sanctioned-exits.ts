@@ -12,8 +12,7 @@
  * - `/gsd rebuild markdown` — the #1520 dispatch stop and the drift reports in
  *   state-reconciliation/drift/* and migration-auto-check.ts.
  * - `/gsd doctor fix` — commands-handlers.ts parseDoctorArgs ("fix" mode).
- * - `gsd_task_recovery_resume` — auto-recovery.ts / auto-post-unit.ts terminal
- *   task-recovery abort notices.
+ * - `/gsd recover <recoveryActionId>` — terminal Task recovery abort notices.
  * - `/gsd status` + `/gsd auto` — lease-conflict-notice.ts.
  * - `/gsd auto` — decideMemoryPressure's own stop message.
  *
@@ -42,9 +41,9 @@ const GUARD_SANCTIONED_EXITS: Record<string, string> = {
   "context-window":
     "The context window reached its configured pause threshold. Run `/gsd auto` to continue in a fresh session.",
   "unit-break":
-    "The unit stopped with a terminal failure. If its task recovery aborted, resume it with `gsd_task_recovery_resume` using the recoveryActionId named in the failure; otherwise fix the reported failure and re-run `/gsd auto`.",
+    "The unit stopped with a terminal failure. If its task recovery aborted, resume it with `/gsd recover <recoveryActionId>` using the id named in the failure; otherwise fix the reported failure and re-run `/gsd auto`.",
   "unit-retry":
-    "The unit asked to retry twice on identical inputs. Fix the reported failure — a terminal task-recovery abort resumes with `gsd_task_recovery_resume`, projection drift with `/gsd rebuild markdown` — then re-run `/gsd auto`.",
+    "The unit asked to retry twice on identical inputs. Fix the reported failure — a terminal task-recovery abort resumes with `/gsd recover <recoveryActionId>`, projection drift with `/gsd rebuild markdown` — then re-run `/gsd auto`.",
   "finalize-break":
     "Closeout failed terminally for this unit. Inspect it with `/gsd status`, repair state with `/gsd doctor fix`, then re-run `/gsd auto`.",
   "finalize-retry":
@@ -52,7 +51,7 @@ const GUARD_SANCTIONED_EXITS: Record<string, string> = {
   "orchestration-skip":
     "The orchestrator skipped the same state twice without advancing. Inspect it with `/gsd status` and repair with `/gsd doctor fix` (`/gsd rebuild markdown` for projection drift), then re-run `/gsd auto`.",
   "orchestration-stale-active-unit":
-    "Auto mode kept re-polling a unit marked active while nothing was executing. That marker is per-session: stop this session and re-run `/gsd auto` to re-derive it. If the unit itself is stuck, inspect it with `/gsd status` and `/gsd forensics` first, and resume an aborted task recovery with `gsd_task_recovery_resume`.",
+    "Auto mode kept re-polling a unit marked active while nothing was executing. That marker is per-session: stop this session and re-run `/gsd auto` to re-derive it. If the unit itself is stuck, inspect it with `/gsd status` and `/gsd forensics` first, and resume an aborted task recovery with `/gsd recover <recoveryActionId>`.",
   "orchestration-transient-pause":
     "A transient failure never healed. Read the failing operation with `/gsd forensics`, repair `.gsd/` state with `/gsd doctor fix`, then re-run `/gsd auto`.",
   "transient-retry-exhausted":
@@ -80,7 +79,7 @@ const GUARD_SANCTIONED_EXITS: Record<string, string> = {
   "custom-engine-task-replan":
     "The replanned task artifact never became durable. Re-project it with `/gsd rebuild markdown`, confirm with `/gsd status`, then re-run `/gsd auto`.",
   "custom-engine-task-verify":
-    "Task verification kept failing for this task. Inspect the verdict with `/gsd status`; if its recovery aborted, resume with `gsd_task_recovery_resume`; then re-run `/gsd auto`.",
+    "Task verification kept failing for this task. Inspect the verdict with `/gsd status`; if its recovery aborted, resume with `/gsd recover <recoveryActionId>`; then re-run `/gsd auto`.",
   "custom-engine-verify":
     "Custom-engine verification kept failing for this unit. Fix the verification failure — `/gsd forensics` carries the failing command — then re-run `/gsd auto`.",
   "custom-engine-reconcile":

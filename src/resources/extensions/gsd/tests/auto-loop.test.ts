@@ -4397,7 +4397,7 @@ test("autoLoop pauses a predecessor task-recovery abort before any agent turn", 
   let pauseReason: string | undefined;
   let terminalAbortReads = 0;
   const abortReason =
-    "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
+    "task-recovery-abort (recoveryActionId: recovery-action-1; resume with /gsd recover recovery-action-1 or gsd_task_recovery_resume)";
 
   const deps = makeMockDeps({
     taskExecutionBoundary: async (input, run, cutoverDeps) =>

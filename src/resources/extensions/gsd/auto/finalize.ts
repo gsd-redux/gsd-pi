@@ -268,13 +268,12 @@ export async function runFinalize(
     );
 
     if (verificationResult === "abort") {
-      // The abort is terminal but resumable via `gsd_task_recovery_resume`, which needs
-      // the exact recoveryActionId. Carry it in the break reason so it reaches the
-      // journal, the dispatch ledger, and the operator rather than being discarded —
-      // otherwise every later dispatch loops on an opaque `task-recovery-abort` (#1593).
+      // The abort is terminal but operator-resumable via `/gsd recover`, which
+      // needs the exact recoveryActionId. Carry it in the break reason so it
+      // reaches the journal, dispatch ledger, and operator (#1593).
       const abortId = s.lastTaskRecoveryAbortId;
       const abortReason = abortId
-        ? `verification-abort (recoveryActionId: ${abortId}; resume with gsd_task_recovery_resume)`
+        ? `verification-abort (recoveryActionId: ${abortId}; resume with /gsd recover ${abortId})`
         : "verification-abort";
       debugLog("autoLoop", { phase: "exit", reason: abortReason });
       clearFinalizingUnit();

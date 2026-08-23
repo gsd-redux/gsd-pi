@@ -273,9 +273,10 @@ test("ensureWorkspaceGitReadyForPath does not block on staged files with trailin
   }
 });
 
-test("isWorkspaceGitAllowedCommand allowlists doctor, closeout, and dispatch complete-milestone", () => {
+test("isWorkspaceGitAllowedCommand allowlists recovery commands and dispatch complete-milestone", () => {
   assert.equal(isWorkspaceGitAllowedCommand("doctor"), true);
   assert.equal(isWorkspaceGitAllowedCommand("doctor fix"), true);
+  assert.equal(isWorkspaceGitAllowedCommand("recover recovery-action-1"), true);
   assert.equal(isWorkspaceGitAllowedCommand("closeout retry"), true);
   assert.equal(isWorkspaceGitAllowedCommand("dispatch complete-milestone M001"), true);
   assert.equal(isWorkspaceGitAllowedCommand("dispatch complete M001"), true);

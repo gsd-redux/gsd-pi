@@ -377,14 +377,14 @@ function routeTaskFailure(
   });
 }
 
-// The terminal abort is resumable by design via `gsd_task_recovery_resume`, but that
-// tool requires the exact recoveryActionId. Carry the id in the break reason so it
-// reaches the journal, the dispatch ledger, and the operator instead of being discarded.
+// The terminal abort is resumable by design via the operator-facing `/gsd recover`
+// bridge (or the equivalent agent tool). Carry the exact id in the break reason so
+// it reaches the journal, dispatch ledger, and operator instead of being discarded.
 function taskRecoveryAbortResult(recoveryActionId: string): UnitPhaseResult {
   return {
     action: "break",
     reason:
-      `task-recovery-abort (recoveryActionId: ${recoveryActionId}; resume with gsd_task_recovery_resume)`,
+      `task-recovery-abort (recoveryActionId: ${recoveryActionId}; resume with /gsd recover ${recoveryActionId} or gsd_task_recovery_resume)`,
   };
 }
 

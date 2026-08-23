@@ -40,9 +40,9 @@ import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 
 // The stuck-state resume key must ride along with every terminal abort break so an
-// operator can call gsd_task_recovery_resume without querying the database by hand.
+// operator can run /gsd recover without querying the database by hand.
 const TASK_RECOVERY_ABORT_REASON =
-  "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
+  "task-recovery-abort (recoveryActionId: recovery-action-1; resume with /gsd recover recovery-action-1 or gsd_task_recovery_resume)";
 
 type UnitPhaseResult =
   | { action: "break"; reason: string }
@@ -902,7 +902,7 @@ test("a historical terminal abort short-circuits failed Result routing", async (
 
   assert.deepEqual(result, {
     action: "break",
-    reason: "task-recovery-abort (recoveryActionId: historical-abort; resume with gsd_task_recovery_resume)",
+    reason: "task-recovery-abort (recoveryActionId: historical-abort; resume with /gsd recover historical-abort or gsd_task_recovery_resume)",
   });
   assert.equal(domain.routes.length, 0, "the stale attempt.route key must not be touched");
   assert.equal(domain.claims.length, 0);
@@ -949,7 +949,7 @@ test("a historical terminal abort short-circuits stored Technical Verdict routin
 
   assert.deepEqual(result, {
     action: "break",
-    reason: "task-recovery-abort (recoveryActionId: historical-abort; resume with gsd_task_recovery_resume)",
+    reason: "task-recovery-abort (recoveryActionId: historical-abort; resume with /gsd recover historical-abort or gsd_task_recovery_resume)",
   });
   assert.equal(domain.routes.length, 0, "the stale attempt.route key must not be touched");
   assert.equal(domain.claims.length, 0);
@@ -1022,7 +1022,7 @@ for (const phaseResult of [
     assert.equal(terminalResult.action, "break");
     assert.match(
       (terminalResult as { reason: string }).reason,
-      /^task-recovery-abort \(recoveryActionId: [0-9a-f-]{36}; resume with gsd_task_recovery_resume\)$/,
+      /^task-recovery-abort \(recoveryActionId: ([0-9a-f-]{36}); resume with \/gsd recover \1 or gsd_task_recovery_resume\)$/,
     );
     const firstAttempt = database().prepare(`
       SELECT attempt_id FROM workflow_execution_attempts WHERE attempt_number = 1
@@ -1116,7 +1116,7 @@ test("a superseded terminal abort stops before a succeeded head can redispatch",
 
   assert.deepEqual(result, {
     action: "break",
-    reason: "task-recovery-abort (recoveryActionId: recovery-action-aborted; resume with gsd_task_recovery_resume)",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-aborted; resume with /gsd recover recovery-action-aborted or gsd_task_recovery_resume)",
   });
   assert.equal(runs, 0);
   assert.equal(domain.claims.length, 0);
@@ -1375,7 +1375,7 @@ test("a historical terminal abort stops a failed predecessor before attempt.rout
 
   assert.deepEqual(result, {
     action: "break",
-    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with gsd_task_recovery_resume)",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with /gsd recover recovery-action-historical or gsd_task_recovery_resume)",
   });
   assert.equal(domain.routes.length, 0, "a historical abort must short-circuit before attempt.route");
   assert.equal(domain.claims.length, 0);
@@ -1509,7 +1509,7 @@ test("a historical terminal abort stops stored technical-failure routing before 
 
   assert.deepEqual(result, {
     action: "break",
-    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with gsd_task_recovery_resume)",
+    reason: "task-recovery-abort (recoveryActionId: recovery-action-historical; resume with /gsd recover recovery-action-historical or gsd_task_recovery_resume)",
   });
   assert.equal(domain.routes.length, 0, "a historical abort must short-circuit before attempt.route");
   assert.equal(domain.claims.length, 0);

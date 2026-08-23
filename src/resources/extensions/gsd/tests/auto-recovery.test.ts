@@ -677,8 +677,7 @@ test("refreshRecoveryDbForArtifact refuses execute-task recovery after a termina
   assert.equal(result.fatal, true);
   assert.equal(result.reason, "execute-task-recovery-aborted");
   assert.ok(result.message.includes(route.recoveryActionId));
-  assert.ok(result.message.includes("gsd_task_recovery_resume"));
-  assert.ok(result.message.includes("gsd recover"));
+  assert.ok(result.message.includes(`/gsd recover ${route.recoveryActionId}`));
 });
 
 test("refreshRecoveryDbForArtifact closes complete-milestone DB row when artifacts exist but DB is stale (#5568)", async () => {

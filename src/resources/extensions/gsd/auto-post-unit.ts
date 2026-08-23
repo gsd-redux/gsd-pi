@@ -132,7 +132,7 @@ export function resolveEvidenceRoutePresentation(
 } {
   let resumeInstruction = "resume with /gsd auto to retry evidence recovery routing";
   if (routed?.outcome === "abort") {
-    resumeInstruction = "resume with gsd_task_recovery_resume";
+    resumeInstruction = `resume with /gsd recover ${routed.recoveryActionId}`;
   } else if (routed) {
     resumeInstruction = "resume with /gsd auto to re-run the task";
   }

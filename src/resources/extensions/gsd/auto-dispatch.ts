@@ -806,7 +806,7 @@ function readExecuteTaskTerminalAbort(
   if (!terminalAbort) return null;
   return {
     action: "stop",
-    reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}). Resume it with gsd_task_recovery_resume.`,
+    reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}). Resume it with /gsd recover ${terminalAbort.recoveryActionId}.`,
     level: "error",
   };
 }
