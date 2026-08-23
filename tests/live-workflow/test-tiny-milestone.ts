@@ -4,12 +4,9 @@
  * Seeds a one-slice/one-task milestone whose task is "make answer() return
  * 42" (the bundled test fails until then), then dispatches ONE unit with
  * `gsd headless next` — a real agent turn that edits the code and passes the
- * host-owned verification gate, after which step-mode exits 0. We use `next`
- * rather than `auto` deliberately: `auto` would loop into milestone closeout,
- * which is built around human-gated checkpoints that don't resolve in
- * non-supervised headless mode (the agent's closeout turn hangs with no
- * output). `next` exercises the real agent through the real dispatch +
- * verification gates without that interactive tail.
+ * host-owned verification gate, after which step-mode exits 0. This is the
+ * fast, cheap smoke of one dispatch; test-multi-slice-auto.ts runs the full
+ * `auto` loop over three dependent slices to milestone completion.
  *
  * Proof is durable only — never agent prose: exit code + the task's own
  * verification command + git history.

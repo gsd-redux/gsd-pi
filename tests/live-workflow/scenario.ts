@@ -1,12 +1,15 @@
 /**
  * Live-workflow scenario runner.
  *
- * Each scenario seeds an isolated project, dispatches one real workflow Unit,
- * and asserts durable outcomes. Scenario files stay small: they describe the
+ * Each scenario seeds an isolated project, dispatches a real workflow run
+ * (`next` for one unit, `auto` for the whole milestone), and asserts durable
+ * outcomes. Scenario files stay small: they describe the
  * seed and proof, while this module owns the shared live-run interface.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { artifactsFor, createTmpProject, type TmpProject } from "../e2e/_shared/index.ts";
 import {
@@ -23,7 +26,8 @@ export interface LiveWorkflowScenario {
   skipReason?: string | null;
   seed(project: TmpProject): LiveWorkflowSeed;
   dispatch?: {
-    command?: "next";
+    command?: "next" | "auto";
+    /** Scenario default; GSD_LIVE_WORKFLOW_TIMEOUT_MS always wins when set. */
     timeoutMs?: number;
     maxRestarts?: number;
   };
@@ -46,6 +50,8 @@ export interface LiveWorkflowRunResult {
   stdout: string;
   stderr: string;
   events: readonly Record<string, unknown>[];
+  commitsBefore: number;
+  commitsAfter: number;
 }
 
 type LiveWorkflowOutputFormat = "text" | "stream-json";
@@ -60,7 +66,7 @@ function resolveOutputFormat(): LiveWorkflowOutputFormat {
 }
 
 function resolveTimeoutMs(scenario: LiveWorkflowScenario): number {
-  return scenario.dispatch?.timeoutMs ?? Number(process.env.GSD_LIVE_WORKFLOW_TIMEOUT_MS ?? 300_000);
+  return Number(process.env.GSD_LIVE_WORKFLOW_TIMEOUT_MS ?? scenario.dispatch?.timeoutMs ?? 300_000);
 }
 
 function parseJsonEvents(stdout: string): Record<string, unknown>[] {
@@ -109,7 +115,7 @@ export async function runLiveWorkflowScenario(scenario: LiveWorkflowScenario): P
   if (process.env.GSD_LIVE_TESTS !== "1") skip("set GSD_LIVE_TESTS=1 to enable");
   if (scenario.skipReason) skip(scenario.skipReason);
   if (!hasUsableCredentials()) {
-    skip("no provider credentials in env (export a *_API_KEY or *_OAUTH_TOKEN)");
+    skip("no provider credentials in env (export a *_API_KEY or *_OAUTH_TOKEN, or set GSD_LIVE_WORKFLOW_USE_HOME=1)");
   }
   console.log(`Credentials: ${credentialNames().join(", ")}`);
 
@@ -207,8 +213,17 @@ export async function runLiveWorkflowScenario(scenario: LiveWorkflowScenario): P
       stdout: result.stdout,
       stderr: result.stderr,
       events,
+      commitsBefore,
+      commitsAfter,
     };
   } catch (err) {
+    // Keep the DB next to the transcript so a blocked/wedged run can be
+    // post-mortemed (milestone/slice/task rows, wedge records) after cleanup.
+    const dbPath = join(project.dir, ".gsd", "gsd.db");
+    if (existsSync(dbPath)) {
+      artifacts.write("gsd.db", readFileSync(dbPath));
+      console.log(`gsd.db: ${artifacts.dir}/gsd.db`);
+    }
     project.cleanup();
     throw err;
   }

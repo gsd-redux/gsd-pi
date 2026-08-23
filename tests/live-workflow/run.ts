@@ -1,11 +1,13 @@
 /**
  * Live-workflow runner.
  *
- * Drives the REAL `gsd` binary to dispatch a REAL agent unit (`gsd headless
- * next`) against a REAL model — no fake-LLM transcript. Each `test-*.ts`
- * script seeds a tiny milestone in a throwaway project, dispatches one unit,
- * and asserts on durable outcomes (the verification command passes, git has
- * the agent's work) rather than on agent prose, which drifts every run.
+ * Drives the REAL `gsd` binary against a REAL model — no fake-LLM transcript.
+ * Each `test-*.ts` script seeds a tiny milestone in a throwaway project, then
+ * dispatches either one unit (`gsd headless next`, test-tiny-milestone.ts) or
+ * the full loop (`gsd headless auto`, test-multi-slice-auto.ts), and
+ * asserts on durable outcomes (the verification command passes, git has the
+ * agent's work, the milestone is closed in gsd.db) rather than on agent
+ * prose, which drifts every run.
  *
  * This is the live counterpart to tests/e2e (fake LLM) and tests/live
  * (provider transport smoke). It is slow and costs real tokens, so it is
@@ -22,7 +24,13 @@
  *                                    falls back to `gsd` on PATH if unset)
  *   GSD_LIVE_WORKFLOW_MODEL=<id>     optional model override; default uses the
  *                                    configured default model (model-agnostic)
- *   GSD_LIVE_WORKFLOW_TIMEOUT_MS     optional dispatch timeout (default 300000)
+ *   GSD_LIVE_WORKFLOW_TIMEOUT_MS     optional dispatch timeout (default 300000
+ *                                    for `next`, 1800000 for `auto`)
+ *   GSD_LIVE_WORKFLOW_RUNNER_TIMEOUT_MS optional extra per-test deadline for
+ *                                    this runner (unset = none; scenarios
+ *                                    enforce their own budget)
+ *   GSD_LIVE_WORKFLOW_USE_HOME=1     forward the real HOME so the child uses
+ *                                    ~/.gsd/agent/auth.json (counts as a credential)
  */
 import { readdirSync, existsSync } from "fs";
 import { execFileSync } from "child_process";
@@ -50,7 +58,13 @@ if (!smokeBinary) {
   console.log("GSD_SMOKE_BINARY not set — falling back to `gsd` on PATH.");
 }
 
-const perTestTimeoutMs = Number(process.env.GSD_LIVE_WORKFLOW_RUNNER_TIMEOUT_MS ?? 900_000);
+// Each scenario enforces its own wall-clock budget (GSD_LIVE_WORKFLOW_TIMEOUT_MS
+// or the scenario default) and kills the gsd child itself, so the runner adds
+// no second deadline unless asked to. A runner deadline shorter than a
+// scenario budget would mask a real wedge as a runner kill.
+const perTestTimeoutMs = process.env.GSD_LIVE_WORKFLOW_RUNNER_TIMEOUT_MS
+  ? Number(process.env.GSD_LIVE_WORKFLOW_RUNNER_TIMEOUT_MS)
+  : undefined;
 
 const testFiles = readdirSync(__dirname)
   .filter((f) => f.startsWith("test-") && f.endsWith(".ts"))
