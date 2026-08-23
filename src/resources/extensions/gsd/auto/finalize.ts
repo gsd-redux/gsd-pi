@@ -275,6 +275,14 @@ export async function runFinalize(
       const abortReason = abortId
         ? `verification-abort (recoveryActionId: ${abortId}; resume with /gsd recover ${abortId})`
         : "verification-abort";
+      const abortMessage = abortId
+        ? `Verification recovery budget exhausted. Auto-mode is paused (recoveryActionId: ${abortId}). Resume with /gsd recover ${abortId}.`
+        : "Verification recovery budget exhausted. Auto-mode is paused; run /gsd recover to inspect recovery options.";
+      ctx.ui.notify(abortMessage, "error");
+      await deps.pauseAuto(ctx, pi, {
+        message: abortMessage,
+        category: "unknown",
+      });
       debugLog("autoLoop", { phase: "exit", reason: abortReason });
       clearFinalizingUnit();
       return { action: "break", reason: abortReason };

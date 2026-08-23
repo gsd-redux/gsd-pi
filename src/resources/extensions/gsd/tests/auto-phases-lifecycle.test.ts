@@ -219,6 +219,56 @@ test("runFinalize keeps a durable Task verification retry agent-owned across rep
   assert.equal(s.pendingVerificationRetry?.attempt, 2);
 });
 
+test("runFinalize pauses and notifies when durable Task verification aborts", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-finalize-task-abort-"));
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const s = new AutoSession();
+  s.basePath = base;
+  s.currentUnit = {
+    type: "execute-task",
+    id: "M001/S01/T01",
+    startedAt: 1,
+  };
+  const notifications: Array<{ message: string; severity?: string }> = [];
+  let pauseCalls = 0;
+
+  const result = await runFinalizeWithDeps(
+    s,
+    {
+      pauseAuto: async () => {
+        pauseCalls++;
+      },
+      runPostUnitVerification: async () => {
+        s.lastTaskRecoveryAbortId = "recovery-action-1971";
+        return "abort";
+      },
+    },
+    {
+      ui: {
+        notify(message: string, severity?: string) {
+          notifications.push({ message, severity });
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: "verification-abort (recoveryActionId: recovery-action-1971; resume with /gsd recover recovery-action-1971)",
+  });
+  assert.equal(pauseCalls, 1);
+  assert.ok(
+    notifications.some(({ message, severity }) =>
+      severity === "error" &&
+      message.includes("recoveryActionId: recovery-action-1971") &&
+      message.includes("/gsd recover recovery-action-1971")
+    ),
+  );
+});
+
 test("runFinalize still pauses a non-Task verification retry with a repeated failure signature", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-finalize-slice-retry-"));
   t.after(() => {
