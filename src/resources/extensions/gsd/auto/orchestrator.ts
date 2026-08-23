@@ -1322,7 +1322,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         ? getDispatchById(latestTaskAttempt.coordinationDispatchId)
         : null;
       const orphanCandidate = activeDispatch
-        ?? (latestTaskAttempt && (latestTaskAttempt.state === "running" || recovery?.action === "abort")
+        ?? (latestTaskAttempt?.state === "running"
           ? attemptDispatch
           : null);
       if (orphanCandidate) {
@@ -1333,7 +1333,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         if (!isAutoWorkerLive(executorWorkerId)) {
           this.clearPendingDispatch();
           const recoveryInstruction = recovery?.action === "abort"
-            ? ` Resume with gsd_task_recovery_resume using recoveryActionId ${recovery.recoveryActionId}.`
+            ? ` Resume with /gsd recover ${recovery.recoveryActionId}.`
             : activeTaskAttempt?.state === "running"
               ? ` Settle the orphaned Attempt with gsd_task_settle using attemptId ${activeTaskAttempt.attemptId}.`
               : " Inspect /gsd status for the active UnitRun's recovery eligibility.";
