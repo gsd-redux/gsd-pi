@@ -83,7 +83,8 @@ export function readExecuteTaskArtifactReadiness(
  * superseded Attempt remains operative when newer Attempts carry no agent abort
  * of their own (#1754 residual). Ineligible actions are historical evidence,
  * not sanctioned exits; consumed actions in particular must never advertise a
- * resume command that deterministically rejects (#1944).
+ * resume command that deterministically rejects (#1944). A newer agent-owned
+ * non-abort route supersedes any older abort (#1908).
  */
 export function readTerminalTaskRecoveryAbort(
   milestoneId: string,
@@ -93,7 +94,9 @@ export function readTerminalTaskRecoveryAbort(
   for (const attemptId of readTaskRecoveryAttemptIds({ milestoneId, sliceId, taskId })) {
     const route = readTaskRecoveryRoute(attemptId);
     if (!route || route.recoveryOwner !== "agent") continue;
-    if (route.action !== "abort") continue;
+    // The newest agent-owned route is authoritative: a non-abort action
+    // (retry/repair/remediate) on a newer Attempt supersedes any older abort.
+    if (route.action !== "abort") return null;
     const eligibility = readTaskRecoveryResumeEligibility(route.recoveryActionId);
     if (!eligibility.eligible) continue;
     return route.resumeAuthorized ? null : { recoveryActionId: route.recoveryActionId };

@@ -172,7 +172,7 @@ export async function runUnitPhase(
   iterData: IterationData,
   loopState: LoopState,
   sidecarItem?: SidecarItem,
-): Promise<PhaseResult<{ unitStartedAt?: number; requestDispatchedAt?: number }>> {
+): Promise<PhaseResult<{ unitStartedAt?: number; requestDispatchedAt?: number; retryAfterMs?: number }>> {
   const { ctx, pi, s, deps, prefs } = ic;
   const { unitType, unitId, prompt, state, mid } = iterData;
 

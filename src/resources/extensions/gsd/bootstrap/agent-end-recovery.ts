@@ -914,8 +914,9 @@ export async function handleAgentEnd(
     }
 
     // --- Transient fallback: pause with auto-resume ---
+    // (rate-limit already returned above, so this is never a rate-limit pause)
     if (isTransient(cls)) {
-      await pauseTransientWithBackoff(cls, pi, ctx, errorDetail, cls.kind === "rate-limit");
+      await pauseTransientWithBackoff(cls, pi, ctx, errorDetail, false);
       return;
     }
 

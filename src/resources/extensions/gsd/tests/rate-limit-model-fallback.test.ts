@@ -46,22 +46,26 @@ test("rate-limit errors are NOT short-circuited to pause before model fallback",
   );
 });
 
-test("rate-limit errors fall through to pause if no fallback model is available", () => {
+test("rate-limit errors hand the bounded cooldown to the auto loop if no fallback model is available", () => {
   const src = getRecoverySource();
 
-  // After the fallback block, the transient fallback pause must still fire for rate-limit.
-  // The isTransient check covers rate-limit (verified by error-classifier tests).
-  // Verify pauseTransientWithBackoff is called with isRateLimit derived from cls.kind.
   assert.ok(
     src.includes('cls.kind === "rate-limit"'),
-    'agent-end-recovery.ts must reference cls.kind === "rate-limit" for fallback and pause paths (#2770)',
+    'agent-end-recovery.ts must reference cls.kind === "rate-limit" for the fallback path (#2770)',
   );
 
-  // The transient fallback pause must pass the isRateLimit flag correctly.
-  const pauseCallRe = /pauseTransientWithBackoff\([^)]*cls\.kind\s*===\s*"rate-limit"/;
+  // After the fallback block, a rate-limit resolves the unit as a transient
+  // cancellation carrying retryAfterMs so the auto loop owns the cooldown
+  // (#1908) instead of pausing the session here.
+  const cooldownHandoffRe = /if\s*\(\s*cls\.kind\s*===\s*"rate-limit"\s*\)\s*\{[^}]*resolveAgentEndCancelled\([^)]*isTransient:\s*true[^)]*retryAfterMs:\s*cls\.retryAfterMs/;
+  const handoff = cooldownHandoffRe.exec(src);
   assert.ok(
-    pauseCallRe.test(src),
-    'pauseTransientWithBackoff must receive isRateLimit based on cls.kind === "rate-limit" (#2770)',
+    handoff,
+    'rate-limit must resolve the unit as a transient cancellation with retryAfterMs before the transient pause (#1908)',
+  );
+  assert.ok(
+    handoff.index > src.indexOf("tryProviderModelFallback("),
+    "the rate-limit cooldown handoff must come after the model fallback attempt (#2770)",
   );
 });
 

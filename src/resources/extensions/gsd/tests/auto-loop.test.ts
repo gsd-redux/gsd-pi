@@ -6247,8 +6247,8 @@ test("runUnitPhase routes transient usage-limit cancellations through credential
       data: { retryAfterMs: 30_000 },
     });
     assert.equal(deps.callLog.includes("pauseAuto"), false);
-    assert.equal(timers.length, 0, "the auto loop owns the bounded cooldown wait");
-    assert.equal(notifications.length, 0);
+    assert.equal(timers.some((timer) => timer.delay === 30_000), false, "the auto loop owns the bounded cooldown wait");
+    assert.equal(notifications.some((n) => /pausing|provider error/i.test(n.message)), false, "no provider pause is announced for a bounded cooldown");
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
