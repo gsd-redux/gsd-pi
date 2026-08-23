@@ -51,7 +51,8 @@ function createTaskFixture(t: { after(fn: () => void): void }): {
   session.active = true;
   session.basePath = base;
   session.originalBasePath = base;
-  session.canonicalProjectRoot = base;
+  // canonicalProjectRoot is a derived getter — with basePath/originalBasePath
+  // set above it already resolves to normalizeRealPath(base).
   session.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
   const retryKey = verificationRetryKey("execute-task", "M001/S01/T01");
   session.verificationRetryCount.set(retryKey, 1);
