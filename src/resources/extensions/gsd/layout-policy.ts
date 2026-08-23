@@ -61,13 +61,39 @@ export function milestoneIdUniqueSuffix(milestoneId: string): string | undefined
   return milestoneId.match(TEAM_MILESTONE_ID_RE)?.[2]?.toLowerCase();
 }
 
+const CANONICAL_SLICE_ID_RE = /^S0*(\d+)(?:-.*)?$/i;
+
 /**
  * Extract the numeric portion of a slice id (S01 → 1, S01-replan → 1).
  * Used by the renderer to derive the plan number from the DB's slice_id.
  */
 export function sliceIdToPlanNum(sliceId: string): number {
-  const m = sliceId.match(/^S0*(\d+)(?:-.*)?$/i);
+  const m = sliceId.match(CANONICAL_SLICE_ID_RE);
   return m ? Number.parseInt(m[1]!, 10) : 1;
+}
+
+/**
+ * File-name segment identifying a slice inside flat-phase plan file names
+ * (#1975). Canonical S-ids (S01, S01-replan) keep the zero-padded plan
+ * number, so existing NN-MM-SUFFIX.md layouts are untouched. Any other id
+ * (e.g. a remediation slice R01 added by gsd_reassess_roadmap) uses the id
+ * itself: digits guessed from a non-canonical id would map the slice onto
+ * another slice's files (R01 → S01's 01-01-SUMMARY.md), on both read and
+ * write.
+ */
+export function slicePlanSegment(sliceId: string): string {
+  const m = sliceId.match(CANONICAL_SLICE_ID_RE);
+  if (m) return pad(Number.parseInt(m[1]!, 10));
+  if (/^\d+$/.test(sliceId)) return pad(Number.parseInt(sliceId, 10));
+  return sliceId;
+}
+
+/**
+ * Plan file name derived from a slice id: `NN-<segment>-SUFFIX.md`
+ * (e.g. "01-01-PLAN.md" for S01, "01-R01-PLAN.md" for R01).
+ */
+export function slicePlanFileName(phaseNum: number, sliceId: string, suffix: string): string {
+  return `${pad(phaseNum)}-${slicePlanSegment(sliceId)}-${suffix}.md`;
 }
 
 /**

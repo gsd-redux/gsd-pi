@@ -20,10 +20,10 @@ import { gsdHome } from "./gsd-home.js";
 import { findWorktreeSegment, isGsdWorktreePath, resolveExternalStateProjectGsdFromWorktreePath, resolveWorktreeProjectRoot } from "./worktree-root.js";
 import {
   LAYOUT_SEGMENTS,
-  planFileName,
   milestoneIdToPhaseNum,
   milestoneIdUniqueSuffix,
-  sliceIdToPlanNum,
+  slicePlanFileName,
+  slicePlanSegment,
   canonicalPhaseDirName,
 } from "./layout-policy.js";
 
@@ -217,10 +217,9 @@ export function buildMilestoneFileName(milestoneId: string, suffix: string): str
 export function buildSliceFileName(sliceId: string, suffix: string): string {
   // Flat-phase: plan files need both phase and plan numbers (NN-MM-SUFFIX.md),
   // but this helper only has the sliceId. Callers needing the full name should
-  // use planFileName() from layout-policy. This returns MM-SUFFIX.md for any
-  // incremental callers that haven't migrated yet.
-  const planNum = sliceIdToPlanNum(sliceId);
-  return `${String(planNum).padStart(2, "0")}-${suffix}.md`;
+  // use slicePlanFileName() from layout-policy. This returns MM-SUFFIX.md for
+  // any incremental callers that haven't migrated yet.
+  return `${slicePlanSegment(sliceId)}-${suffix}.md`;
 }
 
 /**
@@ -937,18 +936,21 @@ export function resolveSliceFile(
 ): string | null {
   const phaseDir = resolveMilestonePath(basePath, milestoneId);
   if (!phaseDir) return null;
-  // Flat-phase: plan files are NN-MM-SUFFIX.md inside the phase dir
+  // Flat-phase: plan files are NN-MM-SUFFIX.md inside the phase dir.
+  // The segment comes from the canonical layout mapping, never from digits
+  // guessed out of a non-canonical slice id (#1975): R01 must not resolve
+  // to S01's 01-01-* files.
   const phaseNum = milestoneIdToPhaseNum(milestoneId);
-  const planNum = sliceIdToPlanNum(sliceId);
-  const flatName = planFileName(phaseNum, planNum, suffix);
+  const planSegment = slicePlanSegment(sliceId);
+  const flatName = slicePlanFileName(phaseNum, sliceId, suffix);
   const flatPath = join(phaseDir, flatName);
   if (isExistingFile(flatPath)) return flatPath;
   // Also check plan-number-only format MM-SUFFIX.md (written by buildSliceFileName)
-  const planOnlyName = `${String(planNum).padStart(2, "0")}-${suffix}.md`;
+  const planOnlyName = `${planSegment}-${suffix}.md`;
   const planOnlyPath = join(phaseDir, planOnlyName);
   if (isExistingFile(planOnlyPath)) return planOnlyPath;
   // Try prefix match for the phase+plan number (handles suffix variations)
-  const planPrefix = `${String(phaseNum).padStart(2, "0")}-${String(planNum).padStart(2, "0")}-`;
+  const planPrefix = `${String(phaseNum).padStart(2, "0")}-${planSegment}-`;
   try {
     for (const entry of readdirSync(phaseDir, { withFileTypes: true })) {
       if (entry.isFile() && entry.name.startsWith(planPrefix) && entry.name.endsWith(`-${suffix}.md`)) {
@@ -1128,7 +1130,7 @@ export function targetSliceFile(
     : milestoneDir;
   const fileName = isLegacy
     ? `${sliceId}-${suffix}.md`
-    : planFileName(milestoneIdToPhaseNum(milestoneId), sliceIdToPlanNum(sliceId), suffix);
+    : slicePlanFileName(milestoneIdToPhaseNum(milestoneId), sliceId, suffix);
   return join(dir, fileName);
 }
 
