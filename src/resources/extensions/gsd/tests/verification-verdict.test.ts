@@ -28,6 +28,18 @@ test("execute-task fails closed when no host-owned checks are discovered", () =>
   assert.match(verdict.failureContext, /\/gsd next/);
 });
 
+test("execute-task fails closed when every task-plan Verify command was shell-unsafe (issue #1922)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({ discoverySource: "task-plan-unsafe" }),
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "no-host-checks");
+  assert.equal(verdict.retryable, false);
+  assert.match(verdict.failureContext, /Rewrite the Verify field/);
+});
+
 test("execute-task passes when non-runnable task-plan prose is the verification source", () => {
   const verdict = decideVerificationVerdict(
     "execute-task",

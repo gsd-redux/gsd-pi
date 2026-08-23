@@ -19,6 +19,9 @@ export interface VerificationVerdict {
 export const NO_HOST_CHECKS_FAILURE_CONTEXT =
   "No runnable host-owned verification command was discovered. Add project verification_commands in .gsd/PREFERENCES.md or a runnable task-plan Verify command, then resume with /gsd next.";
 
+export const UNSAFE_TASK_VERIFY_FAILURE_CONTEXT =
+  "The task-plan Verify field names commands, but none are shell-safe (unquoted redirects, `;`, `$(...)` or backticks). Project-wide checks were not run in their place. Rewrite the Verify field as plain newline-separated commands, then resume with /gsd next.";
+
 /** Diagnostic recovery rationale: check, observed vs expected, evidence, next action (#1747). */
 export function describeHostVerificationRationale(input: {
   verdict: "fail" | "inconclusive";
@@ -72,12 +75,18 @@ export function decideVerificationVerdict(
     };
   }
 
-  if (unitType === "execute-task" && result.discoverySource === "none" && result.checks.length === 0) {
+  if (
+    unitType === "execute-task" &&
+    (result.discoverySource === "none" || result.discoverySource === "task-plan-unsafe") &&
+    result.checks.length === 0
+  ) {
     return {
       passed: false,
       reason: "no-host-checks",
       retryable: false,
-      failureContext: NO_HOST_CHECKS_FAILURE_CONTEXT,
+      failureContext: result.discoverySource === "task-plan-unsafe"
+        ? UNSAFE_TASK_VERIFY_FAILURE_CONTEXT
+        : NO_HOST_CHECKS_FAILURE_CONTEXT,
     };
   }
 

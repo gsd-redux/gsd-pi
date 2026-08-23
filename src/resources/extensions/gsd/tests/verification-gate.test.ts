@@ -415,7 +415,33 @@ describe("verification-gate: discovery", () => {
       taskPlanVerify: "npm run test > results.txt",
       cwd: tmp,
     });
-    assert.equal(result.source, "none");
+    assert.equal(result.source, "task-plan-unsafe");
+    assert.deepStrictEqual(result.commands, []);
+  });
+
+  test("<item> wrappers in taskPlanVerify are separators, not shell syntax (issue #1922)", () => {
+    const result = discoverCommands({
+      taskPlanVerify:
+        "<item>node --test tests/_helpers/snapshot.test.ts</item><item>npm run typecheck</item>",
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan");
+    assert.deepStrictEqual(result.commands, [
+      "node --test tests/_helpers/snapshot.test.ts",
+      "npm run typecheck",
+    ]);
+  });
+
+  test("all-unsafe taskPlanVerify does not fall through to package.json (issue #1922)", () => {
+    writeFileSync(join(tmp, "package.json"), JSON.stringify({
+      scripts: { typecheck: "tsc", test: "node --test" },
+    }));
+    const result = discoverCommands({
+      taskPlanVerify: "npm test > out.txt\nnpm run typecheck 2> err.txt",
+      preferenceCommands: ["npm run lint"],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan-unsafe");
     assert.deepStrictEqual(result.commands, []);
   });
 
@@ -462,7 +488,7 @@ describe("verification-gate: discovery", () => {
       taskPlanVerify: "python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5",
       cwd: tmp,
     });
-    assert.equal(result.source, "none");
+    assert.equal(result.source, "task-plan-unsafe");
     assert.deepStrictEqual(result.commands, []);
   });
 

@@ -104,6 +104,7 @@ export interface DiscoveredCommands {
 /** Package.json script keys to probe, in order. */
 const PACKAGE_SCRIPT_KEYS = ["typecheck", "lint", "test"] as const;
 const INTERPRETER_PREFIX_RE = /^(bash|sh|zsh|node|python3?|ts-node|tsx):\s*/;
+const ITEM_WRAPPER_RE = /<\/?item>/gi;
 
 /**
  * Discover verification commands using the first-non-empty-wins strategy (D003):
@@ -124,7 +125,10 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
   // 1. Task plan verify field (commands are untrusted — sanitize)
   if (taskPlanVerify) {
     const commands: string[] = [];
-    const candidates = splitUnquotedLines(taskPlanVerify);
+    // LLM planners sometimes wrap each command in `<item>…</item>` tags. The
+    // tags are separators, not shell syntax — turn them into newlines so each
+    // wrapped command is validated on its own (#1922).
+    const candidates = splitUnquotedLines(taskPlanVerify.replace(ITEM_WRAPPER_RE, "\n"));
     for (const candidate of candidates) {
       const normalized = candidate.replace(INTERPRETER_PREFIX_RE, "").trim();
       const validation = validateVerificationCommand(normalized);
@@ -147,6 +151,11 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
     }
     if (commands.length > 0) {
       return { commands, source: "task-plan" };
+    }
+    if (hasUnsafeTaskPlanCommand && !hasTaskPlanProse) {
+      // The Task named verify commands but none were shell-safe. Do not
+      // silently replace the planner's intent with project-wide checks (#1922).
+      return { commands: [], source: "task-plan-unsafe" };
     }
   }
 
@@ -795,6 +804,7 @@ function mergeDiscoverySource(
     "python-project",
     "node-test-file",
     "task-plan-prose",
+    "task-plan-unsafe",
   ];
   for (const source of precedence) {
     if (sources.includes(source)) return source;
