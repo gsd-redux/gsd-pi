@@ -62,6 +62,18 @@ function commandForInvariant(invariant) {
   };
 }
 
+// Per-invariant hang watchdog. The default is the historical 60s; slower
+// machines can raise it via the env var (fault-boundary-matrix alone has been
+// measured at 67-85s). Four invariants run sequentially, so 4 x this value must
+// stay under BASELINE_SPAWN_TIMEOUT_MS in src/tests/workflow-authority-baseline.test.ts,
+// which wraps the whole CLI run.
+export const INVARIANT_TIMEOUT_ENV = "GSD_BASELINE_INVARIANT_TIMEOUT_MS";
+const DEFAULT_INVARIANT_TIMEOUT_MS = 60_000;
+
+export function invariantTimeoutMs(env = process.env) {
+  return Number(env[INVARIANT_TIMEOUT_ENV]) || DEFAULT_INVARIANT_TIMEOUT_MS;
+}
+
 export function runInvariant(
   invariant,
   {
@@ -72,17 +84,20 @@ export function runInvariant(
   const command = commandForInvariant(invariant);
   const childEnv = { ...process.env };
   delete childEnv.NODE_TEST_CONTEXT;
+  const timeout = invariantTimeoutMs();
   const startedAt = now();
   const child = spawnSyncImpl(command.executable, command.args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
     env: childEnv,
     maxBuffer: 50 * 1024 * 1024,
-    timeout: 60_000,
+    timeout,
   });
   const durationMs = Math.max(0, Math.round(now() - startedAt));
   const exitCode = Number.isInteger(child.status) ? child.status : null;
-  const error = child.error?.message ?? null;
+  const error = child.error?.code === "ETIMEDOUT"
+    ? `invariant "${invariant.id}" timed out after ${timeout}ms; raise ${INVARIANT_TIMEOUT_ENV} to allow more time on slower machines`
+    : (child.error?.message ?? null);
 
   return {
     id: invariant.id,

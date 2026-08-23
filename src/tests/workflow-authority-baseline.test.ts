@@ -83,6 +83,30 @@ test("workflow authority baseline preserves the first failing child status", () 
   assert.match(baseline.renderWorkflowAuthoritySummary(report), /projection-conflict.*FAIL.*node/s);
 });
 
+test("workflow authority baseline per-invariant timeout honors GSD_BASELINE_INVARIANT_TIMEOUT_MS", (t) => {
+  const original = process.env.GSD_BASELINE_INVARIANT_TIMEOUT_MS;
+  t.after(() => {
+    if (original === undefined) delete process.env.GSD_BASELINE_INVARIANT_TIMEOUT_MS;
+    else process.env.GSD_BASELINE_INVARIANT_TIMEOUT_MS = original;
+  });
+  process.env.GSD_BASELINE_INVARIANT_TIMEOUT_MS = "90000";
+
+  const timeouts: number[] = [];
+  const report = baseline.runWorkflowAuthorityBaseline({
+    now: () => 0,
+    spawnSyncImpl: (_executable: string, _args: string[], options: { timeout: number }) => {
+      timeouts.push(options.timeout);
+      const error = Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" });
+      return { status: null, signal: "SIGTERM", stdout: "", stderr: "", error };
+    },
+  });
+
+  assert.deepEqual(timeouts, [90000, 90000, 90000, 90000]);
+  assert.equal(report.verdict, "fail");
+  assert.match(report.invariants[0].error, /timed out after 90000ms/);
+  assert.match(report.invariants[0].error, /GSD_BASELINE_INVARIANT_TIMEOUT_MS/);
+});
+
 test(
   "workflow authority baseline controlled sabotage exits nonzero",
   { timeout: BASELINE_TEST_TIMEOUT_MS },

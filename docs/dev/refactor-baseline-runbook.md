@@ -116,6 +116,15 @@ Together they cover the real SQLite fixture, contradictory projections, the
 one-shot fault controller, and the production fault-boundary matrix. Each row
 reports its verdict, duration, and exact rerunnable command.
 
+Each invariant runs under a per-invariant hang watchdog (60s by default). On a
+slower machine the `fault-boundary-matrix` invariant can exceed that and is
+reported as a timeout; raise the watchdog with
+`GSD_BASELINE_INVARIANT_TIMEOUT_MS` (milliseconds), for example:
+
+```bash
+GSD_BASELINE_INVARIANT_TIMEOUT_MS=120000 pnpm run baseline:workflow-authority
+```
+
 Capture the machine-readable report outside the repository:
 
 ```bash
