@@ -640,7 +640,11 @@ async function runValidateMilestonePostCheck(
   }
   if (verdict === "needs-attention") {
     const canonicalValidation = isMilestoneLifecycleAdopted(mid);
-    if (canonicalValidation) {
+    // A needs-attention verdict is a legitimate, stable outcome — not a
+    // technical failure. Canonical validation gets one bounded re-validation
+    // (the evidence may be stale); when the verdict recurs, pause for human
+    // review instead of retrying until the liveness backstop wedges.
+    if (canonicalValidation && (s.verificationRetryCount.get(retryKey) ?? 0) < 1) {
       await persistMilestoneValidationGate(
         "retry",
         "verification",
@@ -652,6 +656,7 @@ async function runValidateMilestonePostCheck(
         `Milestone ${mid} canonical validation needs fresh objective evidence. Repair or rerun verification, then call gsd_validate_milestone again.`,
       );
     }
+    clearValidationRetry();
     ctx.ui.notify(
       `Milestone ${mid} validation returned verdict=needs-attention. Pausing for human review.`,
       "error",
@@ -661,7 +666,9 @@ async function runValidateMilestonePostCheck(
         `validate-milestone: pausing — verdict=needs-attention for ${mid}.`,
         `Review details with /gsd status.`,
         `After fixing the issue, run /gsd validate-milestone.`,
-        `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
+        canonicalValidation
+          ? `Canonical validation cannot be overridden with /gsd verdict; re-validate with current evidence.`
+          : `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
         `To defer it, run /gsd park ${mid}.`,
         "",
       ].join("\n"),

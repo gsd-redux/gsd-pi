@@ -267,6 +267,40 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     assert.match(s.pendingVerificationRetry?.failureContext ?? "", /objective evidence/i);
   });
 
+  test("pauses with a manual-attention gate when adopted needs-attention recurs after the bounded retry", async () => {
+    insertMilestone({ id: "M001" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
+    writeCanonicalValidation("inconclusive");
+    writeValidationFile("needs-attention");
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, "validate-milestone", "M001");
+    const stderrWrites: string[] = [];
+    const stderrWrite = mock.method(process.stderr, "write", (chunk: unknown) => {
+      stderrWrites.push(String(chunk));
+      return true;
+    });
+
+    try {
+      const first = await runPostUnitVerification({ s, ctx, pi } as VerificationContext, pauseAutoMock);
+      assert.equal(first, "retry");
+
+      const second = await runPostUnitVerification({ s, ctx, pi } as VerificationContext, pauseAutoMock);
+      assert.equal(second, "pause");
+    } finally {
+      stderrWrite.mock.restore();
+    }
+
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(s.pendingVerificationRetry, null);
+    assert.match(ctx.ui.notify.mock.calls.at(-1)?.arguments[0] ?? "", /needs-attention/);
+    const guidance = stderrWrites.join("");
+    assert.match(guidance, /\/gsd validate-milestone/);
+    assert.match(guidance, /\/gsd park M001/);
+    assert.doesNotMatch(guidance, /\/gsd verdict pass/);
+  });
+
   test("pauses adopted validation only for a pending subjective UAT decision", async () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
