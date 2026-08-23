@@ -729,6 +729,17 @@ type TaskSectionField = (typeof TASK_SECTION_FIELDS)[keyof typeof TASK_SECTION_F
  * and Verification bullets. Missing section or bullets → the field is
  * omitted, leaving the canonical column at its empty default.
  */
+/**
+ * A Verification bullet is prose around a command: `- Verify: \`node --test\` exits 0.`
+ * Only the code span is runnable; the label and trailing prose are not (#1981).
+ * Without a code span the whole bullet (minus a leading label) is the command.
+ */
+function verifyCommandFromBullet(text: string): string {
+  const span = /`([^`]+)`/u.exec(text);
+  if (span !== null) return span[1]!.trim();
+  return text.replace(/^(?:verification|verify):\s*/iu, "").trim();
+}
+
 function taskSectionDetail(
   file: SourceFile,
   taskId: string,
@@ -752,7 +763,9 @@ function taskSectionDetail(
       current = undefined;
       continue;
     }
-    buckets[current].push(bullet[1].replaceAll("`", "").trim());
+    buckets[current].push(
+      current === "verify" ? verifyCommandFromBullet(bullet[1]) : bullet[1].replaceAll("`", "").trim(),
+    );
   }
   return {
     ...(buckets.verify.length > 0 ? { verify: buckets.verify.join("\n") } : {}),

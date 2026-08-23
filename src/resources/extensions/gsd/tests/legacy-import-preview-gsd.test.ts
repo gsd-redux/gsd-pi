@@ -1200,7 +1200,7 @@ describe("legacy .gsd captured-byte interpretation", () => {
         "### T02: Add double(n)",
         "",
         "Verify:",
-        "- `node --test test/double.test.js`",
+        "- Verify: `node --test test/double.test.js` exits 0.",
         "",
       ].join("\n"),
     }));
