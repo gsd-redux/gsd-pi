@@ -529,7 +529,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     createBasicTask();
     const ctx = makeMockCtx();
     const pi = makeMockPi();
-    const pauseAutoMock = mock.fn(async () => {});
+    const pauseAutoMock = mock.fn(async (_ctx?: unknown, _pi?: unknown, _errorContext?: { message: string }) => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
     const vctx = makeVerificationContext(s, ctx, pi);
     const recordTaskTechnicalVerdict = mock.fn(() => verdictReceipt("fail"));

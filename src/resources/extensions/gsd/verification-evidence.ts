@@ -20,7 +20,7 @@ export interface EvidenceCheckJSON {
   exitCode: number;
   durationMs: number;
   verdict: "pass" | "fail" | "inconclusive";
-  failureClass?: "timeout" | "command-not-found";
+  failureClass?: "timeout" | "command-not-found" | "shell-parse";
   stdoutExcerpt?: string;
   stderrExcerpt?: string;
 }
@@ -156,7 +156,7 @@ export function writeVerificationJSON(
         command: check.command,
         exitCode: check.exitCode,
         durationMs: check.durationMs,
-        verdict: check.failureClass === "command-not-found"
+        verdict: check.failureClass === "command-not-found" || check.failureClass === "shell-parse"
           ? "inconclusive"
           : check.exitCode === 0
             ? "pass"
