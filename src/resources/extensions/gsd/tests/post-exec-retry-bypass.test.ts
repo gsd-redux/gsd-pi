@@ -1124,6 +1124,34 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(messages.some((m: string) => m.includes("Verification failed") && m.includes("auto-fix attempt 1/2")));
   });
 
+  test("host verification reports the second attempt from preserved Task retry state", async () => {
+    createFailingVerifyTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: false,
+      verification_auto_fix: true,
+      verification_max_retries: 2,
+    });
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    s.verificationRetryCount.set("execute-task:M001/S01/T01", 1);
+
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
+
+    assert.equal(result, "retry");
+    assert.equal(s.pendingVerificationRetry?.attempt, 2);
+    assert.equal(s.verificationRetryCount.get("execute-task:M001/S01/T01"), 2);
+    const messages = ctx.ui.notify.mock.calls.map((call: { arguments: unknown[] }) => String(call.arguments[0]));
+    assert.ok(
+      messages.some((message: string) =>
+        message.includes("Verification failed") && message.includes("auto-fix attempt 2/2")
+      ),
+    );
+  });
+
   test("post-execution checker infrastructure failure records inconclusive and retries", async () => {
     createPostExecFailureTask();
     writePreferences({

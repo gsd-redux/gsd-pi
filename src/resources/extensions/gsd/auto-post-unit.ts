@@ -1560,7 +1560,6 @@ async function runCloseoutGitAction(
 
       s.lastGitActionStatus = "ok";
       s.verificationRetryCount.delete(gitCommitRemediationRetryKey(unit.type, unit.id));
-      s.verificationRetryFailureHashes.delete(verificationRetryKey(unit.type, unit.id));
 
       if (turnAction === "commit" && gitResult.commitMessage) {
         ctx.ui.notify(formatPostUnitStatusCard("✓ Commit", gitResult.commitMessage.split("\n")[0]), "info");
@@ -2298,8 +2297,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
         s.lastToolInvocationError = null;
         s.toolUnavailableRetries = 0;
-        s.verificationRetryCount.delete(retryKey);
-        s.verificationRetryFailureHashes.delete(retryKey);
         s.exhaustedVerificationUnits.delete(retryKey);
         saveCustomVerifyRetryCounts(s, {
           logFailure: err => debugLog("postUnit", {
@@ -2616,8 +2613,13 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           s.pendingVerificationRetry = null;
         }
         s.toolUnavailableRetries = 0;
-        s.verificationRetryCount.delete(retryKey);
-        s.verificationRetryFailureHashes.delete(retryKey);
+        // A DB-backed Task at this point has only staged a succeeded Attempt;
+        // the host verification gate still owns the terminal pass/fail. Keep
+        // its attempt-independent retry state until that gate actually passes.
+        if (s.currentUnit.type !== "execute-task" || !isDbAvailable()) {
+          s.verificationRetryCount.delete(retryKey);
+          s.verificationRetryFailureHashes.delete(retryKey);
+        }
         s.exhaustedVerificationUnits.delete(retryKey);
         saveCustomVerifyRetryCounts(s, { logFailure: err => debugLog("postUnit", { phase: "save-verify-retries-failed", error: err instanceof Error ? err.message : String(err) }) });
 

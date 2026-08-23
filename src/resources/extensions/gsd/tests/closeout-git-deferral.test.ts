@@ -30,6 +30,7 @@ import {
 } from "../task-execution-domain-operation.ts";
 import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
 import { recaptureVerifiedSourceAfterDeferredCloseout } from "../auto/verified-source-recapture.ts";
+import { verificationRetryKey } from "../auto/verification-retry-policy.ts";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
 import {
   readTaskTechnicalVerdict,
@@ -149,6 +150,8 @@ test("blocking evidence-xref routes recovery and clears evidence before pausing"
     s.active = true;
     s.basePath = base;
     s.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+    const retryKey = verificationRetryKey("execute-task", "M001/S01/T01");
+    s.verificationRetryFailureHashes.set(retryKey, "prior-host-gate-failure");
 
     let pauseCalled = false;
     const notifications: string[] = [];
@@ -178,6 +181,11 @@ test("blocking evidence-xref routes recovery and clears evidence before pausing"
     // enters the verified-task publication boundary.
     assert.equal(result, "evidence-xref-blocked");
     assert.equal(pauseCalled, true);
+    assert.equal(
+      s.verificationRetryFailureHashes.get(retryKey),
+      "prior-host-gate-failure",
+      "pre-gate git closeout must not reset host verification retry state",
+    );
     assert.ok(
       notifications.some((message) => message.includes("claimed passing verification")),
       `expected evidence-xref notification, got: ${notifications.join("\n")}`,
