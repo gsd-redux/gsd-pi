@@ -35,6 +35,7 @@ import {
   shouldArmHeadlessIdleTimeout,
   shouldRestartHeadlessRun,
   classifyHeadlessFinalStatus,
+  classifyChildExitWithoutTerminal,
   EXIT_SUCCESS,
   EXIT_ERROR,
   EXIT_BLOCKED,
@@ -661,8 +662,13 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const responseTimeout = options.responseTimeout ?? 30_000
 
   // Overall timeout (disabled when options.timeout === 0, e.g. auto-mode)
+  let timedOut = false
   const timeoutTimer = options.timeout > 0
     ? setTimeout(() => {
+        // A terminal notification that already completed the run wins the race
+        // against the deadline — keep its success/blocked outcome.
+        if (completed) return
+        timedOut = true
         process.stderr.write(`[headless] Timeout after ${options.timeout / 1000}s\n`)
         exitCode = EXIT_ERROR
         resolveCompletion()
@@ -1054,14 +1060,16 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   if (internalProcess) {
     internalProcess.on('exit', (code: number | null) => {
       if (!completed) {
-        if (code === 0) {
+        if (code === 0 && timedOut) {
+          // The overall --timeout fired and cleanup SIGTERMed the child; its
+          // clean shutdown must not mask the incomplete run as success (#1967).
+          process.stderr.write('[headless] Child exited cleanly (code 0) after timeout — run did not complete\n')
+        } else if (code === 0) {
           process.stderr.write('[headless] Child exited cleanly (code 0) without terminal notification\n')
-          exitCode = EXIT_SUCCESS
         } else {
-          const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
-          process.stderr.write(msg)
-          exitCode = EXIT_ERROR
+          process.stderr.write(`[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`)
         }
+        exitCode = classifyChildExitWithoutTerminal(code, timedOut)
         resolveCompletion()
       }
     })

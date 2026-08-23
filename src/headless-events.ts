@@ -246,6 +246,17 @@ export function classifyHeadlessFinalStatus(args: {
 }
 
 /**
+ * Map a child-process exit observed before any terminal notification to the
+ * run's exit code. A clean child exit (code 0) counts as success only when
+ * the parent-initiated overall timeout has NOT fired: after the deadline the
+ * parent SIGTERMs the child, and a clean shutdown must keep the timeout's
+ * error exit code instead of masking the incomplete run as success (#1967).
+ */
+export function classifyChildExitWithoutTerminal(code: number | null, timedOut: boolean): number {
+  return code === 0 && !timedOut ? EXIT_SUCCESS : EXIT_ERROR
+}
+
+/**
  * Decide whether a failed run is restart-eligible.
  */
 export function shouldRestartHeadlessRun(summary: HeadlessRunSummary): boolean {

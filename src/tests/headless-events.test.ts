@@ -162,6 +162,7 @@ import {
   shouldArmHeadlessIdleTimeout,
   hasDeterministicNoWorkTail,
   classifyHeadlessFinalStatus,
+  classifyChildExitWithoutTerminal,
   shouldRestartHeadlessRun,
 } from '../headless-events.js'
 
@@ -400,6 +401,38 @@ test('classifyHeadlessFinalStatus: deterministic tail maps to no-work-determinis
     ],
   })
   assert.equal(status, 'no-work-deterministic')
+})
+
+// ─── classifyChildExitWithoutTerminal (#1967) ────────────────────────────
+
+test('classifyChildExitWithoutTerminal: clean child exit with no timeout is success', () => {
+  assert.equal(classifyChildExitWithoutTerminal(0, false), EXIT_SUCCESS)
+})
+
+test('classifyChildExitWithoutTerminal: clean child exit after timeout keeps error exit code', () => {
+  // The parent-initiated --timeout fired, cleanup SIGTERMed the child, and the
+  // child shut down cleanly (code 0). That must NOT count as success (#1967).
+  assert.equal(classifyChildExitWithoutTerminal(0, true), EXIT_ERROR)
+})
+
+test('classifyChildExitWithoutTerminal: non-zero child exit is error regardless of timeout', () => {
+  assert.equal(classifyChildExitWithoutTerminal(1, false), EXIT_ERROR)
+  assert.equal(classifyChildExitWithoutTerminal(1, true), EXIT_ERROR)
+})
+
+test('classifyChildExitWithoutTerminal: null child exit code is error', () => {
+  assert.equal(classifyChildExitWithoutTerminal(null, false), EXIT_ERROR)
+})
+
+test('timed-out clean child exit classifies as timeout status (#1967)', () => {
+  const exitCode = classifyChildExitWithoutTerminal(0, true)
+  const status = classifyHeadlessFinalStatus({
+    blocked: false,
+    exitCode,
+    totalEvents: 42,
+    recentEvents: [],
+  })
+  assert.equal(status, 'timeout')
 })
 
 test('shouldRestartHeadlessRun: deterministic no-work tail is not restartable', () => {
