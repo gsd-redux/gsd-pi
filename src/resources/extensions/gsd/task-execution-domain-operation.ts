@@ -379,6 +379,25 @@ export function readLatestTaskAttempt(
   return snapshot(row);
 }
 
+/** Canonical lifecycle status for the Task, or null when no lifecycle exists. */
+export function readTaskLifecycleStatus(
+  task: ClaimTaskAttemptInput["task"],
+): string | null {
+  const row = getDb().prepare(`
+    SELECT lifecycle_status
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'task'
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id = :task_id
+  `).get({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as { lifecycle_status: string } | undefined;
+  return row ? String(row.lifecycle_status) : null;
+}
+
 /**
  * Every Task Attempt id for the lifecycle, newest first. Recovery scans must
  * consider superseded Attempts, not just the latest (#1754 residual).

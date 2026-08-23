@@ -1294,7 +1294,7 @@ test("durable budget use survives retries and exhausts to agent abort", async ()
     recoveryActionId: third.recoveryActionId,
     repairSummary: "Try to reuse stale authorization.",
     evidence: { source: "stale" },
-  }), /latest-attempt guard/i);
+  }), /already-resumed guard/i);
   assert.throws(() => resumeTaskRecovery({
     invocation: invocation("recovery/resume/non-abort"),
     recoveryActionId: first.recoveryActionId,
@@ -1403,7 +1403,21 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     retryOfAttemptId: secondFailure.attemptId,
   });
   assert.equal(third.attemptNumber, 3);
+  const thirdResult = settleTaskAttempt({
+    invocation: invocation("recovery/deterministic/settle-success-after-resume"),
+    attemptId: third.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "The resumed retry completed and staged its Result for verification.",
+    output: { staged: true },
+  });
+  assert.equal(thirdResult.nextStage, "verify");
   assert.equal(readTaskRecoveryRoute(secondFailure.attemptId)?.resumeAuthorized, false);
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
+    null,
+    "a consumed recovery Action must not remain an advertised terminal exit",
+  );
   assert.equal(readPendingTaskRecoveryContext({
     milestoneId: "M001",
     sliceId: "S01",
@@ -1414,7 +1428,7 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     recoveryActionId: second.recoveryActionId,
     repairSummary: "Try to reuse a consumed repaired-abort authorization.",
     evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
-  }), /latest-attempt guard/i);
+  }), /already-resumed guard/i);
   assert.equal(Number(row(`
     SELECT COUNT(*) AS count
     FROM workflow_execution_attempts
@@ -1625,7 +1639,7 @@ test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754
   );
 });
 
-test("terminal recovery history remains discoverable when an Attempt leaves the live lifecycle join", () => {
+test("ineligible recovery history is not advertised when an Attempt leaves the live lifecycle join", () => {
   const firstFailure = seedFailedAttempt();
   const aborted = recordFailureAndSelectRecovery({
     invocation: invocation("recovery/history/abort"),
@@ -1654,8 +1668,8 @@ test("terminal recovery history remains discoverable when an Attempt leaves the 
     [firstFailure.attemptId],
   );
   assert.equal(
-    readTerminalTaskRecoveryAbort("M001", "S01", "T01")?.recoveryActionId,
-    aborted.recoveryActionId,
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
+    null,
   );
 });
 

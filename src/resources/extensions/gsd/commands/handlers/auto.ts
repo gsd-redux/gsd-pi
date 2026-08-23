@@ -133,27 +133,6 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
     if (!(await guardRemoteSession(ctx, pi))) return true;
     const basePath = projectRoot();
 
-    // ADR-047 §5: explicit wedge acknowledgment opens a one-shot re-entry
-    // probe. The retained signature reopens the same wedge if unchanged.
-    if (resumeWedgeId) {
-      const { ensureDbOpen } = await import("../../bootstrap/dynamic-tools.js");
-      if (!(await ensureDbOpen(basePath))) {
-        ctx.ui.notify("Cannot acknowledge wedge: workflow database unavailable.", "error");
-        return true;
-      }
-      const { acknowledgeWedge } = await import("../../auto-liveness-backstop.js");
-      const { normalizeRealPath } = await import("../../paths.js");
-      const ack = acknowledgeWedge(normalizeRealPath(basePath) || basePath, resumeWedgeId);
-      if (!ack.ok) {
-        ctx.ui.notify(`Cannot acknowledge wedge ${resumeWedgeId}: ${ack.reason}`, "error");
-        return true;
-      }
-      ctx.ui.notify(
-        `Wedge ${resumeWedgeId} acknowledged — probing whether its blocker cleared before re-entering auto-mode.`,
-        "info",
-      );
-    }
-
     if (await hasUnresolvedCloseoutBlocker(ctx, basePath)) return true;
     notifyPreferenceDiagnostics(ctx, basePath, { surface: "auto-preflight" });
 
@@ -184,6 +163,11 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
       }
     }
 
+    if (resumeWedgeId && yoloSeedFile) {
+      ctx.ui.notify("--resume-wedge cannot be combined with --yolo; resume the existing workflow separately.", "error");
+      return true;
+    }
+
     if (yoloSeedFile) {
       const resolved = resolve(basePath, yoloSeedFile);
       if (!existsSync(resolved)) {
@@ -203,9 +187,10 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
     } else if (milestoneId) {
       startAutoDetached(ctx, pi, basePath, verboseMode, {
         milestoneLock: milestoneId,
+        resumeWedgeId,
       });
     } else {
-      startAutoDetached(ctx, pi, basePath, verboseMode);
+      startAutoDetached(ctx, pi, basePath, verboseMode, { resumeWedgeId });
     }
     return true;
   }

@@ -127,6 +127,10 @@ export class GSDDashboardOverlay {
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
       : "-";
+    // DB lifecycle revision: a Domain Operation (e.g. gsd_complete_milestone)
+    // can change milestone progress without touching the auto runtime, so the
+    // canonical project revision must invalidate milestoneData too (#1956).
+    // Falls back to 0:0 when the DB is closed, which keeps the identity stable.
     const authority = getProjectAuthorityVersion();
     return [
       base,

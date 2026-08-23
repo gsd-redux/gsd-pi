@@ -48,6 +48,7 @@ import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
 import {
   readPendingTaskRecoveryContext,
   readTaskRecoveryAttemptIds,
+  readTaskRecoveryResumeEligibility,
   readTaskRecoveryRoute,
 } from "./task-recovery-domain-operation.js";
 import { readMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
@@ -78,10 +79,11 @@ export function readExecuteTaskArtifactReadiness(
  * `task-recovery-abort` before any work starts (#1622). Stuck recovery must
  * refuse instead of clearing the dispatch ring and re-dispatching.
  *
- * Detection is not limited to the latest Attempt: a terminal abort on a
+ * Detection is not limited to the latest Attempt: a resume-eligible abort on a
  * superseded Attempt remains operative when newer Attempts carry no agent abort
- * of their own (#1754 residual). A newer resume-authorized abort does supersede
- * older aborts whose authorization was consumed by that newer Attempt (#1861).
+ * of their own (#1754 residual). Ineligible actions are historical evidence,
+ * not sanctioned exits; consumed actions in particular must never advertise a
+ * resume command that deterministically rejects (#1944).
  */
 export function readTerminalTaskRecoveryAbort(
   milestoneId: string,
@@ -92,6 +94,8 @@ export function readTerminalTaskRecoveryAbort(
     const route = readTaskRecoveryRoute(attemptId);
     if (!route || route.recoveryOwner !== "agent") continue;
     if (route.action !== "abort") continue;
+    const eligibility = readTaskRecoveryResumeEligibility(route.recoveryActionId);
+    if (!eligibility.eligible) continue;
     return route.resumeAuthorized ? null : { recoveryActionId: route.recoveryActionId };
   }
   return null;

@@ -7,7 +7,7 @@
 | `/gsd` | Step mode：一次执行一个工作单元，并在每步之间暂停 |
 | `/gsd next` | 显式 Step mode（与 `/gsd` 相同） |
 | `/gsd auto` | 自动模式：research、plan、execute、commit，然后重复 |
-| `/gsd auto --resume-wedge <id>` | 在执行获准的恢复操作后，确认指定的 liveness wedge 并重新进入自动模式 |
+| `/gsd auto --resume-wedge <id>` | 恢复当前 open liveness wedge；只有最初触发它的守卫已解除阻塞，自动模式才会重新进入 |
 | `/gsd quick` | 在不经过完整 planning 开销的情况下，执行一个带 GSD 保证的 quick task（原子提交、状态跟踪） |
 | `/gsd stop` | 优雅地停止自动模式 |
 | `/gsd pause` | 暂停自动模式（保留状态，可用 `/gsd auto` 恢复） |
@@ -82,6 +82,10 @@
 | `/gsd hooks` | 查看已配置的 post-unit 和 pre-dispatch hooks |
 | `/gsd run-hook` | 手动触发一个指定 hook |
 | `/gsd migrate` | 将 v1 的 `.planning` 目录迁移到 `.gsd` 格式 |
+| `/gsd recover` | 预览一次显式的旧版 markdown 导入，然后使用 `/gsd recover --preview=<sha256>` 批准所显示的精确哈希 |
+| `/gsd recover <recoveryActionId>` | 提供修复说明和验证证据后，恢复一个已修复且处于终止状态的 Task recovery abort |
+
+两种 `/gsd recover` 形式用于不同的恢复域。无参数形式（及其 `--preview`、`--application` 等选项）仅用于基于证据绑定的旧版 markdown/数据库导入流程。当自动模式报告 terminal Task recovery abort 及其 `recoveryActionId` 时，请先修复底层缺陷，再运行 `/gsd recover <recoveryActionId>`。GSD 会检查该操作是否仍符合恢复条件，并提示输入非空的修复说明和具体的验证证据；命令只授权一次新的、与原 lineage 关联的重试，并不会自行执行该重试，因此命令成功后还必须重新运行 `/gsd auto`。过期操作、重复授权、存在 open blocker，或已被后续 Attempt 取代的操作仍会被拒绝。
 
 ## Milestone 管理
 

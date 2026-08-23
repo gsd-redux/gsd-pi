@@ -38,6 +38,8 @@ GSD 数据库是 milestone、slice、task、需求、summary 和 completion stat
 
 Task recovery 的 Attempt、Result、host verification、blocker 和 one-use resume 详细契约以英文 [Auto Mode guide](../../user-docs/auto-mode.md#state-authority) 为唯一权威说明；本地化页面不复制这些会随数据库 schema 演进的约束。
 
+agent-owned recovery abort 在重试预算耗尽后会保持 fail-closed。如果已经修复底层缺陷，请使用当前 abort 的精确 ID 运行面向 operator 的 `/gsd recover <recoveryActionId>` 命令。GSD 会先检查该 Recovery Action 是否仍符合恢复条件，再提示输入非空的修复说明和具体的验证证据；命令成功后会要求你重新运行 `/gsd auto`。等价的 control-plane 操作是 `gsd_task_recovery_resume`，自定义客户端同样必须提供修复说明和非空的结构化证据。恢复会保留前一个 Attempt、它的 Result、abort Recovery Action 和已耗尽的预算，同时仅授权一次新的、与原 lineage 直接关联的 Attempt。已派发的 worker 不能恢复自己的 abort；过期操作、重复授权、open blocker 或后续 Attempt 都会导致恢复请求被拒绝。
+
 投影或 summary 渲染失败属于可重试的交付工作，而不是生命周期回滚理由。数据库 transaction 一旦提交，权威 lifecycle 状态保持不变；失败会作为可见错误暴露出来，并通过后续重试修复投影，而不是把已提交的 completion 回滚到 pending。
 
 ## 关键特性
@@ -117,7 +119,7 @@ GSD 会在 `memories` 表中维护项目持久记忆，并把其中一部分知�
 
 GSD 会把每个没有推进状态的自动模式结果记录到项目数据库中；记录包含守卫、目标单元，以及该守卫实际读取输入的哈希。同一哈希第二次出现时就会触发持久化的 wedge，即使两次之间运行过其他单元或进程已经重启也一样。
 
-wedge 触发后，自动模式会以 blocked 退出码 10 停止，打印对应守卫和获准的恢复方式，并在 wedge 未确认时拒绝重新进入。请先执行打印出的恢复操作，再运行 `/gsd auto --resume-wedge <id>` 确认该 wedge、清除它的计数器并重新进入自动模式。兜底机制本身不会修复工作流状态；无效修复会在同一输入第二次出现时再次触发。
+wedge 触发后，自动模式会以 blocked 退出码 10 停止，打印对应守卫和获准的恢复方式，并在 wedge 未确认时拒绝重新进入。请先执行打印出的恢复操作，再使用当前 open wedge 的 ID 运行 `/gsd auto --resume-wedge <id>`。GSD 会在确认 wedge 前重新检查最初触发它的守卫；如果该守卫仍在阻塞，wedge 及其计数器会保持不变，自动模式也会继续停止。只有阻塞解除后，GSD 才会确认 wedge 并开放一次重新进入探测。兜底机制本身不会修复工作流状态：如果探测仍读取到相同的阻塞，同一 wedge 会立即重新打开。
 
 ### 事后取证
 

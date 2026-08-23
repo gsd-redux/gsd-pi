@@ -170,7 +170,7 @@ test('ADR-047: counter survives a process restart (new instance over the same DB
   assert.equal(afterRestart.count, 2);
 });
 
-test('ADR-047: acknowledged resume probes once and reopens the same wedge if unchanged', (t) => {
+test('ADR-047: acknowledged resume probes once and reopens the same wedge if unchanged', async (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, '.gsd', 'gsd.db'));
@@ -193,11 +193,11 @@ test('ADR-047: acknowledged resume probes once and reopens the same wedge if unc
   assert.equal(third.wedge.wedgeId, tripped.wedge.wedgeId);
 
   // Unknown id is rejected.
-  assert.equal(acknowledgeWedge(SCOPE, 'W-nonsense').ok, false);
+  assert.equal((await acknowledgeWedge(SCOPE, 'W-nonsense', () => ({ blocking: false }))).ok, false);
 
   // Explicit acknowledgment opens one re-entry probe without erasing the
   // signature that proves whether the originating blocker actually changed.
-  const ack = acknowledgeWedge(SCOPE, tripped.wedge.wedgeId);
+  const ack = await acknowledgeWedge(SCOPE, tripped.wedge.wedgeId, () => ({ blocking: false }));
   assert.equal(ack.ok, true);
   assert.equal(readOpenWedge(), null, 'acknowledged wedge no longer blocks re-entry');
 
@@ -207,6 +207,45 @@ test('ADR-047: acknowledged resume probes once and reopens the same wedge if unc
   assert.equal(unchanged.wedge.wedgeId, tripped.wedge.wedgeId, 'the original wedge is reopened');
   assert.equal(unchanged.count, 4, 'acknowledgment must not reset the liveness counter');
   assert.equal(readOpenWedge()?.wedgeId, tripped.wedge.wedgeId);
+});
+
+test('ADR-047: acknowledgment preserves a wedge while its originating guard still blocks', async (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  recordNonAdvancingOutcome(sig('verify-gate', 'failing command exit 1'));
+  const tripped = recordNonAdvancingOutcome(sig('verify-gate', 'failing command exit 1'));
+  assert.equal(tripped.tripped, true);
+  if (!tripped.tripped) return;
+
+  let rechecked: Pick<typeof tripped.wedge, 'guardId' | 'unitType' | 'unitId' | 'inputHash'> | null = null;
+  const ack = await acknowledgeWedge(SCOPE, tripped.wedge.wedgeId, (wedge) => {
+    rechecked = {
+      guardId: wedge.guardId,
+      unitType: wedge.unitType,
+      unitId: wedge.unitId,
+      inputHash: wedge.inputHash,
+    };
+    return { blocking: true, reason: 'verification command still exits 1' };
+  });
+
+  assert.deepEqual(rechecked, {
+    guardId: 'verify-gate',
+    unitType: 'execute-task',
+    unitId: 'M001/S01/T01',
+    inputHash: tripped.wedge.inputHash,
+  });
+  assert.deepEqual(ack, {
+    ok: false,
+    reason: 'originating guard verify-gate still blocks: verification command still exits 1',
+  });
+  assert.equal(readOpenWedge()?.wedgeId, tripped.wedge.wedgeId);
+  assert.equal(
+    recordNonAdvancingOutcome(sig('verify-gate', 'failing command exit 1')).tripped,
+    true,
+    'a refused acknowledgment must preserve the tripped signature counter',
+  );
 });
 
 test('ADR-047: wedge trip notice names the guard, the wedge id, and the resume command', (t) => {

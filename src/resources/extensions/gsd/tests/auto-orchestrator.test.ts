@@ -876,7 +876,39 @@ test("completeActiveUnit clears in-flight idempotency and stops stale same-unit 
   assert.equal(wedge.ok, true);
   assert.equal(wedge.ok ? wedge.wedge?.guardId : null, COMPLETED_NO_ADVANCE_GUARD_ID);
   assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
+  if (!wedge.ok || !wedge.wedge) throw new Error("expected completed-no-advance wedge");
+  const recheck = await f.orchestrator.recheckWedge!(wedge.wedge);
+  assert.equal(recheck.blocking, true);
+  assert.match(recheck.reason ?? "", /state did not advance/);
+  assert.equal((await f.orchestrator.recheckWedge!({
+    ...wedge.wedge,
+    inputHash: "different-target-state",
+  })).blocking, false);
   assert.ok(f.journalNames().includes("unit-finalized"));
+});
+
+test("dispatch-rule wedge recheck preserves a live blocker and clears after it resolves", async (t) => {
+  let blocked = true;
+  const f = makeFixture({
+    dispatch: () => blocked
+      ? { action: "stop", reason: "stale recovery abort", level: "error" }
+      : DEFAULT_DISPATCH,
+  });
+  t.after(() => f.cleanup());
+
+  assert.equal((await f.orchestrator.advance()).kind, "blocked");
+  assert.equal((await f.orchestrator.advance()).kind, "blocked");
+  const open = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(open.ok, true);
+  if (!open.ok || !open.wedge) throw new Error("expected dispatch-rule-stop wedge");
+  assert.equal(open.wedge.guardId, "dispatch-rule-stop");
+
+  const stillBlocked = await f.orchestrator.recheckWedge!(open.wedge);
+  assert.equal(stillBlocked.blocking, true);
+  assert.match(stillBlocked.reason ?? "", /stale recovery abort/);
+
+  blocked = false;
+  assert.equal((await f.orchestrator.recheckWedge!(open.wedge)).blocking, false);
 });
 
 test("ADR-047: finalized-repeat guard does not run legacy graduated recovery", async (t) => {

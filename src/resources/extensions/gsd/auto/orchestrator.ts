@@ -12,7 +12,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
-import type { AutoAdvanceResult, AutoOrchestrationModule, AutoSessionContext, AutoStatus, AutoTerminalOutcome, UnitRef } from "./contracts.js";
+import type { AutoAdvanceResult, AutoOrchestrationModule, AutoSessionContext, AutoStatus, AutoTerminalOutcome, UnitRef, WedgeRecheckResult, WedgeRecheckTarget } from "./contracts.js";
 import { UNIT_ALREADY_ACTIVE_SKIP_CODE, UNIT_ALREADY_ACTIVE_SKIP_REASON } from "./contracts.js";
 import type { AutoSession, PendingOrchestrationDispatch } from "./session.js";
 import type { GSDState, Phase } from "../types.js";
@@ -70,6 +70,7 @@ import {
   formatWedgeRefusalNotice,
   formatWedgeTripNotice,
   getOpenWedge,
+  hashBackstopInput,
   lookupLatestLedgerError,
   recordNonAdvancingOutcome,
   serializeNonAdvancingEvidence,
@@ -112,6 +113,11 @@ import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
 import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.js";
 
 type UokFlags = ReturnType<typeof resolveUokFlags>;
+
+interface OrphanedActiveUnitBlocker {
+  reason: string;
+  inputPayload: string;
+}
 
 function now(): number {
   return Date.now();
@@ -977,6 +983,128 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return this.adjudicateLiveness(await this.advanceInner());
   }
 
+  public async recheckWedge(wedge: WedgeRecheckTarget): Promise<WedgeRecheckResult> {
+    if (wedge.guardId === COMPLETED_NO_ADVANCE_GUARD_ID) {
+      const current = snapshotUnitTargetRows(wedge.unitType, wedge.unitId);
+      if (!current.ok) return { blocking: true, reason: current.error };
+      const blocking = current.hash !== null && hashBackstopInput(current.hash) === wedge.inputHash;
+      return {
+        blocking,
+        ...(blocking ? { reason: `state did not advance for ${wedge.unitType} ${wedge.unitId}` } : {}),
+      };
+    }
+
+    if (wedge.guardId === "orphaned-active-unit") {
+      const current = this.readOrphanedActiveUnitBlocker(wedge.unitType, wedge.unitId);
+      return {
+        blocking: current !== null,
+        ...(current ? { reason: current.reason } : {}),
+      };
+    }
+
+    if (
+      wedge.guardId === "dispatch-rule-stop" ||
+      wedge.guardId === "dispatch-authority" ||
+      wedge.guardId === "no-active-milestone"
+    ) {
+      try {
+        const stateSnapshot = await deriveState(this.getLiveDispatchBasePath());
+        // Dispatch selection can update session bookkeeping. Re-evaluate with a
+        // shadow so acknowledging a wedge remains a read-only operation.
+        const shadowSession = {
+          ...this.s,
+          missingTaskPlanRetryCount: new Map(this.s.missingTaskPlanRetryCount),
+        } as AutoSession;
+        const decision = await decideOrchestratorDispatch(
+          this.ctx,
+          this.pi,
+          this.dispatchBasePath,
+          shadowSession,
+          { stateSnapshot },
+        );
+        const currentGuard = decision && "kind" in decision && decision.kind === "blocked"
+          ? decision
+          : null;
+        const blocking = currentGuard?.guardId === wedge.guardId;
+        return {
+          blocking,
+          ...(blocking ? { reason: currentGuard.reason } : {}),
+        };
+      } catch (error) {
+        return {
+          blocking: true,
+          reason: `could not recheck ${wedge.guardId}: ${getErrorMessage(error)}`,
+        };
+      }
+    }
+
+    // Some wedges represent one-shot runtime failures whose originating probe
+    // cannot be repeated without running the unit again. Preserve their
+    // existing explicit-ack behavior; state-derived guards above must prove
+    // that their blocker has cleared before acknowledgment.
+    return { blocking: false };
+  }
+
+  private readOrphanedActiveUnitBlocker(
+    unitType: string,
+    unitId: string,
+  ): OrphanedActiveUnitBlocker | null {
+    const parsed = parseUnitId(unitId);
+    const latestTaskAttempt = unitType === "execute-task" && parsed.milestone && parsed.slice && parsed.task
+      ? readLatestTaskAttempt({
+          milestoneId: parsed.milestone,
+          sliceId: parsed.slice,
+          taskId: parsed.task,
+        })
+      : null;
+    const recovery = latestTaskAttempt
+      ? readTaskRecoveryRoute(latestTaskAttempt.attemptId)
+      : null;
+    const activeDispatch = getRecentDispatchesForUnit(unitId)
+      .find((dispatch) => dispatch.status === "claimed" || dispatch.status === "running");
+    const attemptDispatch = latestTaskAttempt
+      ? getDispatchById(latestTaskAttempt.coordinationDispatchId)
+      : null;
+    // A settled Attempt with an abort route is not an orphan: the task
+    // execution cutover either pauses with the resumable abort or claims the
+    // authorized retry (#1941). Only a still-running Attempt is orphaned.
+    const orphanCandidate = activeDispatch
+      ?? (latestTaskAttempt?.state === "running"
+        ? attemptDispatch
+        : null);
+    if (!orphanCandidate) return null;
+
+    const activeTaskAttempt = latestTaskAttempt?.coordinationDispatchId === orphanCandidate.id
+      ? latestTaskAttempt
+      : null;
+    const executorWorkerId = activeTaskAttempt?.workerId ?? orphanCandidate.worker_id;
+    if (isAutoWorkerLive(executorWorkerId)) return null;
+
+    const recoveryInstruction = recovery?.action === "abort" && recovery.resumeEligibility?.eligible === true
+      ? ` Resume with /gsd recover ${recovery.recoveryActionId}.`
+      : activeTaskAttempt?.state === "running"
+        ? ` Settle the orphaned Attempt with gsd_task_settle using attemptId ${activeTaskAttempt.attemptId}.`
+        : " Inspect /gsd status for the active UnitRun's recovery eligibility.";
+    const executionDetail = activeTaskAttempt
+      ? `Attempt ${activeTaskAttempt.attemptId} is ${activeTaskAttempt.state}`
+      : `UnitRun ${orphanCandidate.id} is ${orphanCandidate.status}`;
+    const reason =
+      `stale-active ${unitType} ${unitId}: ${executionDetail}, ` +
+      `but executor worker ${executorWorkerId} is not live.${recoveryInstruction}`;
+    return {
+      reason,
+      inputPayload: JSON.stringify({
+        unitType,
+        unitId,
+        dispatchId: orphanCandidate.id,
+        attemptId: activeTaskAttempt?.attemptId ?? null,
+        attemptState: activeTaskAttempt?.state ?? null,
+        executorWorkerId,
+        recoveryActionId: recovery?.recoveryActionId ?? null,
+      }),
+    };
+  }
+
   private withLivenessInput<T extends AutoAdvanceResult>(
     result: T,
     input: { guardId: string; inputPayload?: string; sanctionedExit?: string },
@@ -1305,71 +1433,27 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         });
       }
 
-      const parsed = parseUnitId(decision.unitId);
-      const latestTaskAttempt = decision.unitType === "execute-task" && parsed.milestone && parsed.slice && parsed.task
-        ? readLatestTaskAttempt({
-            milestoneId: parsed.milestone,
-            sliceId: parsed.slice,
-            taskId: parsed.task,
-          })
-        : null;
-      const recovery = latestTaskAttempt
-        ? readTaskRecoveryRoute(latestTaskAttempt.attemptId)
-        : null;
-      const activeDispatch = getRecentDispatchesForUnit(decision.unitId)
-        .find((dispatch) => dispatch.status === "claimed" || dispatch.status === "running");
-      const attemptDispatch = latestTaskAttempt
-        ? getDispatchById(latestTaskAttempt.coordinationDispatchId)
-        : null;
-      const orphanCandidate = activeDispatch
-        ?? (latestTaskAttempt?.state === "running"
-          ? attemptDispatch
-          : null);
-      if (orphanCandidate) {
-        const activeTaskAttempt = latestTaskAttempt?.coordinationDispatchId === orphanCandidate.id
-          ? latestTaskAttempt
-          : null;
-        const executorWorkerId = activeTaskAttempt?.workerId ?? orphanCandidate.worker_id;
-        if (!isAutoWorkerLive(executorWorkerId)) {
-          this.clearPendingDispatch();
-          const recoveryInstruction = recovery?.action === "abort"
-            ? ` Resume with /gsd recover ${recovery.recoveryActionId}.`
-            : activeTaskAttempt?.state === "running"
-              ? ` Settle the orphaned Attempt with gsd_task_settle using attemptId ${activeTaskAttempt.attemptId}.`
-              : " Inspect /gsd status for the active UnitRun's recovery eligibility.";
-          const executionDetail = activeTaskAttempt
-            ? `Attempt ${activeTaskAttempt.attemptId} is ${activeTaskAttempt.state}`
-            : `UnitRun ${orphanCandidate.id} is ${orphanCandidate.status}`;
-          const reason =
-            `stale-active ${decision.unitType} ${decision.unitId}: ${executionDetail}, ` +
-            `but executor worker ${executorWorkerId} is not live.${recoveryInstruction}`;
-          const blocked: AutoAdvanceResult = {
-            kind: "blocked",
-            reason,
-            action: "stop",
-            stateSnapshot: reconciliation.stateSnapshot,
-          };
-          this.journalTransition({
-            name: "advance-blocked",
-            reason,
-            unitType: decision.unitType,
-            unitId: decision.unitId,
-          });
-          this.postAdvanceRecord(blocked);
-          return this.withLivenessInput(blocked, {
-            guardId: "orphaned-active-unit",
-            inputPayload: JSON.stringify({
-              unitType: decision.unitType,
-              unitId: decision.unitId,
-              dispatchId: orphanCandidate.id,
-              attemptId: activeTaskAttempt?.attemptId ?? null,
-              attemptState: activeTaskAttempt?.state ?? null,
-              executorWorkerId,
-              recoveryActionId: recovery?.recoveryActionId ?? null,
-            }),
-            sanctionedExit: reason,
-          });
-        }
+      const orphanedActiveUnit = this.readOrphanedActiveUnitBlocker(decision.unitType, decision.unitId);
+      if (orphanedActiveUnit) {
+        this.clearPendingDispatch();
+        const blocked: AutoAdvanceResult = {
+          kind: "blocked",
+          reason: orphanedActiveUnit.reason,
+          action: "stop",
+          stateSnapshot: reconciliation.stateSnapshot,
+        };
+        this.journalTransition({
+          name: "advance-blocked",
+          reason: blocked.reason,
+          unitType: decision.unitType,
+          unitId: decision.unitId,
+        });
+        this.postAdvanceRecord(blocked);
+        return this.withLivenessInput(blocked, {
+          guardId: "orphaned-active-unit",
+          inputPayload: orphanedActiveUnit.inputPayload,
+          sanctionedExit: blocked.reason,
+        });
       }
 
       const existingRun = resolveExistingUnitRun({

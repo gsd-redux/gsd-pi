@@ -4,6 +4,7 @@
 import {
   executeDomainOperation,
   type DomainJsonValue,
+  type DomainOperationContext,
   type DomainOperationMutation,
   type DomainOperationRequest,
   type DomainOperationResult,
@@ -316,6 +317,43 @@ function loadReceipt(
   };
 }
 
+/**
+ * A reopened lifecycle has no operative Attempt route head (#1948). A terminal
+ * lifecycle can still carry a settled Attempt parked at `route` with an
+ * agent-owned abort that was never resumed; reopen discards that lineage by
+ * closing the Kernel head (`route -> closeout -> settled`) so the next claim is
+ * a fresh Attempt and no guard advertises a resume the lifecycle can no longer
+ * satisfy.
+ */
+function voidStaleRouteHead(
+  context: Readonly<DomainOperationContext>,
+  lifecycleId: string,
+): void {
+  const head = getDb().prepare(`
+    SELECT head.kernel_checkpoint_id, head.attempt_id, head.next_stage
+    FROM workflow_kernel_checkpoints head
+    WHERE head.project_id = :project_id AND head.lifecycle_id = :lifecycle_id
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_kernel_checkpoints successor
+        WHERE successor.previous_kernel_checkpoint_id = head.kernel_checkpoint_id
+      )
+  `).get({ ":project_id": context.projectId, ":lifecycle_id": lifecycleId }) as
+    { kernel_checkpoint_id: string; attempt_id: string; next_stage: string } | undefined;
+  if (head?.next_stage !== "route") return;
+  const closeout = appendKernelCheckpoint(context, {
+    lifecycleId,
+    attemptId: head.attempt_id,
+    nextStage: "closeout",
+    previousKernelCheckpointId: head.kernel_checkpoint_id,
+  });
+  appendKernelCheckpoint(context, {
+    lifecycleId,
+    attemptId: head.attempt_id,
+    nextStage: "settled",
+    previousKernelCheckpointId: closeout.kernelCheckpointId,
+  });
+}
+
 export function reopenTask(input: {
   invocation: ExecutionInvocation;
   task: TaskLifecycleIdentity;
@@ -339,6 +377,7 @@ export function reopenTask(input: {
     if (state.lifecycleId && currentRunningAttempt(state.lifecycleId)) {
       throw new Error("Task reopen cannot target a running Attempt");
     }
+    if (state.lifecycleId) voidStaleRouteHead(context, state.lifecycleId);
     const lifecycle = adoptOrTransitionLifecycle(context, {
       itemKind: "task",
       milestoneId: state.milestoneId,

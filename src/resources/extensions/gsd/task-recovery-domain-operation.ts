@@ -728,6 +728,7 @@ export function readTaskRecoveryResumeEligibility(
   if (stored["action"] !== "abort") return reject("abort-action", `Recovery Action is ${String(stored["action"])}, not abort`);
   if (stored["recovery_owner"] !== "agent") return reject("agent-owned", `recovery owner is ${String(stored["recovery_owner"])}, not agent`);
   if (stored["blocker_id"] !== null) return reject("action-blocker", "Recovery Action is linked to a Blocker");
+  if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
   if (stored["lifecycle_status"] !== "in_progress") return reject("lifecycle-in-progress", `Task lifecycle is ${String(stored["lifecycle_status"])}`);
   if (stored["attempt_state"] !== "settled") return reject("attempt-settled", `Attempt state is ${String(stored["attempt_state"])}`);
   if (Number(stored["causal_authority"]) !== 1) return reject("causal-authority", "Result no longer owns the current execute/verify failure route");
@@ -739,7 +740,6 @@ export function readTaskRecoveryResumeEligibility(
   if (Number(stored["latest_attempt"]) !== 1 && !supersededResidual) return reject("latest-attempt", "a newer Task Attempt exists");
   if (Number(stored["has_open_blockers"]) === 1) return reject("open-blockers", "Task lifecycle has an open Blocker");
   if (Number(stored["has_route_head"]) !== 1 && !supersededResidual) return reject("route-head", "Attempt no longer owns the current route Kernel checkpoint");
-  if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
   return { ...base, eligible: true };
 }
 

@@ -140,3 +140,9 @@ test("V8 JSON.parse with line/column suffix is transient", () => {
   assert.equal(isTransient(result), true);
   assert.equal(result.kind, "stream");
 });
+
+test("#1944: provider 'Request timed out' turn failures should be classified as transient (network)", () => {
+  const result = classifyError("Provider error: : Request timed out.");
+  assert.equal(isTransient(result), true, "'Request timed out' should be transient");
+  assert.equal(result.kind, "network", "'Request timed out' matches NETWORK_RE");
+});

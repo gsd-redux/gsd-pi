@@ -142,7 +142,7 @@ Stop the process through its terminal or service manager when possible. Use `kil
 
 **Cause:** The same guard or non-advancing outcome read byte-identical inputs twice. The wedge is stored in the workflow database, so interleaved dispatches and process restarts do not clear it.
 
-**Fix:** Apply the sanctioned recovery printed in the wedge notice. For an `already-active` claim, resolve the underlying active-claim or worker state, usually with `/gsd doctor` or `/gsd doctor fix`. Then run the exact `/gsd auto --resume-wedge <id>` command from the notice to acknowledge the wedge and open one re-entry probe. A wrong or incomplete recovery immediately reopens the same wedge when that probe reads the unchanged blocker; a successful repair changes the signature input and allows auto mode to continue.
+**Fix:** Apply the sanctioned recovery printed in the wedge notice. For an `already-active` claim, resolve the underlying active-claim or worker state, usually with `/gsd doctor` or `/gsd doctor fix`. Then run the exact `/gsd auto --resume-wedge <id>` command from the notice; the ID must name the currently open wedge. GSD rechecks the originating guard and resumes only after its blocker clears. If the recovery is incomplete, the wedge and counter are preserved and auto mode remains stopped; if the re-entry probe still reads the unchanged blocker, the same wedge reopens immediately.
 
 ### Auto mode pauses after a timeout or finalize failure
 
