@@ -882,7 +882,7 @@ import {
   type AutoOutcomeSurfaceSnapshot,
 } from "./auto-dashboard.js";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 import { autoCommitCurrentBranch } from "./worktree.js";
 
@@ -972,9 +972,9 @@ export function detectRogueFileWrites(
       rogues.push({ path: replanPath, unitType, unitId });
     }
   } else if (unitType === "reassess-roadmap") {
-    if (!mid || !sid) return [];
+    if (!mid) return [];
 
-    const assessPath = resolveSliceFile(basePath, mid, sid, "ASSESSMENT");
+    const assessPath = resolveMilestoneFile(basePath, mid, "ROADMAP-ASSESSMENT");
     if (!assessPath || !existsSync(assessPath)) return [];
 
     // Assessment file exists on disk — check if DB knows about it via the artifacts table
@@ -982,7 +982,7 @@ export function detectRogueFileWrites(
     if (adapter) {
       const row = adapter.prepare(
         `SELECT 1 FROM artifacts WHERE path LIKE :pattern AND artifact_type = 'ASSESSMENT' LIMIT 1`,
-      ).get({ ":pattern": `%${sid}-ASSESSMENT.md` });
+      ).get({ ":pattern": `%${basename(assessPath)}` });
       if (!row) {
         rogues.push({ path: assessPath, unitType, unitId });
       }

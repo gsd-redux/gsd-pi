@@ -624,3 +624,32 @@ test("resolveExistingSliceResearchPath returns absolute path when RESEARCH exist
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ── #1933: reassess-roadmap verifies the milestone-scoped ROADMAP-ASSESSMENT ──
+//
+// gsd_reassess_roadmap writes <NN>-ROADMAP-ASSESSMENT.md (milestone-scoped).
+// The verifier used to expect the slice-scoped <NN>-<SS>-ASSESSMENT.md, so the
+// unit could never finalize and looped on "expected artifact not found".
+
+test("reassess-roadmap expects the milestone-scoped ROADMAP-ASSESSMENT file (#1933)", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-reassess-artifact-")));
+  try {
+    const phaseDir = join(root, ".gsd", "phases", "01-m001");
+    mkdirSync(phaseDir, { recursive: true });
+    writeFileSync(join(phaseDir, "01-ROADMAP.md"), "# M001 roadmap\n");
+    writeFileSync(join(phaseDir, "01-ROADMAP-ASSESSMENT.md"), "# M001 Roadmap Assessment\n");
+
+    _clearGsdRootCache();
+    clearPathCache();
+
+    assert.equal(
+      resolveExpectedArtifactPath("reassess-roadmap", "M001/S01", root),
+      join(phaseDir, "01-ROADMAP-ASSESSMENT.md"),
+      "reassess-roadmap must verify the file gsd_reassess_roadmap writes, not a slice-scoped ASSESSMENT",
+    );
+  } finally {
+    _clearGsdRootCache();
+    clearPathCache();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

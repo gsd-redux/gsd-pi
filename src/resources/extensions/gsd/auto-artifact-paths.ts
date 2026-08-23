@@ -216,7 +216,9 @@ export function resolveExpectedArtifactPath(
       return resolveSliceArtifactPath(base, mid, sid!, "PLAN");
     }
     case "reassess-roadmap": {
-      return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
+      // gsd_reassess_roadmap writes the milestone-scoped <NN>-ROADMAP-ASSESSMENT.md
+      // (resolveRoadmapAssessmentProjectionPath), not a slice-scoped ASSESSMENT.
+      return resolveMilestoneArtifactPath(base, mid, "ROADMAP-ASSESSMENT");
     }
     case "run-uat": {
       return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
@@ -321,7 +323,7 @@ export function diagnoseExpectedArtifact(
     case "rewrite-docs":
       return "Active overrides resolved in .gsd/OVERRIDES.md + plan documents updated";
     case "reassess-roadmap":
-      return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (roadmap reassessment)`;
+      return `${relMilestoneFile(base, mid, "ROADMAP-ASSESSMENT")} (roadmap reassessment)`;
     case "run-uat":
       return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (UAT assessment result)`;
     case "validate-milestone":
