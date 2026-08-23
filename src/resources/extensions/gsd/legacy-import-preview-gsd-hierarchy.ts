@@ -81,6 +81,22 @@ function firstMatch(
   return undefined;
 }
 
+function allMatches(
+  file: SourceFile,
+  patterns: readonly RegExp[],
+): { line: SourceLine; match: RegExpExecArray; span: TextSpan }[] {
+  const found: { line: SourceLine; match: RegExpExecArray; span: TextSpan }[] = [];
+  for (const line of file.lines) {
+    for (const pattern of patterns) {
+      const match = pattern.exec(line.text);
+      if (match === null) continue;
+      found.push({ line, match, span: matchSpan(line, match) });
+      break;
+    }
+  }
+  return found;
+}
+
 function frontmatterField(file: SourceFile, name: string): FrontmatterField | undefined {
   if (file.lines[0]?.text !== "---") return undefined;
   const closingIndex = file.lines.findIndex((line, index) => index > 0 && line.text === "---");
@@ -704,8 +720,11 @@ function nestedTaskCandidates(
   candidates: PendingCandidate[],
   diagnoses: PendingDiagnosis[],
 ): void {
-  const checkbox = firstMatch(file, /^-\s+\[([ xX])\]\s+\*\*(T\d+):\s+(.+?)\*\*(?:\s+`est:[^`]+`)?$/u)
-    ?? firstMatch(file, /^-\s+\[([ xX])\]\s+(T\d+)\s+(.+)$/u);
+  const checkboxes = allMatches(file, [
+    /^-\s+\[([ xX])\]\s+\*\*(T\d+):\s+(.+?)\*\*(?:\s+`est:[^`]+`)?$/u,
+    /^-\s+\[([ xX])\]\s+(T\d+)\s+(.+)$/u,
+  ]);
+  const checkbox = checkboxes[0];
   const heading = firstMatch(file, /^##\s+(T\d+)\s+(.+)$/u);
   const xml = firstMatch(file, /<task\s+id="(T\d+)"\s+status="([^"]+)">([^<]+)<\/task>/u);
   const h1 = firstMatch(file, /^#\s+(T\d+):\s+(.+)$/u);
@@ -721,19 +740,43 @@ function nestedTaskCandidates(
     );
     return;
   }
+  if (checkbox !== undefined) {
+    // Every checkbox task line in the plan is its own task claim, in file order.
+    const matched = new Set(checkboxes.map((entry) => entry.line));
+    for (const line of file.lines) {
+      if (matched.has(line) || !/^-\s+\[[ xX]\]\s+\**T\d+/u.test(line.text)) continue;
+      addLegacyImportDiagnosis(
+        diagnoses,
+        file,
+        "unmapped-checkbox-task",
+        "warning",
+        "Checkbox task line matches no supported task grammar and produced no task claim.",
+        "unsupported",
+        line.start,
+        line.end,
+      );
+    }
+    for (const entry of checkboxes) {
+      addCandidate(candidates, file, {
+        kind: "task",
+        key: `${milestoneId}/${sliceId}/${entry.match[2]}`,
+      }, {
+        id: entry.match[2],
+        milestone_id: milestoneId,
+        slice_id: sliceId,
+        status: entry.match[1].toLowerCase() === "x" ? "complete" : "pending",
+        title: entry.match[3].trim(),
+      }, "nested-checkbox-task", entry.span);
+    }
+    return;
+  }
   const path = file.entry.logical_path;
   let taskId: string;
   let title: string;
   let status: "complete" | "pending";
   let reason: string;
   let span: TextSpan;
-  if (checkbox !== undefined) {
-    taskId = checkbox.match[2];
-    title = checkbox.match[3].trim();
-    status = checkbox.match[1].toLowerCase() === "x" ? "complete" : "pending";
-    reason = "nested-checkbox-task";
-    span = checkbox.span;
-  } else if (heading !== undefined) {
+  if (heading !== undefined) {
     taskId = heading.match[1];
     title = heading.match[2].trim();
     status = firstMatch(file, /^Status:\s*complete\s*$/iu) === undefined ? "pending" : "complete";

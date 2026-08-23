@@ -1168,6 +1168,46 @@ describe("legacy .gsd captured-byte interpretation", () => {
     assert.deepEqual(semantics(lowercaseResult), semantics(canonicalResult));
   });
 
+  test("maps every checkbox task line in a nested slice plan and flags unsupported ones", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "milestones/M001/M001-ROADMAP.md": [
+        "# M001: Foundation",
+        "",
+        "- [ ] S01 Core setup",
+        "",
+      ].join("\n"),
+      "milestones/M001/slices/S01/S01-PLAN.md": [
+        "# S01: Core setup",
+        "",
+        "## Tasks",
+        "",
+        "- [ ] **T01: Make answer() return 42** `est:2m`",
+        "- [x] **T02: Add double(n)** `est:2m`",
+        "- [ ] **T03** Missing colon grammar",
+        "",
+        "### T01: Make answer() return 42",
+        "### T02: Add double(n)",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "task")
+        .map((candidate) => [candidate.target.key, candidate.reason_code, candidate.normalized]),
+      [
+        ["M001/S01/T01", "nested-checkbox-task", { id: "T01", milestone_id: "M001", slice_id: "S01", status: "pending", title: "Make answer() return 42" }],
+        ["M001/S01/T02", "nested-checkbox-task", { id: "T02", milestone_id: "M001", slice_id: "S01", status: "complete", title: "Add double(n)" }],
+      ],
+    );
+    assert.deepEqual(
+      interpretation.diagnoses
+        .filter((diagnosis) => diagnosis.code === "unmapped-checkbox-task")
+        .map((diagnosis) => [diagnosis.severity, diagnosis.raw_value]),
+      [["warning", "- [ ] **T03** Missing colon grammar"]],
+    );
+  });
+
   test("fails closed on malformed structured data", (t) => {
     const malformed = interpretLegacyGsdCapture(captureFiles(t, {
       "state-manifest.json": "{\"milestones\":[",
