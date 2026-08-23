@@ -423,7 +423,7 @@ export async function handleCompleteTask(
       milestoneId: params.milestoneId,
       sliceId: params.sliceId,
       taskId: params.taskId,
-    }) === "canonical") {
+    }, undefined, { blockerReport: params.blockerDiscovered === true }) === "canonical") {
       return { error: "canonical Task completion requires the durable Attempt completion pipeline" };
     }
   } catch (error) {

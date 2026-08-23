@@ -23,9 +23,11 @@ import {
   type TaskQualityGateContent,
 } from "./quality-gate-closure.js";
 import {
+  readLatestTaskAttempt,
   settleTaskAttempt,
   type StagedTaskCompletionMutation,
 } from "./task-execution-domain-operation.js";
+import { readTaskRecoveryRoute } from "./task-recovery-domain-operation.js";
 import { readTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
@@ -136,9 +138,48 @@ function replayAttemptId(
   return row ? String(row["attempt_id"]) : undefined;
 }
 
+export interface TaskCompletionAuthorityOptions {
+  /**
+   * gsd_task_complete(blockerDiscovered: true): a blocker report is an
+   * escalation channel, not a completion — it must always be recordable, even
+   * when the supervisor already settled the Attempt out from under a surviving
+   * session (#1973). When set, the running-attempt gate routes to the legacy
+   * write path (a durable DB write that needs no Attempt) instead of throwing.
+   */
+  blockerReport?: boolean;
+}
+
+/**
+ * Describe the latest Attempt's settled state and any recorded recovery
+ * action so a session rejected by the running-attempt gate learns the
+ * sanctioned exit instead of a bare rejection (#1973). Best-effort: an empty
+ * string when nothing useful can be read.
+ */
+function latestAttemptRecoveryContext(task: TaskCompletionIdentity): string {
+  try {
+    const attempt = readLatestTaskAttempt(task);
+    if (!attempt) return "";
+    const settled = attempt.state === "settled"
+      ? ` settled with outcome=${attempt.outcome ?? "unknown"}${
+        attempt.resultFailureClass ? ` failureClass=${attempt.resultFailureClass}` : ""}`
+      : " still marked running";
+    const route = readTaskRecoveryRoute(attempt.attemptId);
+    const lever = route
+      ? route.resumeAuthorized
+        ? ` Recovery action ${route.recoveryActionId} (${route.action}) authorizes resume — ` +
+          `call gsd_task_recovery_resume with recoveryActionId "${route.recoveryActionId}".`
+        : ` Recovery action ${route.recoveryActionId} (${route.action}) is recorded for this Attempt.`
+      : "";
+    return ` Latest Attempt ${attempt.attemptId} is${settled}.${lever}`;
+  } catch {
+    return "";
+  }
+}
+
 export function resolveTaskCompletionAuthority(
   task: TaskCompletionIdentity,
   idempotencyKey?: string,
+  options?: TaskCompletionAuthorityOptions,
 ): TaskCompletionAuthority {
   if (idempotencyKey && replayAttemptId(idempotencyKey, task)) return "canonical";
   if (idempotencyKey) {
@@ -190,16 +231,19 @@ export function resolveTaskCompletionAuthority(
     return "legacy";
   }
   if (Number(lifecycle["has_held_running_attempt"]) === 1) return "canonical";
+  if (options?.blockerReport) return "legacy";
   if (Number(lifecycle["has_running_attempt"]) === 1) {
     throw new Error(
       "Canonical Task completion found an orphaned running Attempt whose milestone lease is no " +
       "longer held. Dry-run gsd_task_settle and apply it only if the lease is reported " +
-      "reclaimable; otherwise re-enter `/gsd auto` to recover under the current lease.",
+      "reclaimable; otherwise re-enter `/gsd auto` to recover under the current lease." +
+      latestAttemptRecoveryContext(task),
     );
   }
   throw new Error(
     "Canonical Task completion has no running Attempt to close. Re-enter `/gsd auto` to resume " +
-    "the Task from its durable checkpoint.",
+    "the Task from its durable checkpoint." +
+    latestAttemptRecoveryContext(task),
   );
 }
 

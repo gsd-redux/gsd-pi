@@ -1355,3 +1355,60 @@ test("model-error branch in agent-end-recovery attempts fallback before any term
     "model-error fallback must not persistently block the model (#1533)",
   );
 });
+
+test("#1973: permanent/unknown provider-error pause aborts the still-live host turn", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-unknown-pause-abort-"));
+  let abortCalls = 0;
+
+  try {
+    resetTransientRetryState();
+    autoSession.reset();
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    process.chdir(base);
+
+    autoSession.active = true;
+    autoSession.basePath = base;
+    autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+
+    const ctx = {
+      model: { provider: "openai-codex", id: "gpt-5.5" },
+      modelRegistry: { getAvailable: () => [] },
+      isIdle: () => false,
+      abort: () => {
+        abortCalls += 1;
+      },
+      ui: {
+        notify: () => {},
+        setStatus: () => {},
+        setWidget: () => {},
+        setWorkingMessage: () => {},
+      },
+    } as any;
+    const pi = {
+      setModel: async () => false,
+      sendMessage: () => {},
+    } as any;
+
+    await handleAgentEnd(pi, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "provider exploded in a completely novel way",
+      }],
+    } as any, ctx);
+
+    assert.equal(
+      abortCalls,
+      1,
+      "permanent/unknown pause must abort the live host turn so a surviving session cannot keep executing against a torn-down Attempt",
+    );
+    assert.equal(autoSession.active, false, "auto-mode must be paused");
+    assert.equal(autoSession.paused, true, "pause must be recorded");
+  } finally {
+    _resetPendingResolve();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});

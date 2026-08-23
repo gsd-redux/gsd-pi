@@ -36,6 +36,8 @@ import {
   readLatestTaskAttempt,
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
+import { resolveTaskCompletionAuthority } from "../task-completion-compatibility-adapter.js";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 import {
@@ -1463,4 +1465,48 @@ test("auto publication replays a committed Task completion after PLAN projection
     operations: count("workflow_operations"),
     checkpoints: count("workflow_kernel_checkpoints"),
   }, beforeReplay);
+});
+
+test("#1973: attempt-gate rejection names the settled outcome and recovery lever; blocker reports bypass the gate", () => {
+  const { attemptId } = createFixture();
+  const settlement = settleTaskAttempt({
+    invocation: invocation("task-completion/settle-provider-failure"),
+    attemptId,
+    outcome: "failed",
+    failureClass: "provider",
+    summary: "Provider error: : Request timed out.",
+    output: {},
+  });
+  const routed = recordFailureAndSelectRecovery({
+    invocation: invocation("task-completion/route-provider-failure"),
+    attemptId,
+    resultId: settlement.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "supervisor tore down the attempt on a provider timeout",
+    evidence: { source: "agent-end-recovery" },
+    rationale: "provider error classified as terminal",
+  });
+
+  assert.throws(
+    () => resolveTaskCompletionAuthority(TASK),
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      assert.match(message, /no running Attempt/);
+      assert.ok(message.includes(attemptId), "gate error must name the settled Attempt");
+      assert.match(message, /outcome=failed/);
+      assert.match(message, /failureClass=provider/);
+      assert.ok(
+        message.includes(routed.recoveryActionId),
+        "gate error must surface the recorded recovery action id",
+      );
+      return true;
+    },
+  );
+
+  assert.equal(
+    resolveTaskCompletionAuthority(TASK, undefined, { blockerReport: true }),
+    "legacy",
+    "blockerDiscovered reports must route to the legacy durable write instead of dead-ending on the gate",
+  );
 });

@@ -925,7 +925,9 @@ export async function executeTaskComplete(
       sliceId: params.sliceId,
       taskId: params.taskId,
     };
-    const authority = resolveTaskCompletionAuthority(task, invocation?.idempotencyKey);
+    const authority = resolveTaskCompletionAuthority(task, invocation?.idempotencyKey, {
+      blockerReport: params.blockerDiscovered === true,
+    });
     if (authority === "canonical") {
       if (!invocation) {
         throw new Error("Canonical Task completion requires private invocation identity");

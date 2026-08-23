@@ -921,11 +921,16 @@ export async function handleAgentEnd(
     }
 
     // --- Permanent / unknown: pause indefinitely ---
+    // Abort the live host turn: the supervisor is about to settle the running
+    // Attempt as failed, and a host session that transparently retried the
+    // failed request would otherwise keep executing against torn-down attempt
+    // state (split-brain, #1973). The transient branch above deliberately does
+    // NOT abort — it auto-resumes the same unit in the same session.
     await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi, {
       message: `Provider error: ${errorDetail}`,
       category: "provider",
       isTransient: false,
-    }), {
+    }, { abortActiveTurn: true }), {
       isRateLimit: false,
       isTransient: false,
       retryAfterMs: 0,
