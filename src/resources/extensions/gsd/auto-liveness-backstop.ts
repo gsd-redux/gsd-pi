@@ -9,6 +9,7 @@ import {
   acknowledgeLivenessWedgeRecord,
   insertLivenessWedgeRecord,
   isDbAvailable,
+  reopenLivenessWedgeRecord,
   transaction,
   upsertLivenessBlockSignature,
 } from './gsd-db.js';
@@ -141,13 +142,14 @@ export function recordNonAdvancingOutcome(
 
       if (count < LIVENESS_TRIP_THRESHOLD) return { tripped: false, count };
 
-      // Reuse an already-open wedge for this signature rather than minting a
-      // duplicate — the resume contract keys acknowledgment off one id.
-      const open = db.prepare(
+      // Reuse the wedge for this signature rather than minting a duplicate.
+      // An acknowledged wedge represents a one-shot re-entry probe: if the
+      // originating guard reads the same input again, reopen that same record.
+      const existing = db.prepare(
         `SELECT * FROM liveness_wedge_records
          WHERE scope_id = :scope AND guard_id = :guard
            AND unit_type = :utype AND unit_id = :uid
-           AND input_hash = :hash AND acknowledged_at IS NULL
+           AND input_hash = :hash
          ORDER BY created_at DESC LIMIT 1`,
       ).get({
         ':scope': input.scopeId,
@@ -156,7 +158,15 @@ export function recordNonAdvancingOutcome(
         ':uid': input.unitId,
         ':hash': inputHash,
       }) as Record<string, unknown> | undefined;
-      if (open) return { tripped: true, count, wedge: rowToWedge(open) };
+      if (existing) {
+        const wedge = rowToWedge(existing);
+        if (wedge.acknowledgedAt) reopenLivenessWedgeRecord(wedge.wedgeId, count);
+        return {
+          tripped: true,
+          count,
+          wedge: { ...wedge, occurrenceCount: count, acknowledgedAt: null },
+        };
+      }
 
       const wedge: WedgeRecord = {
         wedgeId: `W-${randomUUID().slice(0, 8)}`,
@@ -203,9 +213,10 @@ export type AcknowledgeResult =
   | { ok: false; reason: string };
 
 /**
- * Acknowledge a wedge: marks the record acknowledged and clears the tripped
- * signature's counter so auto-mode re-enters with a clean slate for that
- * signature. Acknowledgment is always explicit (ADR-047 §5).
+ * Acknowledge a wedge and permit one re-entry probe. The tripped signature is
+ * deliberately retained: unchanged guard input immediately reopens the same
+ * wedge, while changed input supersedes the old signature during adjudication.
+ * Acknowledgment is always explicit (ADR-047 §5).
  */
 export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeResult {
   if (!isDbAvailable()) return { ok: false, reason: 'workflow database unavailable' };
@@ -219,17 +230,7 @@ export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeR
       const wedge = rowToWedge(row);
       if (wedge.acknowledgedAt) return { ok: true, wedge };
       const now = nowIso();
-      acknowledgeLivenessWedgeRecord(
-        wedgeId,
-        {
-          scopeId: wedge.scopeId,
-          guardId: wedge.guardId,
-          unitType: wedge.unitType,
-          unitId: wedge.unitId,
-          inputHash: wedge.inputHash,
-        },
-        now,
-      );
+      acknowledgeLivenessWedgeRecord(wedgeId, now);
       return { ok: true, wedge: { ...wedge, acknowledgedAt: now } };
     });
   } catch (err) {

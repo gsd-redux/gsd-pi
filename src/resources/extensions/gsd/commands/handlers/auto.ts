@@ -133,8 +133,8 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
     if (!(await guardRemoteSession(ctx, pi))) return true;
     const basePath = projectRoot();
 
-    // ADR-047 §5: explicit wedge acknowledgment — clears the tripped
-    // signature's counter so the entry gate lets auto-mode re-enter.
+    // ADR-047 §5: explicit wedge acknowledgment opens a one-shot re-entry
+    // probe. The retained signature reopens the same wedge if unchanged.
     if (resumeWedgeId) {
       const { ensureDbOpen } = await import("../../bootstrap/dynamic-tools.js");
       if (!(await ensureDbOpen(basePath))) {
@@ -149,7 +149,7 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
         return true;
       }
       ctx.ui.notify(
-        `Wedge ${resumeWedgeId} acknowledged — its block-signature counter is cleared. Re-entering auto-mode.`,
+        `Wedge ${resumeWedgeId} acknowledged — probing whether its blocker cleared before re-entering auto-mode.`,
         "info",
       );
     }

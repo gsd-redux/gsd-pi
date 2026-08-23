@@ -87,27 +87,27 @@ export function insertLivenessWedgeRecord(wedge: LivenessWedgeInsert): void {
 }
 
 /**
- * Mark a wedge acknowledged and clear its tripped signature counter so
- * auto-mode re-enters with a clean slate for that signature (ADR-047 §5).
+ * Mark a wedge acknowledged so auto-mode can perform one re-entry probe.
+ * The signature counter remains intact until changed guard input supersedes it;
+ * otherwise the probe must immediately reopen the same wedge (ADR-047 §5).
  */
 export function acknowledgeLivenessWedgeRecord(
   wedgeId: string,
-  signature: LivenessSignatureKey,
   now: string,
 ): void {
-  const db = getDb();
-  db.prepare(
+  getDb().prepare(
     `UPDATE liveness_wedge_records SET acknowledged_at = :now WHERE wedge_id = :wid`,
   ).run({ ':now': now, ':wid': wedgeId });
-  db.prepare(
-    `DELETE FROM liveness_block_signatures
-     WHERE scope_id = :scope AND guard_id = :guard
-       AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
-  ).run({
-    ':scope': signature.scopeId,
-    ':guard': signature.guardId,
-    ':utype': signature.unitType,
-    ':uid': signature.unitId,
-    ':hash': signature.inputHash,
-  });
+}
+
+/** Reopen an acknowledged wedge when its one-shot probe reads the same blocker. */
+export function reopenLivenessWedgeRecord(
+  wedgeId: string,
+  occurrenceCount: number,
+): void {
+  getDb().prepare(
+    `UPDATE liveness_wedge_records
+     SET acknowledged_at = NULL, occurrence_count = :count
+     WHERE wedge_id = :wid`,
+  ).run({ ':count': occurrenceCount, ':wid': wedgeId });
 }
