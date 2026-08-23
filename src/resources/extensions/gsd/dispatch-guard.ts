@@ -95,6 +95,9 @@ export function getPriorSliceCompletionBlocker(
 
     const slices = getMilestoneSliceSummaries(mid);
     if (slices.length === 0) {
+      // An earlier milestone with no slice rows is a placeholder; it cannot
+      // have incomplete slices, so it never gates the target milestone.
+      if (mid !== targetMid) continue;
       return `Cannot dispatch ${unitType} ${unitId}: milestone ${mid} has no slice rows in the workflow DB.`;
     }
 

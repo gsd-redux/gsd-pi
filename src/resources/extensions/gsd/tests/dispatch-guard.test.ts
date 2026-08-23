@@ -88,6 +88,24 @@ test("dispatch guard fails closed on missing legacy DB routing rows", (t) => {
   );
 });
 
+test("dispatch guard skips an earlier placeholder milestone with no slice rows (#1947)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  insertMilestone({ id: "M001", title: "Placeholder", status: "queued" });
+  insertMilestone({ id: "M002", title: "Current", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M002", title: "Target", status: "pending", depends: [] });
+
+  assert.equal(getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M002/S01"), null);
+  assert.equal(getPriorSliceCompletionBlocker(repo, "main", "research-slice", "M002/parallel-research"), null);
+
+  // The target milestone itself having no slice rows still fails closed.
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M001/S01") ?? "",
+    /milestone M001 has no slice rows in the workflow DB/i,
+  );
+});
+
 test("dispatch guard fails closed when a declared dependency row is missing", (t) => {
   const repo = setupRepo();
   t.after(() => teardownRepo(repo));
