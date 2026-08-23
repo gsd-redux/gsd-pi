@@ -235,6 +235,9 @@ routes normally and cannot reuse the earlier repair evidence.
 
 Auto-mode never creates this authorization. It continues to stop on ordinary
 abort and proceeds only when a replayed abort receipt exposes an exact,
-unconsumed resume event. The control-plane tool is intentionally excluded from
-dispatched unit tool registries so a failing worker cannot authorize its own
-retry.
+unconsumed resume event. An explicit `gsd_task_reopen` is the other operator
+path: the reopen Domain Operation records the resume event for every prior
+never-consumed agent-owned abort on that Task, so a Task moved to `ready` has no
+operative predecessor abort and the fresh lineage-linked Attempt can claim. The
+control-plane tool is intentionally excluded from dispatched unit tool
+registries so a failing worker cannot authorize its own retry.

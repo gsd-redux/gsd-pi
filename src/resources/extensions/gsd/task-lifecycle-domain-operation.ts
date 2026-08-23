@@ -362,14 +362,72 @@ export function reopenTask(input: {
       itemKind: "task",
       ...input.task,
     });
-    return mutation("task.reopened", input.task, {
+    const reopened = mutation("task.reopened", input.task, {
       lifecycleId: lifecycle.lifecycleId,
       workCheckpointId: checkpoint.checkpointId,
       reason,
       shadow: shadowPayload(shadow),
     });
+    // A task moved to `ready` has no operative predecessor abort (#1948): a
+    // never-consumed agent-owned abort would otherwise block every dispatch
+    // while advertising gsd_task_recovery_resume, which rejects on the new
+    // `ready` lifecycle. Record the reopen as that abort's resume so the fresh
+    // Attempt's lineage-linked claim carries current recovery authority.
+    const resumed = readUnresumedAgentAbortRoutes(lifecycle.lifecycleId).map((route) =>
+      mutation("task.recovery.resumed", input.task, {
+        lifecycleId: lifecycle.lifecycleId,
+        attemptId: route.attemptId,
+        resultId: route.resultId,
+        recoveryActionId: route.recoveryActionId,
+        repairSummary: reason,
+        evidence: { source: "task.reopen", reason },
+        workCheckpointId: checkpoint.checkpointId,
+      }).events[0]!);
+    return { ...reopened, events: [...reopened.events, ...resumed] };
   });
   return loadReceipt(operation, "ready", "pending");
+}
+
+/**
+ * Agent-owned abort routes on this lifecycle that no `task.recovery.resumed`
+ * event has consumed yet, one per Attempt (its latest action only).
+ */
+function readUnresumedAgentAbortRoutes(
+  lifecycleId: string,
+): Array<{ attemptId: string; resultId: string; recoveryActionId: string }> {
+  const rows = getDb().prepare(`
+    SELECT observation.attempt_id, observation.result_id, action.recovery_action_id
+    FROM workflow_recovery_actions action
+    JOIN workflow_failure_observations observation
+      ON observation.project_id = action.project_id
+     AND observation.lifecycle_id = action.lifecycle_id
+     AND observation.failure_observation_id = action.failure_observation_id
+    WHERE action.lifecycle_id = :lifecycle_id
+      AND action.action = 'abort'
+      AND observation.recovery_owner = 'agent'
+      AND action.project_revision = (
+        SELECT MAX(latest.project_revision)
+        FROM workflow_recovery_actions latest
+        JOIN workflow_failure_observations latest_observation
+          ON latest_observation.project_id = latest.project_id
+         AND latest_observation.lifecycle_id = latest.lifecycle_id
+         AND latest_observation.failure_observation_id = latest.failure_observation_id
+        WHERE latest.lifecycle_id = action.lifecycle_id
+          AND latest_observation.attempt_id = observation.attempt_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_domain_events resumed
+        WHERE resumed.project_id = action.project_id
+          AND resumed.event_type = 'task.recovery.resumed'
+          AND json_extract(resumed.payload_json, '$.recoveryActionId') = action.recovery_action_id
+      )
+    ORDER BY action.project_revision ASC
+  `).all({ ":lifecycle_id": lifecycleId }) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    attemptId: String(row["attempt_id"]),
+    resultId: String(row["result_id"]),
+    recoveryActionId: String(row["recovery_action_id"]),
+  }));
 }
 
 export function cancelTask(input: {

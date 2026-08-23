@@ -2294,6 +2294,124 @@ test("reopenTask moves completed work to ready and pending without erasing histo
   assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "in_progress");
 });
 
+test("reopenTask reconciles a never-consumed predecessor verification abort so fresh dispatch proceeds (#1948)", async () => {
+  const failed = seedFailedAttempt();
+  const aborted = recordFailureAndSelectRecovery({
+    invocation: invocation("task/reopen/verification-abort"),
+    attemptId: failed.attemptId,
+    resultId: failed.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "host verification aborted the completed task attempt",
+    evidence: { source: "host-verification" },
+    rationale: "stop the failed verification route",
+  });
+  assert.equal(aborted.action, "abort");
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01")?.recoveryActionId,
+    aborted.recoveryActionId,
+    "the never-consumed abort is the operative dispatch blocker while in progress",
+  );
+
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.verification-aborted-complete",
+    idempotencyKey: "fixture/verification-aborted-complete",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+    });
+    db().prepare(`
+      UPDATE tasks SET status = 'complete', completed_at = '2026-07-13T01:00:00.000Z'
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+    return {
+      events: [{
+        eventType: "test.task.verification-aborted-complete",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/task/verification-aborted-complete",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+
+  reopenTask({
+    invocation: invocation("task/reopen/verification-aborted"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "retry the task from a clean attempt",
+  });
+
+  // Escape-path invariant: no guard names a recoveryActionId that the resume
+  // guard rejects, and the predecessor route is non-operative after reopen.
+  assert.equal(readTaskRecoveryResumeEligibility(aborted.recoveryActionId).eligible, false);
+  assert.equal(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), null);
+  const route = readTaskRecoveryRoute(failed.attemptId);
+  assert.equal(route?.recoveryActionId, aborted.recoveryActionId, "abort history is preserved");
+  assert.equal(route?.resumeAuthorized, true, "reopen supersedes the predecessor abort");
+
+  const milestoneDir = join(failed.basePath, ".gsd", "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  const taskDir = join(sliceDir, "tasks");
+  mkdirSync(taskDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# Recovery context\n");
+  writeFileSync(join(milestoneDir, "M001-RESEARCH.md"), "# Recovery research\n");
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), "# Recovery\n\n- [ ] **S01: Recovery operation**\n");
+  writeFileSync(join(sliceDir, "S01-CONTEXT.md"), "# Slice context\n");
+  writeFileSync(join(sliceDir, "S01-RESEARCH.md"), "# Slice research\n");
+  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n- [ ] **T01: Recover atomically**\n");
+  writeFileSync(join(taskDir, "T01-PLAN.md"), "# T01: Recover atomically\n");
+
+  const action = await resolveDispatch({
+    basePath: failed.basePath,
+    mid: "M001",
+    midTitle: "Recovery",
+    state: {
+      activeMilestone: { id: "M001", title: "Recovery" },
+      activeSlice: { id: "S01", title: "Recovery operation" },
+      activeTask: { id: "T01", title: "Recover atomically" },
+      phase: "executing",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [],
+    },
+    prefs: undefined,
+  });
+  assert.equal(action.action, "dispatch");
+  if (action.action !== "dispatch") return;
+  assert.deepEqual(
+    { unitType: action.unitType, unitId: action.unitId },
+    { unitType: "execute-task", unitId: "M001/S01/T01" },
+  );
+
+  const dispatchId = insertClaimedDispatch(2);
+  const fresh = claimTaskAttempt({
+    invocation: invocation("task/reopen/verification-aborted/fresh-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: dispatchId,
+    retryOfAttemptId: failed.attemptId,
+  });
+  assert.equal(fresh.attemptNumber, 2);
+  assert.equal(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), null);
+});
+
 test("reopenTask maps cancelled and skipped work to ready and pending", () => {
   const seeded = seedReadyTask();
   cancelTask({
