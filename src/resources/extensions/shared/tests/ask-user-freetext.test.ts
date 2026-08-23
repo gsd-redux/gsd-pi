@@ -12,11 +12,22 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// #1923: execute() consults the operator's real Remote Questions config. Without
+// this guard, fixture questions are posted to a configured Slack/Discord/Telegram
+// channel on every test run.
+process.env.GSD_DISABLE_REMOTE_QUESTIONS = "1";
 
 // The ask-user-questions extension registers a tool via pi.registerTool().
 // We capture that registration and call execute() directly with a mock context.
 import AskUserQuestions from "../../ask-user-questions.js";
 import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
+import { isRemoteConfigured } from "../../remote-questions/manager.js";
+import { resolveRemoteConfig } from "../../remote-questions/config.js";
+import { clearGSDPreferencesCache, getGlobalGSDPreferencesPath } from "../../gsd/preferences.js";
 
 interface CapturedTool {
 	name: string;
@@ -157,5 +168,55 @@ describe("ask-user-questions RPC fallback free-text", () => {
 		assert.ok(text, "result should have text content");
 		const parsed = JSON.parse(text);
 		assert.deepStrictEqual(parsed.answers.q1.answers, ["None of the above"]);
+	});
+});
+
+describe("ask-user-questions remote isolation (#1923)", () => {
+	it("GSD_DISABLE_REMOTE_QUESTIONS=1 keeps execute() on the local path even when a channel is configured", async (t) => {
+		const originalGsdHome = process.env.GSD_HOME;
+		const originalToken = process.env.TELEGRAM_BOT_TOKEN;
+		const tempGsdHome = mkdtempSync(join(tmpdir(), "ask-user-remote-isolation-"));
+		t.after(() => {
+			process.env.GSD_DISABLE_REMOTE_QUESTIONS = "1";
+			if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+			else process.env.GSD_HOME = originalGsdHome;
+			if (originalToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+			else process.env.TELEGRAM_BOT_TOKEN = originalToken;
+			clearGSDPreferencesCache();
+			rmSync(tempGsdHome, { recursive: true, force: true });
+		});
+
+		// Hermetic "operator has Remote Questions configured" state.
+		process.env.GSD_HOME = tempGsdHome;
+		process.env.TELEGRAM_BOT_TOKEN = "test-token-never-used";
+		mkdirSync(tempGsdHome, { recursive: true });
+		writeFileSync(
+			getGlobalGSDPreferencesPath(),
+			"---\nversion: 1\nremote_questions:\n  channel: telegram\n  channel_id: \"123456789\"\n---\n",
+			"utf-8",
+		);
+		clearGSDPreferencesCache();
+
+		// Sanity: without the guard this machine state WOULD dispatch remotely.
+		delete process.env.GSD_DISABLE_REMOTE_QUESTIONS;
+		assert.ok(resolveRemoteConfig(), "fixture must look like a configured channel without the guard");
+
+		// With the guard, the manager sees no remote channel at all.
+		process.env.GSD_DISABLE_REMOTE_QUESTIONS = "1";
+		assert.equal(isRemoteConfigured(), false);
+
+		// execute() therefore resolves purely through the mock local UI.
+		resetAskUserQuestionsCache();
+		const tool = captureTool();
+		const { ctx, selectCalls } = makeMockCtx({ selectReturns: ["Option A"] });
+		const result = await tool.execute(
+			"call-4",
+			{ questions: [makeQuestion("q1", ["Option A", "Option B"])] },
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(selectCalls.length, 1);
+		assert.deepStrictEqual(JSON.parse(result.content[0].text).answers.q1.answers, ["Option A"]);
 	});
 });

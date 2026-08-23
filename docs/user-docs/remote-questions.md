@@ -75,6 +75,13 @@ remote_questions:
   poll_interval_seconds: 5  # 2-30, default 5
 ```
 
+### Temporarily disabling remote dispatch
+
+Set `GSD_DISABLE_REMOTE_QUESTIONS=1` to make GSD treat remote questions as
+unconfigured for that process, without editing preferences or unsetting bot
+tokens. Questions then go only to the local UI. The repository's own test
+suite sets this so fixture questions never reach a real channel.
+
 ## How It Works
 
 1. GSD encounters a decision point during auto-mode

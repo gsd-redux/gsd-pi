@@ -74,7 +74,20 @@ function hydrateRemoteTokensFromAuth(): void {
   }
 }
 
+/**
+ * Hard off-switch for remote dispatch. Set to "1" to make every channel look
+ * unconfigured regardless of preferences, auth.json, or bot-token env vars.
+ * Test suites set this so fixture questions never reach an operator's real
+ * Slack/Discord/Telegram channel (#1923).
+ */
+export const REMOTE_QUESTIONS_DISABLE_ENV = "GSD_DISABLE_REMOTE_QUESTIONS";
+
+export function isRemoteQuestionsDisabled(): boolean {
+  return process.env[REMOTE_QUESTIONS_DISABLE_ENV] === "1";
+}
+
 export function resolveRemoteConfig(): ResolvedConfig | null {
+  if (isRemoteQuestionsDisabled()) return null;
   hydrateRemoteTokensFromAuth();
   const prefs = loadEffectiveGSDPreferences();
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
@@ -101,6 +114,7 @@ export function resolveRemoteConfig(): ResolvedConfig | null {
 }
 
 export function getRemoteConfigStatus(): string {
+  if (isRemoteQuestionsDisabled()) return `Remote questions: disabled by ${REMOTE_QUESTIONS_DISABLE_ENV}=1`;
   hydrateRemoteTokensFromAuth();
   const prefs = loadEffectiveGSDPreferences();
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
