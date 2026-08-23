@@ -250,7 +250,9 @@ test("result verification accepts the standard -status lifecycle path", () => {
   assert.ok(plan.instructions.some((instruction) => (
     instruction.action === "adopt-lifecycle" && instruction.targetKind === "milestone-lifecycle"
   )));
-  db().prepare("INSERT INTO milestones (id, title, status) VALUES ('M001', 'Pocket Notes', 'active')").run();
+  // #1897: the lifecycle claim also lands on the milestone row, so the
+  // retained Application content expects the imported status, not the default.
+  db().prepare("INSERT INTO milestones (id, title, status) VALUES ('M001', 'Pocket Notes', 'complete')").run();
   db().prepare(`INSERT INTO workflow_operations (
       operation_id, project_id, operation_type, idempotency_key,
       expected_revision, resulting_revision, expected_authority_epoch, resulting_authority_epoch,
