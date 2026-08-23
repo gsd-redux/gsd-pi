@@ -13,6 +13,19 @@ import { GSDDashboardOverlay } from "../dashboard-overlay.ts";
 import type { UnitMetrics } from "../metrics.ts";
 import { assertFullOuterBorder } from "./tui-border-assertions.ts";
 import { autoSession, getAutoRuntimeSnapshot } from "../auto-runtime-state.ts";
+import {
+  closeDatabase,
+  executeDomainOperation,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+  readDomainOperationFence,
+  updateMilestoneStatus,
+  updateSliceStatus,
+  updateTaskStatus,
+} from "../gsd-db.ts";
+import { invalidateStateCache } from "../state.ts";
 
 const fakeTheme = {
   fg: (_color: string, text: string) => text,
@@ -84,6 +97,97 @@ test("GSDDashboardOverlay non-identity refresh avoids reparsing preferences", as
     () => (overlay as any).refreshDashboard(false),
     "unchanged overlay identity should not call getAutoDashboardData or read preferences",
   );
+});
+
+test("GSDDashboardOverlay refreshes completed DB lifecycle state when runtime identity is unchanged", async (t) => {
+  const basePath = join(
+    tmpdir(),
+    `gsd-dashboard-overlay-lifecycle-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Lifecycle refresh", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Only slice", status: "active" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Only task", status: "pending" });
+
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = basePath;
+  autoSession.autoStartTime = Date.now() - 1000;
+  autoSession.setCurrentUnit({
+    type: "evaluating-gates",
+    id: "M001/S01",
+    startedAt: Date.now() - 500,
+  });
+
+  const overlay = new GSDDashboardOverlay({ requestRender() {} }, fakeTheme as any, () => {});
+  t.after(() => {
+    overlay.dispose();
+    autoSession.reset();
+    invalidateStateCache();
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  await (overlay as any).refreshInFlight;
+  const initialView = (overlay as any).milestoneData;
+  assert.equal(initialView.phase, "executing");
+  assert.deepEqual(initialView.progress.milestones, { done: 0, total: 1 });
+  assert.equal(initialView.slices[0].active, true);
+  assert.equal(initialView.slices[0].tasks[0].active, true);
+  assert.match(overlay.render(140).join("\n"), /Now: evaluating-gates M001\/S01/);
+
+  const runtimeBefore = getAutoRuntimeSnapshot();
+  const loadedIdentityBefore = (overlay as any).loadedDashboardIdentity;
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.milestone.complete",
+    idempotencyKey: "dashboard-overlay/milestone-complete",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId: "M001" },
+  }, () => {
+    const completedAt = new Date().toISOString();
+    updateTaskStatus("M001", "S01", "T01", "complete", completedAt);
+    updateSliceStatus("M001", "S01", "complete", completedAt);
+    updateMilestoneStatus("M001", "complete", completedAt);
+    return {
+      events: [{
+        eventType: "milestone.completed",
+        entityType: "milestone",
+        entityId: "M001",
+        payload: { milestoneId: "M001" },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/dashboard-overlay/m001",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  invalidateStateCache();
+
+  assert.deepEqual(getAutoRuntimeSnapshot(), runtimeBefore, "lifecycle completion must not change runtime identity");
+  await (overlay as any).refreshDashboard(false);
+
+  const completedView = (overlay as any).milestoneData;
+  assert.notEqual((overlay as any).loadedDashboardIdentity, loadedIdentityBefore);
+  assert.equal(completedView.phase, "complete");
+  assert.deepEqual(completedView.progress.milestones, { done: 1, total: 1 });
+  assert.equal(completedView.slices[0].done, true);
+  assert.equal(completedView.slices[0].active, false);
+  assert.deepEqual(completedView.slices[0].tasks, []);
+  assert.equal((overlay as any).dashData.currentUnit, null);
+
+  await (overlay as any).refreshDashboard(false);
+  assert.equal((overlay as any).dashData.currentUnit, null, "volatile refresh must not restore the stale unit");
+  const rendered = overlay.render(140).join("\n");
+  assert.match(rendered, /Phase: complete/);
+  assert.match(rendered, /Milestones.*100%/);
+  assert.doesNotMatch(rendered, /evaluating-gates M001\/S01/);
 });
 
 test("GSDDashboardOverlay render and scroll do not run environment doctor subprocesses", (t) => {

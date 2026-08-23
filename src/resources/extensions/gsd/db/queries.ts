@@ -72,6 +72,27 @@ export interface HierarchyCompletionCounts {
   tasksTotal: number;
 }
 
+export interface ProjectAuthorityVersion {
+  revision: number;
+  authorityEpoch: number;
+}
+
+export function getProjectAuthorityVersion(): ProjectAuthorityVersion {
+  const db = getDbOrNull();
+  if (!db) return { revision: 0, authorityEpoch: 0 };
+  try {
+    const row = db.prepare(
+      "SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1",
+    ).get();
+    return {
+      revision: numberColumn(row, "revision"),
+      authorityEpoch: numberColumn(row, "authority_epoch"),
+    };
+  } catch {
+    return { revision: 0, authorityEpoch: 0 };
+  }
+}
+
 function numberColumn(row: Record<string, unknown> | undefined, column: string): number {
   const value = row?.[column];
   if (typeof value === "number") return value;

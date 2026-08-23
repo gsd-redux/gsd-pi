@@ -11,11 +11,11 @@ import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, matchesKey, Key } from "@gsd/pi-tui";
 import { deriveState } from "./state.js";
 import { loadFile } from "./files.js";
-import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getSliceTasks, getProjectAuthorityVersion } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { getAutoDashboardData } from "./auto.js";
 import type { AutoDashboardData } from "./auto-dashboard.js";
-import { getAutoRuntimeSnapshot } from "./auto-runtime-state.js";
+import { getAutoRuntimeSnapshot, type AutoRuntimeSnapshot } from "./auto-runtime-state.js";
 import {
   getLedger, getProjectTotals, aggregateByPhase, aggregateBySlice,
   aggregateByModel, aggregateCacheHitRate, formatCost, formatTokenCount, formatCostProjection,
@@ -32,6 +32,7 @@ import { computeProgressScore, formatProgressLine } from "./progress-score.js";
 import { runEnvironmentChecksAsync, type EnvironmentCheckResult } from "./doctor-environment.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 import { renderDialogFrame, renderKeyHints } from "./tui/render-kit.js";
+import { parseUnitId } from "./unit-id.js";
 
 export function unitLabel(type: string): string {
   switch (type) {
@@ -70,6 +71,7 @@ export class GSDDashboardOverlay {
   private milestoneData: MilestoneView | null = null;
   private loading = true;
   private loadedDashboardIdentity?: string;
+  private completedMilestoneIds = new Set<string>();
   private refreshInFlight: Promise<void> | null = null;
   private envRefreshInFlight: Promise<void> | null = null;
   private cachedEnvBasePath?: string;
@@ -125,11 +127,13 @@ export class GSDDashboardOverlay {
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
       : "-";
+    const authority = getProjectAuthorityVersion();
     return [
       base,
       dashData.active ? "1" : "0",
       dashData.paused ? "1" : "0",
       currentUnit,
+      `${authority.revision}:${authority.authorityEpoch}`,
     ].join("|");
   }
 
@@ -142,15 +146,18 @@ export class GSDDashboardOverlay {
     } catch {
       // Non-fatal — keep last known value
     }
+    const currentUnit = this.isCompletedMilestoneUnit(snapshot.currentUnit)
+      ? null
+      : snapshot.currentUnit;
     this.dashData = {
       ...this.dashData,
       active: snapshot.active,
       paused: snapshot.paused,
-      currentUnit: snapshot.currentUnit
+      currentUnit: currentUnit
         ? {
-            type: snapshot.currentUnit.type,
-            id: snapshot.currentUnit.id,
-            startedAt: snapshot.currentUnit.startedAt,
+            type: currentUnit.type,
+            id: currentUnit.id,
+            startedAt: currentUnit.startedAt,
           }
         : null,
       basePath: snapshot.basePath,
@@ -160,6 +167,11 @@ export class GSDDashboardOverlay {
       toolSurface: snapshot.toolSurface,
       pendingCaptureCount,
     };
+  }
+
+  private isCompletedMilestoneUnit(unit: AutoRuntimeSnapshot["currentUnit"]): boolean {
+    if (!unit) return false;
+    return this.completedMilestoneIds.has(parseUnitId(unit.id).milestone);
   }
 
   private async refreshDashboard(initial = false): Promise<void> {
@@ -221,15 +233,22 @@ export class GSDDashboardOverlay {
     const base = this.dashData.basePath || process.cwd();
     try {
       const state = await deriveState(base);
-      if (!state.activeMilestone) {
+      this.completedMilestoneIds = new Set(
+        state.registry.filter(entry => entry.status === "complete").map(entry => entry.id),
+      );
+      if (this.isCompletedMilestoneUnit(this.dashData.currentUnit)) {
+        this.dashData = { ...this.dashData, currentUnit: null };
+      }
+      const displayedMilestone = state.activeMilestone ?? state.lastCompletedMilestone;
+      if (!displayedMilestone) {
         this.milestoneData = null;
         return true;
       }
 
-      const mid = state.activeMilestone.id;
+      const mid = displayedMilestone.id;
       const view: MilestoneView = {
         id: mid,
-        title: state.activeMilestone.title,
+        title: displayedMilestone.title,
         slices: [],
         phase: state.phase,
         progress: {
@@ -495,6 +514,7 @@ export class GSDDashboardOverlay {
     if (this.milestoneData) {
       const mv = this.milestoneData;
       lines.push(row(th.fg("text", th.bold(`${mv.id}: ${mv.title}`))));
+      lines.push(row(`${th.fg("dim", "Phase")}: ${th.fg("text", mv.phase)}`));
       lines.push(blank());
 
       const totalSlices = mv.slices.length;
