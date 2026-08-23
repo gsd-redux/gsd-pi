@@ -7,7 +7,7 @@
 | `/gsd` | Step mode — execute one unit at a time, pause between each |
 | `/gsd next` | Explicit step mode (same as `/gsd`) |
 | `/gsd auto` | Autonomous mode — research, plan, execute, commit, repeat |
-| `/gsd auto --resume-wedge <id>` | Acknowledge the named liveness wedge and re-enter auto mode after applying its sanctioned recovery |
+| `/gsd auto --resume-wedge <id>` | Resume the currently open liveness wedge; its originating guard must be clear before auto mode re-enters |
 | `/gsd quick [--discuss] [--research] [--validate] [--full] <task>` | Execute a quick task with GSD guarantees; optionally add discussion, research, plan checking, and post-execution verification (`--full` enables all three stages) |
 | `/gsd do <text>` | Route freeform text to the right GSD command |
 | `/gsd stop` | Stop auto mode gracefully |

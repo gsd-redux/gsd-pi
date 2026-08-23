@@ -234,7 +234,7 @@ Transient git failures such as `.git/index.lock` contention still use the short 
 
 GSD records every non-advancing auto-mode outcome in the project database using the guard, target unit, and a hash of the inputs that guard read. A second occurrence with the same hash trips a persisted wedge even when other units ran between the two occurrences or the process restarted.
 
-When a wedge trips, auto mode stops with blocked exit code 10, prints the guard and its sanctioned recovery, and refuses to re-enter while the wedge remains unacknowledged. Apply the printed recovery first, then run `/gsd auto --resume-wedge <id>` to acknowledge that wedge and open one re-entry probe. The backstop never repairs workflow state itself: if the probe reads the same unchanged blocker, it immediately reopens the same wedge with its prior evidence and occurrence count; changed input supersedes the old signature.
+When a wedge trips, auto mode stops with blocked exit code 10, prints the guard and its sanctioned recovery, and refuses to re-enter while the wedge remains unacknowledged. Apply the printed recovery first, then run `/gsd auto --resume-wedge <id>` with the ID of the currently open wedge. GSD rechecks that wedge's originating guard before acknowledging it: if the guard still blocks, the wedge and its counter remain intact and auto mode stays stopped. Only after the blocker clears does GSD acknowledge the wedge and open one re-entry probe. The backstop never repairs workflow state itself: if the probe still reads the same unchanged blocker, it immediately reopens the same wedge with its prior evidence and occurrence count; changed input supersedes the old signature.
 
 ### Consecutive Dispatch Blocker
 
