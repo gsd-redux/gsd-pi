@@ -210,8 +210,8 @@ export function extractRelativeImports(
  *   1. Imports carrying an explicit extension are checked as-is (handles assets
  *      like .css/.scss/images/fonts and .json, not just code extensions).
  *   2. TypeScript ESM convention where .js imports resolve to .ts files.
- *   3. Extensionless imports resolved against .ts/.tsx/.js/.jsx/.mjs/.cjs.
- *   4. Directory imports resolved against index.{ts,tsx,js,jsx,mjs,cjs}.
+ *   3. Extensionless imports resolved against .ts/.d.ts/.tsx/.js/.jsx/.mjs/.cjs.
+ *   4. Directory imports resolved against index.{ts,d.ts,tsx,js,jsx,mjs,cjs}.
  */
 export function resolveImportPath(
   importPath: string,
@@ -219,7 +219,7 @@ export function resolveImportPath(
   basePath: string
 ): { exists: boolean; resolvedPath: string | null } {
   const sourceDir = dirname(resolve(basePath, sourceFile));
-  const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+  const extensions = [".ts", ".d.ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
   // If the import already has an explicit extension, check it as-is first.
   // This correctly resolves asset imports like .css, .scss, images, fonts

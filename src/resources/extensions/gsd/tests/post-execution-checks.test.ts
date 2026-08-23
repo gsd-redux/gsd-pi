@@ -241,6 +241,23 @@ describe("resolveImportPath", () => {
     }
   });
 
+  test("resolves declaration files and declaration directory indexes", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-dts-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src", "generated"), { recursive: true });
+    mkdirSync(join(dir, "src", "types"), { recursive: true });
+    writeFileSync(join(dir, "src", "generated", "schema.d.ts"), "export interface Schema {}\n");
+    writeFileSync(join(dir, "src", "types", "index.d.ts"), "export interface Types {}\n");
+
+    const fileResult = resolveImportPath("./generated/schema", "src/index.ts", dir);
+    assert.ok(fileResult.exists);
+    assert.ok(fileResult.resolvedPath?.endsWith("schema.d.ts"));
+
+    const indexResult = resolveImportPath("./types", "src/index.ts", dir);
+    assert.ok(indexResult.exists);
+    assert.ok(indexResult.resolvedPath?.endsWith("index.d.ts"));
+  });
+
   test("resolves parent directory imports", () => {
     tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
