@@ -4,6 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,6 +14,21 @@ import { GSDDashboardOverlay } from "../dashboard-overlay.ts";
 import type { UnitMetrics } from "../metrics.ts";
 import { assertFullOuterBorder } from "./tui-border-assertions.ts";
 import { autoSession, getAutoRuntimeSnapshot } from "../auto-runtime-state.ts";
+import { adoptOrTransitionLifecycle } from "../db/writers/lifecycle-commands.ts";
+import { clearParseCache } from "../files.ts";
+import {
+  closeDatabase,
+  executeDomainOperation,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+  readDomainOperationFence,
+} from "../gsd-db.ts";
+import { completeMilestone } from "../milestone-lifecycle-domain-operation.ts";
+import { clearPathCache } from "../paths.ts";
+import { handleValidateMilestone } from "../tools/validate-milestone.ts";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
 
 const fakeTheme = {
   fg: (_color: string, text: string) => text,
@@ -84,6 +100,117 @@ test("GSDDashboardOverlay non-identity refresh avoids reparsing preferences", as
     () => (overlay as any).refreshDashboard(false),
     "unchanged overlay identity should not call getAutoDashboardData or read preferences",
   );
+});
+
+test("GSDDashboardOverlay reloads milestone progress after a DB-backed completion with unchanged runtime identity", async (t) => {
+  const basePath = join(
+    tmpdir(),
+    `gsd-dashboard-overlay-db-revision-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
+  mkdirSync(join(milestoneDir, "slices", "S01", "tasks"), { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# M001\n");
+  writeFileSync(join(basePath, "source.ts"), "export const source = 'dashboard';\n");
+  execFileSync("git", ["init"], { cwd: basePath, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: basePath });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: basePath });
+  execFileSync("git", ["add", "source.ts"], { cwd: basePath });
+  execFileSync("git", ["commit", "-m", "fixture"], { cwd: basePath, stdio: "ignore" });
+  const source = captureVerificationSourceSnapshot([{ id: "project", cwd: basePath }]);
+  assert.ok(source.ok, "source snapshot should succeed");
+
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Dashboard refresh", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice One", status: "complete" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task One", status: "complete" });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.dashboard.adopt",
+    idempotencyKey: "fixture/dashboard/adopt",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: {},
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, { itemKind: "milestone", milestoneId: "M001", lifecycleStatus: "ready" });
+    adoptOrTransitionLifecycle(context, { itemKind: "slice", milestoneId: "M001", sliceId: "S01", lifecycleStatus: "completed" });
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01", lifecycleStatus: "completed",
+    });
+    return {
+      events: [{
+        eventType: "test.dashboard.adopt", entityType: "milestone", entityId: "M001", payload: {}, destinations: ["test"],
+      }],
+      projections: [{ projectionKey: "test/dashboard/adopt", projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+
+  autoSession.reset();
+  autoSession.basePath = basePath;
+
+  const overlay = new GSDDashboardOverlay({ requestRender() {} }, fakeTheme as any, () => {});
+  t.after(() => {
+    overlay.dispose();
+    autoSession.reset();
+    closeDatabase();
+    clearParseCache();
+    clearPathCache();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  await (overlay as any).refreshInFlight;
+  assert.deepEqual((overlay as any).milestoneData?.progress.milestones, { total: 1, done: 0 });
+  assert.ok((overlay as any).milestoneData.slices.some((slice: { id: string }) => slice.id === "S01"));
+  const identityBefore = (overlay as any).loadedDashboardIdentity;
+  const runtimeBefore = JSON.stringify(getAutoRuntimeSnapshot());
+
+  const invocation = (idempotencyKey: string) => ({
+    idempotencyKey,
+    sourceTransport: "pi-tool" as const,
+    actorType: "agent" as const,
+    actorId: "dashboard-overlay-test",
+    traceId: `trace/${idempotencyKey}`,
+    turnId: `turn/${idempotencyKey}`,
+  });
+  const validated = await handleValidateMilestone({
+    milestoneId: "M001",
+    verdict: "pass",
+    remediationRound: 0,
+    successCriteriaChecklist: "- [x] Complete",
+    sliceDeliveryAudit: "| S01 | delivered |",
+    crossSliceIntegration: "Passed",
+    requirementCoverage: "Covered",
+    verificationClasses: "| Class | Evidence | Verdict |\n| --- | --- | --- |\n| Contract | focused test | PASS |",
+    verdictRationale: "All current database evidence passes.",
+  }, basePath, { invocation: invocation("fixture/dashboard/validate"), skipBrowserEvidenceGate: true });
+  assert.ok(!("error" in validated), `validation failed: ${"error" in validated ? validated.error : ""}`);
+  completeMilestone({
+    invocation: invocation("fixture/dashboard/complete"),
+    milestoneId: "M001",
+    sourceRevision: source.ok ? source.snapshot.aggregateRevision : "",
+    closeout: {
+      title: "Dashboard refresh",
+      oneLiner: "Completed while the dashboard stayed open.",
+      narrative: "The DB-backed completion must reach the open dashboard.",
+      successCriteriaResults: "Passed.",
+      definitionOfDoneResults: "Passed.",
+      requirementOutcomes: "Covered.",
+      keyDecisions: [],
+      keyFiles: [],
+      lessonsLearned: [],
+      followUps: "None.",
+      deviations: "None.",
+    },
+  });
+  assert.equal(JSON.stringify(getAutoRuntimeSnapshot()), runtimeBefore, "completion must not change the auto-runtime identity");
+
+  await (overlay as any).refreshDashboard(false);
+
+  assert.notEqual((overlay as any).loadedDashboardIdentity, identityBefore, "DB revision change should invalidate the dashboard identity");
+  assert.equal((overlay as any).milestoneData, null, "completed milestone must not be presented as the active milestone");
+  const rendered = overlay.render(100).join("\n");
+  assert.ok(!rendered.includes("S01"), "stale active slice must not be presented as current");
 });
 
 test("GSDDashboardOverlay render and scroll do not run environment doctor subprocesses", (t) => {

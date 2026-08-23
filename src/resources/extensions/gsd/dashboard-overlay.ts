@@ -16,6 +16,7 @@ import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { getAutoDashboardData } from "./auto.js";
 import type { AutoDashboardData } from "./auto-dashboard.js";
 import { getAutoRuntimeSnapshot } from "./auto-runtime-state.js";
+import { getCurrentProjectStateVersion } from "./markdown-renderer.js";
 import {
   getLedger, getProjectTotals, aggregateByPhase, aggregateBySlice,
   aggregateByModel, aggregateCacheHitRate, formatCost, formatTokenCount, formatCostProjection,
@@ -125,11 +126,17 @@ export class GSDDashboardOverlay {
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
       : "-";
+    // DB lifecycle revision: a Domain Operation (e.g. gsd_complete_milestone)
+    // can change milestone progress without touching the auto runtime, so the
+    // canonical project revision must invalidate milestoneData too (#1956).
+    // Falls back to 0:0 when the DB is closed, which keeps the identity stable.
+    const stateVersion = getCurrentProjectStateVersion();
     return [
       base,
       dashData.active ? "1" : "0",
       dashData.paused ? "1" : "0",
       currentUnit,
+      `${stateVersion.revision}:${stateVersion.authorityEpoch}`,
     ].join("|");
   }
 
