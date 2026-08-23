@@ -428,3 +428,15 @@ export function awaitCopilotCatalogSessionRefresh(
 	if (!pending) return Promise.resolve(NOOP_RESULT);
 	return withTimeout(pending, timeoutMs, { ...NOOP_RESULT, ran: true, reason: "timeout" });
 }
+
+/**
+ * Read the last-known-good snapshot captured by a prior session-start
+ * refresh for `basePath`, without triggering a new fetch. Returns `null`
+ * when no refresh has ever succeeded for this basePath (e.g. mode is "off",
+ * or every attempt so far failed with no snapshot to fall back on). Used by
+ * the GSD-W017 notification feature so it can react to a completed refresh
+ * without re-deriving auth or re-fetching itself.
+ */
+export function getLastKnownCopilotCatalogSnapshot(basePath: string): CopilotModelSnapshot | null {
+	return lastSnapshotByBasePath.get(basePath) ?? null;
+}

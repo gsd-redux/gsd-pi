@@ -52,6 +52,7 @@ A small set of call sites legitimately keys on `provider`. These are **not** gat
 - **Display labels / onboarding copy** (`onboarding.ts`). Surface-only, no behavior impact.
 - **Live provider-account catalog state** (`copilot-model-catalog.ts`, `copilot-overlay-writer.ts`, `commands/handlers/copilot-models.ts`). GitHub Copilot's live `/models` sync, its remote-only-model quarantine/registration logic, and the `/gsd copilot-models` command all exist specifically to talk to the `github-copilot` transport's authenticated account state — the check is inherently transport-specific, not API-shape-specific.
 - **Session-start catalog refresh coordinator** (`copilot-catalog-session-refresh.ts`). GSD-W018's opt-in automatic refresh reuses the same GitHub Copilot auth-token resolution as the manual `/gsd copilot-models` command, for the same transport-specific reason.
+- **Session-start cheaper-alternative notification gate** (`bootstrap/register-hooks.ts`). GSD-W017's post-refresh notification only ever evaluates the active model when it is on the `github-copilot` transport, since the cheaper-alternative comparison itself is scoped to that account's live catalog and economics.
 
 These sites are enumerated in the allowlist at `src/tests/provider-equality-allowlist.test.ts`.
 
