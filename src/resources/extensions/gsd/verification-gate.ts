@@ -822,6 +822,15 @@ function isShellCommandNotFound(exitCode: number, stderr: string): boolean {
     || /is not recognized as an internal or external command/i.test(stderr);
 }
 
+function isShellParseFailure(exitCode: number, stdout: string, stderr: string): boolean {
+  if (exitCode !== 1 || stdout.trim() !== "") return false;
+  return /unterminated string constant/i.test(stderr)
+    || /syntax error: unterminated quoted string/i.test(stderr)
+    || /unexpected eof while looking for matching/i.test(stderr)
+    || /syntax error near unexpected token/i.test(stderr)
+    || /was unexpected at this time/i.test(stderr);
+}
+
 /**
  * Run the verification gate: discover commands, execute each via spawnSync,
  * and return a structured result.
@@ -858,9 +867,10 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
     );
     // Pass the command string as an argument to the shell explicitly
     // to avoid Node.js DEP0190 (spawnSync with shell: true and no args).
-    const shellBin = process.platform === "win32" ? "cmd" : "sh";
-    const shellArgs = process.platform === "win32"
-      ? ["/c", rewrittenCommand]
+    const isWindows = process.platform === "win32";
+    const shellBin = isWindows ? "cmd" : "sh";
+    const shellArgs = isWindows
+      ? ["/d", "/s", "/c", rewrittenCommand]
       : [
           "-c",
           "if command -v bash >/dev/null 2>&1; then exec bash -o pipefail -c \"$1\" verification-gate; fi\nexec sh -c \"$1\" verification-gate",
@@ -881,6 +891,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
         env: verificationChildEnvironment(options.cwd),
         stdio: ["ignore", stdoutFd, stderrFd],
         timeout: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+        windowsVerbatimArguments: isWindows,
       });
       stdout = readBoundedCommandOutput(stdoutPath);
       capturedStderr = readBoundedCommandOutput(stderrPath);
@@ -926,6 +937,10 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
       if (isShellCommandNotFound(exitCode, stderr)) {
         failureClass = "command-not-found";
       }
+    }
+
+    if (!failureClass && isShellParseFailure(exitCode, stdout, stderr)) {
+      failureClass = "shell-parse";
     }
 
     const warning = countSearchWarning(command, exitCode);

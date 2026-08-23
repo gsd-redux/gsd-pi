@@ -596,6 +596,32 @@ describe("verification-gate: execution", () => {
     assert.equal(typeof result.timestamp, "number");
   });
 
+  test("executes nested-quote node -e commands without mangling (#1939)", () => {
+    writeFileSync(join(tmp, "nested-quote-probe.txt"), "ready\n");
+    const command = String.raw`node -e "const fs=require('node:fs'); if (!fs.readFileSync(\"nested-quote-probe.txt\", 'utf8').includes(\"ready\")) process.exit(2)"`;
+
+    const result = withRtkDisabled(() => runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: [command],
+    }));
+
+    assert.equal(result.passed, true, result.checks[0]?.stderr);
+    assert.equal(result.checks[0]?.exitCode, 0);
+  });
+
+  test("shell parser failures are tagged as execution faults (#1939)", () => {
+    const result = withRtkDisabled(() => runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: [`node -e '\"const'`],
+    }));
+
+    assert.equal(result.passed, false);
+    assert.equal(result.checks[0]?.exitCode, 1);
+    assert.equal(result.checks[0]?.stdout, "");
+    assert.match(result.checks[0]?.stderr ?? "", /Unterminated string constant/);
+    assert.equal(result.checks[0]?.failureClass, "shell-parse");
+  });
+
   test("passing task evidence prevents unrelated preference verification from failing an artifact task (#1431)", () => {
     const result = runVerificationGate({
       cwd: tmp,
