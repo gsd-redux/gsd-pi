@@ -136,6 +136,7 @@ const DEFAULT_READINESS_DEPS: TaskHostVerificationReadinessDeps = {
 };
 
 const TRANSIENT_PHASE_FAILURE_REASONS = new Set([
+  "Request timed out",
   "api-timeout",
   "ghost-completion",
   "provider-pause",
@@ -470,6 +471,9 @@ export async function runWithTaskExecutionAttempt(
   const task = parseTaskIdentity(input.unitId);
   const identity = requireTaskClaimIdentity(input);
   const predecessor = deps.readLatestTaskAttempt(task);
+  if (isTaskAttemptAwaitingVerification(predecessor)) {
+    return { action: "next", data: {} };
+  }
   const terminalAbort = deps.readTerminalTaskRecoveryAbort(task);
   if (terminalAbort) return taskRecoveryAbortResult(terminalAbort.recoveryActionId);
   let claim: ClaimTaskAttemptReceipt | undefined;
@@ -493,9 +497,6 @@ export async function runWithTaskExecutionAttempt(
         !terminalRecovery.resumeAuthorized
       ) {
         return taskRecoveryAbortResult(terminalRecovery.recoveryActionId);
-      }
-      if (isTaskAttemptAwaitingVerification(predecessor)) {
-        return { action: "next", data: {} };
       }
       if (predecessor.nextStage === "route") {
         if (predecessor.outcome === "succeeded") {

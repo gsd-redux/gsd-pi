@@ -1074,7 +1074,7 @@ test("a durable abort overrides an executor retry", async () => {
   assert.equal(domain.routes.length, 1);
 });
 
-test("a superseded terminal abort stops before a succeeded head can redispatch", async () => {
+test("a succeeded head reaches verification before a superseded terminal abort", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   domain.attempts.push(
@@ -1114,10 +1114,7 @@ test("a superseded terminal abort stops before a succeeded head can redispatch",
     },
   });
 
-  assert.deepEqual(result, {
-    action: "break",
-    reason: "task-recovery-abort (recoveryActionId: recovery-action-aborted; resume with /gsd recover recovery-action-aborted or gsd_task_recovery_resume)",
-  });
+  assert.deepEqual(result, { action: "next", data: {} });
   assert.equal(runs, 0);
   assert.equal(domain.claims.length, 0);
 });
@@ -1181,6 +1178,20 @@ test("execute-task exceptions settle, route, and return the durable recovery act
   assert.equal(domain.settlements[0].outcome, "failed");
   assert.match(domain.settlements[0].summary, /provider exploded/i);
   assert.equal(domain.routes.length, 1);
+});
+
+test("provider request timeouts settle as transient execution failures", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    throw new Error("Request timed out");
+  }, domain.deps);
+
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
+  assert.equal(domain.settlements[0].failureClass, "transient-execution");
+  assert.equal(domain.routes[0].classification.failureKind, "transient-execution");
+  assert.equal(domain.routes[0].classification.action, "retry");
 });
 
 test("typed executor failures retain their canonical classification through settlement and routing", async () => {
