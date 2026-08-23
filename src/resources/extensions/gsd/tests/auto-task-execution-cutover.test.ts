@@ -28,9 +28,11 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
 import {
+  readTaskRecoveryResumeEligibility,
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
 } from "../task-recovery-domain-operation.js";
+import { reopenTask } from "../task-lifecycle-domain-operation.js";
 import {
   readTaskTechnicalVerdict,
   recordTaskTechnicalVerdict,
@@ -168,6 +170,7 @@ interface CutoverSubject {
     input: Pick<CutoverInput, "unitType" | "unitId" | "workerId" | "traceId" | "turnId"> & { basePath: string },
     deps: {
       readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
+      readTaskLifecycleStatus?(task: TaskIdentity): string | null;
       publishVerifiedTaskCompletion(input: {
         invocation: {
           idempotencyKey: string;
@@ -461,6 +464,97 @@ function canonicalDeps(): CutoverDeps {
     },
   } as CutoverDeps;
 }
+
+test("a Task reopened over a stale agent abort dispatches a fresh Attempt (#1948)", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const firstDispatchId = seedCanonicalTask();
+  const task = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+
+  const first = claimTaskAttempt({
+    invocation: { idempotencyKey: "reopen/claim/1", sourceTransport: "internal", actorType: "agent" },
+    task,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: firstDispatchId,
+  });
+  const settled = settleTaskAttempt({
+    invocation: { idempotencyKey: "reopen/settle/1", sourceTransport: "internal", actorType: "agent" },
+    attemptId: first.attemptId,
+    outcome: "failed",
+    failureClass: "verification",
+    summary: "closeout verification failed",
+    output: {},
+  });
+  const abort = recordFailureAndSelectRecovery({
+    invocation: { idempotencyKey: "reopen/route/1", sourceTransport: "internal", actorType: "agent" },
+    attemptId: first.attemptId,
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "verification-abort",
+    evidence: { source: "test" },
+    rationale: "abort",
+  });
+  assert.equal(abort.action, "abort");
+  assert.deepEqual(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), {
+    recoveryActionId: abort.recoveryActionId,
+  });
+
+  // The lifecycle reaches a terminal head without advancing the Attempt's
+  // Kernel lineage (reconcile/legacy completion), then the operator reopens.
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.complete",
+    idempotencyKey: "reopen/complete",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: {},
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, { itemKind: "task", ...task, lifecycleStatus: "completed" });
+    database().prepare(`UPDATE tasks SET status = 'complete' WHERE id = 'T01'`).run();
+    return {
+      events: [{ eventType: "test.task.complete", entityType: "task", entityId: "M001/S01/T01", payload: {}, destinations: ["test"] }],
+      projections: [{ projectionKey: "test/m001/s01/t01/complete", projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+  database().prepare(`UPDATE unit_dispatches SET status = 'failed' WHERE id = ?`).run(firstDispatchId);
+  reopenTask({
+    invocation: { idempotencyKey: "reopen/reopen", sourceTransport: "internal", actorType: "user", actorId: "user-1" },
+    task,
+    reason: "redo after fixing the verification guard",
+  });
+
+  assert.equal(readTaskRecoveryResumeEligibility(abort.recoveryActionId).eligible, false);
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
+    null,
+    "no dispatch guard may advertise a resume the reopened lifecycle cannot satisfy",
+  );
+
+  let ran = false;
+  const result = await runWithTaskExecutionAttempt(input({
+    dispatchId: insertClaimedDispatch(2),
+  }), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, canonicalDeps());
+
+  assert.equal(ran, true, "the reopened Task must dispatch a fresh executor run");
+  assert.notEqual(
+    (result as { reason?: string }).reason?.includes(abort.recoveryActionId),
+    true,
+    "the stale abort must not be advertised after reopen",
+  );
+  const latest = readLatestTaskAttempt(task);
+  assert.equal(latest?.attemptNumber, 2);
+  assert.equal(latest?.retryOfAttemptId, first.attemptId);
+  assert.equal(
+    (database().prepare(`SELECT lifecycle_status FROM workflow_item_lifecycles WHERE task_id = 'T01'`).get() as { lifecycle_status: string }).lifecycle_status,
+    "in_progress",
+  );
+});
 
 test("agent remediation of a failed Technical Verdict runs in a lineage-linked Attempt", async () => {
   const { publishVerifiedTaskExecution, runWithTaskExecutionAttempt } = await subject();
@@ -1988,6 +2082,7 @@ test("settled Task publication delegates replay validation to the stable publica
       workerId: "worker-1",
       milestoneLeaseToken: 7,
     }),
+    readTaskLifecycleStatus: () => "in_progress",
     async publishVerifiedTaskCompletion() {
       publicationCalls++;
       throw rejected;
@@ -1995,6 +2090,30 @@ test("settled Task publication delegates replay validation to the stable publica
   }), rejected);
 
   assert.equal(publicationCalls, 1);
+});
+
+test("a voided settled Attempt on a reopened Task is not replayed as a publication (#1948)", async () => {
+  const { publishVerifiedTaskExecution } = await subject();
+  let publicationCalls = 0;
+
+  await assert.rejects(publishVerifiedTaskExecution({ ...input(), basePath: "/project" }, {
+    readLatestTaskAttempt: () => ({
+      attemptId: "attempt-7",
+      attemptNumber: 7,
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "settled",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    }),
+    readTaskLifecycleStatus: () => "ready",
+    async publishVerifiedTaskCompletion() {
+      publicationCalls++;
+    },
+  }), /requires a succeeded Attempt at the verify stage/);
+
+  assert.equal(publicationCalls, 0);
 });
 
 test("failed Task execution cannot publish after host verification", async () => {

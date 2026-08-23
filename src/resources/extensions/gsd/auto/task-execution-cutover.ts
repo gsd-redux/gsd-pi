@@ -12,6 +12,7 @@ import type {
 import {
   isTaskAttemptAwaitingVerification,
   readLatestTaskAttempt,
+  readTaskLifecycleStatus,
 } from "../task-execution-domain-operation.js";
 import type {
   RouteFailureInput,
@@ -112,6 +113,8 @@ function routeStoredTechnicalFailure(
 
 export interface VerifiedTaskPublicationDeps {
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
+  /** Canonical lifecycle status; defaults to the database reader. */
+  readTaskLifecycleStatus?(task: ClaimTaskAttemptInput["task"]): string | null;
   publishVerifiedTaskCompletion(input: PublishVerifiedTaskCompletionInput): Promise<unknown>;
 }
 
@@ -490,7 +493,10 @@ export async function runWithTaskExecutionAttempt(
       }
     } else if (predecessor) {
       const terminalRecovery = deps.readTaskRecoveryRoute(predecessor.attemptId);
+      // Only a live route head carries an operative abort; a lineage closed by
+      // task reopen is history and must not advertise a dead resume (#1948).
       if (
+        predecessor.nextStage === "route" &&
         terminalRecovery?.recoveryOwner === "agent" &&
         terminalRecovery.action === "abort" &&
         !terminalRecovery.resumeAuthorized
@@ -598,8 +604,12 @@ export async function publishVerifiedTaskExecution(
   }
   const task = parseTaskIdentity(input.unitId);
   const attempt = deps.readLatestTaskAttempt(task);
+  // A reopened Task voids its prior lineage to `settled` without publishing
+  // (#1948); its `ready` lifecycle has nothing to replay. A committed
+  // publication whose projection failed stays replayable (lifecycle completed).
   const publicationReplayCandidate = attempt?.state === "settled" &&
-    attempt.outcome === "succeeded" && attempt.nextStage === "settled";
+    attempt.outcome === "succeeded" && attempt.nextStage === "settled" &&
+    (deps.readTaskLifecycleStatus ?? readTaskLifecycleStatus)(task) !== "ready";
   const resolvedHumanReviewCandidate = attempt?.state === "settled" &&
     attempt.outcome === "succeeded" && attempt.nextStage === "route";
   if (!isTaskAttemptAwaitingVerification(attempt) &&

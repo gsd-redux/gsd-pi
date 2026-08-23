@@ -23,13 +23,15 @@ import {
 import {
   cancelTask,
   readPendingTaskRecoveryContext,
+  readTaskRecoveryResumeEligibility,
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
   reopenTask,
   resolveTaskBlocker,
   resumeTaskRecovery,
 } from "../task-recovery-domain-operation.ts";
-import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { claimTaskAttempt, readLatestTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { readTerminalTaskRecoveryAbort } from "../artifact-verification.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 import {
@@ -486,6 +488,63 @@ test("agent recovery exhausts durably, resumes once, then passes host verificati
   `).all().map((entry) => Number((entry as Record<string, unknown>).resulting_revision));
   assert.deepEqual(revisions, [...revisions].sort((left, right) => left - right));
   assert.equal(new Set(revisions).size, revisions.length, "every committed operation owns one revision");
+});
+
+test("reopen closes a stale route head so the prior abort is history, not a lever (#1948)", async () => {
+  const taskId = "T01";
+  seedProject([taskId]);
+  const failed = seedFailedAttempt(taskId);
+  const abort = recordFailureAndSelectRecovery({
+    invocation: invocation("reopen-void/route"),
+    attemptId: failed.attemptId,
+    resultId: failed.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "verification-abort",
+    evidence: { source: "test" },
+    rationale: "abort",
+  });
+  assert.equal(abort.action, "abort");
+  assert.equal(readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId })?.nextStage, "route");
+
+  // Terminal lifecycle head reached without advancing the Attempt Kernel lineage.
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.complete",
+    idempotencyKey: "reopen-void/complete",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId,
+      lifecycleStatus: "completed",
+    });
+    db().prepare(`UPDATE tasks SET status = 'complete' WHERE id = :task_id`).run({ ":task_id": taskId });
+    return {
+      events: [{ eventType: "test.task.complete", entityType: "task", entityId: `M001/S01/${taskId}`, payload: {}, destinations: ["test"] }],
+      projections: [{ projectionKey: `test/${taskId}/complete-void`.toLowerCase(), projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+
+  const reopened = reopenTask({
+    invocation: invocation("reopen-void/reopen", "user"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId },
+    reason: "redo after repair",
+  });
+  assert.equal(reopened.canonicalStatus, "ready");
+
+  const latest = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId });
+  assert.equal(latest?.attemptId, failed.attemptId, "reopen must not erase Attempt history");
+  assert.equal(latest?.nextStage, "settled", "reopen closes the stale route head");
+  assert.equal(readTaskRecoveryResumeEligibility(abort.recoveryActionId).eligible, false);
+  assert.equal(readTerminalTaskRecoveryAbort("M001", "S01", taskId), null);
+  assert.equal(count("workflow_execution_attempts"), 1);
 });
 
 test("reopen and cancel survive projection obstruction while stale artifacts and UAT scopes remain non-authoritative", async () => {
