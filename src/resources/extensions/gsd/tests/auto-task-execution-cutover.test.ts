@@ -1185,12 +1185,12 @@ test("provider request timeouts settle as transient execution failures", async (
   const domain = fakeDomain();
 
   const result = await runWithTaskExecutionAttempt(input(), async () => {
-    throw new Error("Request timed out");
+    throw new Error("Provider error: : Request timed out.");
   }, domain.deps);
 
   assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
-  assert.equal(domain.settlements[0].failureClass, "transient-execution");
-  assert.equal(domain.routes[0].classification.failureKind, "transient-execution");
+  assert.equal(domain.settlements[0].failureClass, "provider");
+  assert.equal(domain.routes[0].classification.failureKind, "provider");
   assert.equal(domain.routes[0].classification.action, "retry");
 });
 

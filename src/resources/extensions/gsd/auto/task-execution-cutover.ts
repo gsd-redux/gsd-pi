@@ -136,7 +136,6 @@ const DEFAULT_READINESS_DEPS: TaskHostVerificationReadinessDeps = {
 };
 
 const TRANSIENT_PHASE_FAILURE_REASONS = new Set([
-  "Request timed out",
   "api-timeout",
   "ghost-completion",
   "provider-pause",
