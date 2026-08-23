@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import type { Api, Model } from "@gsd/pi-ai";
 import { getGitHubCopilotBaseUrl } from "@gsd/pi-ai/oauth";
-import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import type { ExtensionCommandContext, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import {
   CopilotCatalogFetchError,
@@ -25,8 +25,13 @@ import {
   registerCopilotModelsInOverlay,
   resolveGsdModelsCatalogPath,
 } from "../../copilot-overlay-writer.js";
-import { resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
-import { canonicalizeModelId, getModelProfileConfidence, MODEL_CAPABILITY_TIER } from "../../model-router.js";
+import { lookupModelCost, resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
+import {
+  canonicalizeModelId,
+  getModelProfileConfidence,
+  MODEL_CAPABILITY_TIER,
+  PROFILE_CONFIDENCE_ORDINAL,
+} from "../../model-router.js";
 
 interface CopilotCatalogDiffState {
   firstAccepted: boolean;
@@ -228,7 +233,7 @@ async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<
   };
 }
 
-function localCopilotModels(ctx: ExtensionCommandContext): Model<Api>[] {
+function localCopilotModels(ctx: ExtensionContext): Model<Api>[] {
   return ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
 }
 
@@ -481,6 +486,147 @@ function economicsFreshnessSummary(economics: RuntimeModelEconomics): string {
   return economics.provenance.defaultTokenPrices?.freshness ?? "unknown";
 }
 
+export interface CheaperSameTierSuggestion {
+  modelId: string;
+  tier: string;
+  confidence: ReturnType<typeof getModelProfileConfidence>;
+  economics: RuntimeModelEconomics & {
+    tokenPrices: { default: { inputPer1k: number; outputPer1k: number } };
+  };
+  inputSavings: number;
+  outputSavings: number;
+}
+
+function hasKnownDefaultPricing(
+  economics: RuntimeModelEconomics,
+): economics is RuntimeModelEconomics & {
+  tokenPrices: { default: { inputPer1k: number; outputPer1k: number } };
+} {
+  return !!(
+    economics.tokenPrices?.default
+    && Number.isFinite(economics.tokenPrices.default.inputPer1k)
+    && Number.isFinite(economics.tokenPrices.default.outputPer1k)
+  );
+}
+
+function isBlockedForAutomaticRouting(record: CopilotModelRecord | undefined): boolean {
+  return (
+    record?.availability.policyState === "disabled"
+    || record?.availability.policyState === "restricted"
+    || record?.availability.preview === true
+  );
+}
+
+function formatCheaperSameTierOption(
+  suggestion: CheaperSameTierSuggestion,
+): string {
+  const prices = suggestion.economics.tokenPrices.default;
+  return `- cheaper same-tier option: github-copilot/${suggestion.modelId} (${suggestion.tier}, ${suggestion.confidence}, $${prices.inputPer1k.toFixed(4)} / $${prices.outputPer1k.toFixed(4)} per 1K) — saves $${suggestion.inputSavings.toFixed(4)} input / $${suggestion.outputSavings.toFixed(4)} output per 1K`;
+}
+
+export function findCheaperSameTierOption(
+  bareId: string,
+  ctx: ExtensionContext,
+  snapshot: CopilotModelSnapshot | null,
+): CheaperSameTierSuggestion | null {
+  const targetTier = MODEL_CAPABILITY_TIER[bareId];
+  if (!targetTier) return null;
+
+  const targetLiveRecord = findLiveRecord(snapshot, bareId);
+  if (isBlockedForAutomaticRouting(targetLiveRecord)) return null;
+
+  const sessionModels = ctx.modelRegistry
+    .getAvailable()
+    .filter((model) => model.provider === "github-copilot");
+  if (!sessionModels.some((model) => normalizeBareModelId(model.id) === bareId)) {
+    return null;
+  }
+
+  const targetEconomics = resolveEconomicsForModel(
+    ctx,
+    bareId,
+    targetLiveRecord,
+    findLocalModel(ctx, bareId),
+  );
+  if (!hasKnownDefaultPricing(targetEconomics)) return null;
+
+  let bestSuggestion: CheaperSameTierSuggestion | null = null;
+  for (const candidateModel of sessionModels) {
+    const candidateBareId = normalizeBareModelId(candidateModel.id);
+    if (!candidateBareId || candidateBareId === bareId) continue;
+    if (MODEL_CAPABILITY_TIER[candidateBareId] !== targetTier) continue;
+
+    const candidateConfidence = getModelProfileConfidence(candidateBareId);
+    if (candidateConfidence === "unknown") continue;
+
+    const candidateLiveRecord = findLiveRecord(snapshot, candidateBareId);
+    if (isBlockedForAutomaticRouting(candidateLiveRecord)) continue;
+
+    const candidateEconomics = resolveEconomicsForModel(
+      ctx,
+      candidateBareId,
+      candidateLiveRecord,
+      findLocalModel(ctx, candidateBareId) ?? candidateModel,
+    );
+    if (!hasKnownDefaultPricing(candidateEconomics)) continue;
+
+    const inputSavings =
+      targetEconomics.tokenPrices.default.inputPer1k
+      - candidateEconomics.tokenPrices.default.inputPer1k;
+    const outputSavings =
+      targetEconomics.tokenPrices.default.outputPer1k
+      - candidateEconomics.tokenPrices.default.outputPer1k;
+
+    const candidateIsStrictlyCheaper =
+      inputSavings >= 0
+      && outputSavings >= 0
+      && (inputSavings > 0 || outputSavings > 0);
+    if (!candidateIsStrictlyCheaper) continue;
+
+    const nextSuggestion: CheaperSameTierSuggestion = {
+      modelId: candidateBareId,
+      tier: targetTier,
+      confidence: candidateConfidence,
+      economics: candidateEconomics,
+      inputSavings,
+      outputSavings,
+    };
+
+    if (!bestSuggestion) {
+      bestSuggestion = nextSuggestion;
+      continue;
+    }
+
+    const currentPrices = bestSuggestion.economics.tokenPrices.default;
+    const nextPrices = candidateEconomics.tokenPrices.default;
+    const isBetterChoice =
+      nextPrices.inputPer1k < currentPrices.inputPer1k
+      || (
+        nextPrices.inputPer1k === currentPrices.inputPer1k
+        && nextPrices.outputPer1k < currentPrices.outputPer1k
+      )
+      || (
+        nextPrices.inputPer1k === currentPrices.inputPer1k
+        && nextPrices.outputPer1k === currentPrices.outputPer1k
+        && PROFILE_CONFIDENCE_ORDINAL[candidateConfidence]
+          > PROFILE_CONFIDENCE_ORDINAL[bestSuggestion.confidence]
+      )
+      || (
+        nextPrices.inputPer1k === currentPrices.inputPer1k
+        && nextPrices.outputPer1k === currentPrices.outputPer1k
+        && PROFILE_CONFIDENCE_ORDINAL[candidateConfidence]
+          === PROFILE_CONFIDENCE_ORDINAL[bestSuggestion.confidence]
+        && candidateBareId.localeCompare(bestSuggestion.modelId) < 0
+      );
+
+    if (isBetterChoice) {
+      bestSuggestion = nextSuggestion;
+    }
+  }
+
+  return bestSuggestion;
+}
+
 function formatPromotion(
   promotion?: {
     discountPercent?: number;
@@ -579,7 +725,7 @@ function findLiveRecord(snapshot: CopilotModelSnapshot | null, bareId: string): 
   return snapshot?.models.find((model) => normalizeBareModelId(model.id) === bareId);
 }
 
-function findLocalModel(ctx: ExtensionCommandContext, bareId: string): Model<Api> | undefined {
+function findLocalModel(ctx: ExtensionContext, bareId: string): Model<Api> | undefined {
   return localCopilotModels(ctx).find((model) => normalizeBareModelId(model.id) === bareId);
 }
 
@@ -600,6 +746,7 @@ function buildWhyExplanation(
   const tier = MODEL_CAPABILITY_TIER[canonicalizeModelId(bareId)] ?? "unknown";
   const confidence = getModelProfileConfidence(bareId);
   const economics = resolveEconomicsForModel(ctx, bareId, liveRecord, localModel);
+  const cheaperSameTierOption = findCheaperSameTierOption(bareId, ctx, snapshot);
 
   let routingEligible = false;
   let routingReason = "no live/task routing context available";
@@ -661,13 +808,22 @@ function buildWhyExplanation(
     `- freshness: ${economicsFreshnessSummary(economics)}`,
     `- request billing: ${economics.requestMultiplier !== undefined ? `${economics.requestMultiplier}x (${economics.provenance.requestMultiplier?.source ?? economics.source}/${economics.provenance.requestMultiplier?.freshness ?? "unknown"})` : "unknown"}`,
     `- promotion: ${formatPromotion(liveRecord?.billing.promotion ?? economics.promotion)}`,
+    ...(cheaperSameTierOption
+      ? [formatCheaperSameTierOption(cheaperSameTierOption)]
+      : []),
     `- automatic routing eligible: ${routingEligible ? "yes" : "no"}`,
     `- reason: ${routingReason}`,    ...(routingCaveats.length > 0 ? [`- routing caveats: ${routingCaveats.join("; ")}`] : []),    `- task routing context: unavailable (no active classification context)` ,
     `- guidance: ${guidance}`,
   ].join("\n");
 }
 
-function formatPricingRecord(ctx: ExtensionCommandContext, record: CopilotModelRecord | undefined, localModel: Model<Api> | undefined, bareId: string): string[] {
+function formatPricingRecord(
+  ctx: ExtensionCommandContext,
+  record: CopilotModelRecord | undefined,
+  localModel: Model<Api> | undefined,
+  bareId: string,
+  snapshot: CopilotModelSnapshot | null,
+): string[] {
   const economics = resolveEconomicsForModel(ctx, bareId, record, localModel);
   const lines = [
     `GitHub Copilot pricing: github-copilot/${bareId}`,
@@ -675,6 +831,10 @@ function formatPricingRecord(ctx: ExtensionCommandContext, record: CopilotModelR
     `- source: ${economicsSourceSummary(economics)}`,
     `- freshness: ${economicsFreshnessSummary(economics)}`,
   ];
+  const cheaperSameTierOption = findCheaperSameTierOption(bareId, ctx, snapshot);
+  if (cheaperSameTierOption) {
+    lines.push(formatCheaperSameTierOption(cheaperSameTierOption));
+  }
 
   if (economics.tokenPrices?.default) {
     lines.push(
@@ -951,7 +1111,13 @@ export async function handleCopilotModels(
     if (parsed.target) {
       const bareId = parsed.target;
       ctx.ui.notify(
-        formatPricingRecord(ctx, findLiveRecord(currentSnapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n"),
+        formatPricingRecord(
+          ctx,
+          findLiveRecord(currentSnapshot, bareId),
+          findLocalModel(ctx, bareId),
+          bareId,
+          currentSnapshot,
+        ).join("\n"),
         "info",
       );
       return;
@@ -965,7 +1131,13 @@ export async function handleCopilotModels(
     }
     const blocks = records.map((record) => {
       const bareId = normalizeBareModelId(record.id);
-      return formatPricingRecord(ctx, findLiveRecord(snapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n");
+      return formatPricingRecord(
+        ctx,
+        findLiveRecord(snapshot, bareId),
+        findLocalModel(ctx, bareId),
+        bareId,
+        snapshot,
+      ).join("\n");
     });
     ctx.ui.notify(blocks.join("\n\n"), "info");
     return;

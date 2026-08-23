@@ -1092,6 +1092,24 @@ test("handleCopilotModels: pricing explains provider-aware economics locally", a
   assert.match(notifications[0].message, /^- freshness: stale$/m);
 });
 
+test("handleCopilotModels: pricing suggests a cheaper same-tier Copilot model when one is available", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [
+      { id: "claude-sonnet-5", provider: "github-copilot" },
+      { id: "gpt-4.1", provider: "github-copilot" },
+      { id: "mai-code-1.1-flash", provider: "github-copilot" },
+    ],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("pricing claude-sonnet-5", ctx, {});
+
+  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/gpt-4\.1 /m);
+  assert.match(notifications[0].message, /saves \$0\.0010 input \/ \$0\.0070 output per 1K/i);
+  assert.doesNotMatch(notifications[0].message, /mai-code-1\.1-flash/);
+});
+
 test("handleCopilotModels: pricing reports long-context tiers and request multipliers when live data supplies them", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
@@ -1267,6 +1285,24 @@ test("handleCopilotModels: why reports a known-profile preview/policy-restricted
     notifications[1].message,
     /^- routing caveats: .*provider policy is restricted.*preview models are intended to stay manual-only.*$/m,
   );
+});
+
+test("handleCopilotModels: why highlights a cheaper same-tier model when one is session-available", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [
+      { id: "claude-sonnet-5", provider: "github-copilot" },
+      { id: "gpt-4.1", provider: "github-copilot" },
+      { id: "mai-code-1.1-flash", provider: "github-copilot" },
+    ],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why claude-sonnet-5", ctx, {});
+
+  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/gpt-4\.1 /m);
+  assert.match(notifications[0].message, /saves \$0\.0010 input \/ \$0\.0070 output per 1K/i);
+  assert.doesNotMatch(notifications[0].message, /mai-code-1\.1-flash/);
 });
 
 test("handleCopilotModels: doctor reports cache and quarantine state without a network request", async () => {

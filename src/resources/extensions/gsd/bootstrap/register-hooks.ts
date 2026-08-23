@@ -599,14 +599,66 @@ function triggerCopilotCatalogSessionRefresh(ctx: ExtensionContext, basePath: st
         basePath,
         preferences: prefs?.preferences,
       });
-      if (!notifyOnChanges || !result.ok || result.changedModelIds.length === 0) return;
-      ctx.ui.notify(
-        `GitHub Copilot model catalog: ${result.changedModelIds.length} model(s) changed since the last check. Run /gsd copilot-models changes for details.`,
-        "info",
-      );
+      if (!result.ok) return;
+
+      if (notifyOnChanges && result.changedModelIds.length > 0) {
+        ctx.ui.notify(
+          `GitHub Copilot model catalog: ${result.changedModelIds.length} model(s) changed since the last check. Run /gsd copilot-models changes for details.`,
+          "info",
+        );
+      }
+
+      // GSD-W017: after a completed refresh, check whether the currently
+      // active model (if it's a GitHub Copilot model) now has a qualifying
+      // cheaper/better same-tier alternative — independent of whether the
+      // catalog itself changed, since this may be the first refresh to ever
+      // surface it. Never fires for models on other providers, never
+      // switches the model.
+      if (ctx.model?.provider === "github-copilot" && ctx.model.id) {
+        const { maybeNotifyCheaperAlternative } = await import("../copilot-catalog-notifications.js");
+        maybeNotifyCheaperAlternative({
+          ctx,
+          accountScope: basePath,
+          selectedModelProvider: ctx.model.provider,
+          selectedModelId: ctx.model.id,
+          snapshot: result.snapshot,
+        });
+      }
     } catch {
       // Non-fatal: session startup must never fail because of this, and the
       // coordinator itself never surfaces auth/network failures as errors.
+    }
+  })();
+}
+
+/**
+ * GSD-W017: notify (never auto-switch) when the user explicitly selects or
+ * cycles to a GitHub Copilot model that has a qualifying cheaper/better
+ * same-tier alternative. Deliberately excludes `source: "restore"` (session
+ * resume/model-registry re-application, not a fresh user choice) and never
+ * fires for non-Copilot providers or automatic/dynamic routing, which never
+ * emits this event in the first place.
+ */
+function notifyOnManualCopilotModelSelection(
+  event: { model: { provider?: string; id: string }; source: "set" | "cycle" | "restore" },
+  ctx: ExtensionContext,
+): void {
+  if (event.source === "restore") return;
+  if (!event.model.id) return;
+  void (async () => {
+    try {
+      const basePath = contextBasePath(ctx);
+      const { getLastKnownCopilotCatalogSnapshot } = await import("../copilot-catalog-session-refresh.js");
+      const { maybeNotifyCheaperAlternative } = await import("../copilot-catalog-notifications.js");
+      maybeNotifyCheaperAlternative({
+        ctx,
+        accountScope: basePath,
+        selectedModelProvider: event.model.provider,
+        selectedModelId: event.model.id,
+        snapshot: getLastKnownCopilotCatalogSnapshot(basePath),
+      });
+    } catch {
+      // Non-fatal: never let an advisory notification break model selection.
     }
   })();
 }
@@ -2091,8 +2143,9 @@ export function registerHooks(
     }
   });
 
-  pi.on("model_select", async (_event, ctx) => {
+  pi.on("model_select", async (event, ctx) => {
     await syncServiceTierStatus(ctx);
+    notifyOnManualCopilotModelSelection(event, ctx);
   });
 
   pi.on("before_provider_request", async (event) => {
