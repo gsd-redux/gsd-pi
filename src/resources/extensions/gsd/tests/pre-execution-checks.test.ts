@@ -12,10 +12,10 @@
  *   5. Verify commands — reject unsafe or non-runnable task verification
  */
 
-import { describe, test, mock } from "node:test";
+import { afterEach, beforeEach, describe, test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { homedir, tmpdir } from "node:os";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -71,6 +71,17 @@ function createTask(overrides: Partial<TaskRow> = {}): TaskRow {
     ...overrides,
   };
 }
+
+// Isolated basePath for checks that probe the filesystem. A shared /tmp
+// leaks host state (e.g. a stray /tmp/generated.ts) into "file is absent"
+// assertions; a fresh directory per test makes that premise hold.
+let isolatedBase: string;
+beforeEach(() => {
+  isolatedBase = mkdtempSync(join(tmpdir(), "gsd-preexec-"));
+});
+afterEach(() => {
+  rmSync(isolatedBase, { recursive: true, force: true });
+});
 
 // ─── Package Reference Extraction Tests ──────────────────────────────────────
 
@@ -485,7 +496,7 @@ describe("checkTaskOrdering with path normalization", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1, "Should detect ordering violation despite ./");
     assert.ok(results[0].message.includes("T01"));
     assert.ok(results[0].message.includes("T02"));
@@ -509,7 +520,7 @@ describe("checkTaskOrdering with path normalization", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1, "Should detect ordering violation despite ./ on creator");
     assert.ok(results[0].message.includes("sequence violation"));
   });
@@ -532,7 +543,7 @@ describe("checkTaskOrdering with path normalization", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.deepEqual(results, [], "Should pass - T02 reads file that T01 already created");
   });
 
@@ -590,7 +601,7 @@ describe("checkTaskOrdering", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.deepEqual(results, []);
   });
 
@@ -612,7 +623,7 @@ describe("checkTaskOrdering", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1);
     assert.equal(results[0].category, "file");
     assert.equal(results[0].passed, false);
@@ -640,7 +651,7 @@ describe("checkTaskOrdering", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1);
     assert.ok(results[0].message.includes("schema.json"));
   });
@@ -670,7 +681,7 @@ describe("checkTaskOrdering", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 2);
   });
 
@@ -692,7 +703,7 @@ describe("checkTaskOrdering", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.deepEqual(results, []);
   });
 });
@@ -720,7 +731,7 @@ function processData(input: string): boolean
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.deepEqual(results, []);
   });
 
@@ -744,7 +755,7 @@ function saveUser(name: string, email: string): void
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.equal(results.length, 1);
     assert.equal(results[0].category, "schema");
     assert.equal(results[0].target, "saveUser");
@@ -773,7 +784,7 @@ function getData(): number
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.equal(results.length, 1);
     assert.ok(results[0].message.includes("different return types"));
   });
@@ -798,7 +809,7 @@ export function validate(data: string): boolean
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.equal(results.length, 1);
     assert.ok(results[0].message.includes("validate"));
   });
@@ -823,7 +834,7 @@ export async function fetchData(): Promise<number>
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.equal(results.length, 1);
   });
 
@@ -847,7 +858,7 @@ const handler = (req: Request, res: Response): void =>
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     // Should have 2 results: parameter mismatch AND return type mismatch
     assert.equal(results.length, 2);
     assert.ok(results.some((r) => r.message.includes("handler")));
@@ -863,7 +874,7 @@ const handler = (req: Request, res: Response): void =>
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     assert.deepEqual(results, []);
   });
 
@@ -887,7 +898,7 @@ function process(a: number): number
       }),
     ];
 
-    const results = checkInterfaceContracts(tasks, "/tmp");
+    const results = checkInterfaceContracts(tasks, isolatedBase);
     // Should have both parameter and return type mismatches
     assert.equal(results.length, 2);
   });
@@ -1254,7 +1265,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 0, "task.files should not be checked for ordering violations");
   });
 
@@ -1278,7 +1289,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 0, "Multiple task.files should not generate false positive violations");
   });
 
@@ -1330,7 +1341,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1, "Only the inputs entry should produce a violation, not files");
     assert.ok(results[0].target === "needed.json", "Violation target should be the input, not the file");
   });
@@ -1355,7 +1366,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 0, "Normalized task.files path should not trigger a false positive");
   });
 
@@ -1377,7 +1388,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 1, "Annotated inputs should still match later plain expected_output entries");
     assert.equal(results[0].target, "`later.ts` — needed first");
     assert.ok(results[0].message.includes("sequence violation"));
@@ -1433,7 +1444,7 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(results.length, 0, "Glob-pattern inputs should not be treated as literal read-before-create dependencies");
   });
 });
@@ -1479,7 +1490,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(results.length, 0, "Prior annotated expected_output entries should satisfy later plain inputs");
   });
 
@@ -1496,7 +1507,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
     // Should not throw
     let results: ReturnType<typeof checkFilePathConsistency>;
     assert.doesNotThrow(() => {
-      results = checkFilePathConsistency(tasks, "/tmp");
+      results = checkFilePathConsistency(tasks, isolatedBase);
     });
     assert.equal(results!.length, 0, "Glob-pattern inputs should not produce false blocking failures");
   });
@@ -1514,7 +1525,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(results.length, 0, "Prose planning hints should not be treated as missing file paths");
   });
 
@@ -1530,7 +1541,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(results.length, 0, "Empty inputs should produce no consistency check results");
   });
 
@@ -1587,7 +1598,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(results.length, 0, "Backticked URL should not be validated as a filesystem path");
   });
 
@@ -1599,7 +1610,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(results.length, 0, "URLs cited mid-sentence should not be validated as filesystem paths");
   });
 
@@ -1884,7 +1895,7 @@ describe("checkTaskOrdering directory inputs (#4446)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.deepEqual(
       results,
       [],
@@ -1902,7 +1913,7 @@ describe("checkTaskOrdering directory inputs (#4446)", () => {
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.deepEqual(results, []);
   });
 });
@@ -1932,7 +1943,7 @@ describe("checkTaskOrdering false positive for pre-execution refs (#4071)", () =
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(
       results.length,
       0,
@@ -1960,7 +1971,7 @@ describe("checkTaskOrdering false positive for pre-execution refs (#4071)", () =
       }),
     ];
 
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(
       results.length,
       1,
@@ -2012,7 +2023,7 @@ describe("checkTaskOrdering false positive for pre-execution refs (#4071)", () =
 
     // Without the fix: creator = T_PENDING_PRODUCER (index 1), !creator.completed && 1 > 0 → violation.
     // With the fix:    creator = T_COMPLETED_PRODUCER (index 2), creator.completed → no violation.
-    const results = checkTaskOrdering(tasks, "/tmp");
+    const results = checkTaskOrdering(tasks, isolatedBase);
     assert.equal(
       results.length,
       0,
@@ -2295,7 +2306,7 @@ describe("checkFilePathConsistency quote-wrapped annotation (#3747)", () => {
       }),
     ];
 
-    const results = checkFilePathConsistency(tasks, "/tmp");
+    const results = checkFilePathConsistency(tasks, isolatedBase);
     assert.equal(
       results.length,
       0,
