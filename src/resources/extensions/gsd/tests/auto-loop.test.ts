@@ -2512,8 +2512,6 @@ test("autoLoop resumes canonical closeout when a transient provider error follow
 
   const originalCwd = process.cwd();
   const ctx = makeMockCtx();
-  ctx.model = { provider: "openai-codex", id: "gpt-5.6-sol" };
-  ctx.modelRegistry = { getAvailable: () => [] };
   ctx.ui.setStatus = () => {};
   ctx.ui.setWidget = () => {};
   ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
