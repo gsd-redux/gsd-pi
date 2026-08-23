@@ -46,7 +46,7 @@ import { markWorkerCrashed, registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from "../db/milestone-leases.js";
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.js";
-import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
+import { recordFailureAndSelectRecovery, resumeTaskRecovery } from "../task-recovery-domain-operation.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
 import { normalizeRealPath, resolveMilestoneFile } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
@@ -798,8 +798,78 @@ test("an active UnitRun with a settled executor Attempt stops with durable recov
   assert.match(result.reason, /stale-active execute-task M001\/S01\/T01/);
   assert.match(result.reason, /executor worker .* is not live/);
   assert.match(result.reason, new RegExp(recovery.recoveryActionId));
-  assert.match(result.reason, /gsd_task_recovery_resume/);
+  assert.match(result.reason, /\/gsd recover/);
   assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
+async function terminateUnitRunWithSettledAbort(f: Fixture, key: string) {
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  const workerId = f.session.workerId;
+  const milestoneLeaseToken = f.session.milestoneLeaseToken;
+  assert.ok(workerId);
+  assert.ok(milestoneLeaseToken);
+
+  const attempt = claimTaskAttempt({
+    invocation: internalExecutionInvocation(`test:orchestrator:${key}:claim`),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken,
+    coordinationDispatchId: first.dispatchId,
+  });
+  const settled = settleTaskAttempt({
+    invocation: internalExecutionInvocation(`test:orchestrator:${key}:settle`),
+    attemptId: attempt.attemptId,
+    outcome: "failed",
+    failureClass: "execution",
+    summary: "executor stopped before closeout",
+    output: {},
+  });
+  const recovery = recordFailureAndSelectRecovery({
+    invocation: internalExecutionInvocation(`test:orchestrator:${key}:route`),
+    attemptId: attempt.attemptId,
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "executor stopped before closeout",
+    evidence: { source: "test" },
+    rationale: "preserve a durable resume action",
+  });
+  assert.equal(recovery.action, "abort");
+  assert.equal(markFailed(first.dispatchId, { errorSummary: "terminated executor" }), true);
+
+  markWorkerCrashed(workerId);
+  f.session.workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
+  f.session.milestoneLeaseToken = null;
+  f.session.unitExecutionInFlight = false;
+  return recovery;
+}
+
+test("a settled abort on a terminated UnitRun reaches task recovery cutover", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  await terminateUnitRunWithSettledAbort(f, "settled-abort");
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "advanced");
+});
+
+test("an authorized settled abort reaches the successor retry claim", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const recovery = await terminateUnitRunWithSettledAbort(f, "authorized-abort");
+  resumeTaskRecovery({
+    invocation: internalExecutionInvocation("test:orchestrator:authorized-abort:resume"),
+    recoveryActionId: recovery.recoveryActionId,
+    repairSummary: "Repaired the executor lifecycle and verified a retry is safe.",
+    evidence: { verification: "focused recovery check passed" },
+  });
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "advanced");
 });
 
 test("an active UnitRun checks its running Attempt worker before idling", async (t) => {
