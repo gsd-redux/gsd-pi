@@ -69,6 +69,30 @@ test("execute-task command failure remains retryable verification failure", () =
   assert.equal(verdict.retryable, true);
 });
 
+test("missing verification command pauses for the operator instead of retrying the task (#1943)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [{
+        command: "grep -q expected app.css",
+        exitCode: 1,
+        stdout: "",
+        stderr: "'grep' is not recognized as an internal or external command",
+        durationMs: 10,
+        failureClass: "command-not-found",
+      }],
+    }),
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "command-not-found");
+  assert.equal(verdict.retryable, false);
+  assert.match(verdict.failureContext, /Verify command not runnable on this platform/);
+  assert.match(verdict.failureContext, /grep -q expected app\.css/);
+});
+
 test("blocking runtime errors provide failure context when host checks pass", () => {
   const verdict = decideVerificationVerdict(
     "execute-task",

@@ -159,6 +159,28 @@ test("verification-evidence: writeVerificationJSON persists failed-command stdou
   assert.equal(json.checks[0].stderrExcerpt, "some warning");
 });
 
+test("verification-evidence: writeVerificationJSON persists infrastructure failure class (#1943)", (t) => {
+  const tmp = makeTempDir("ve-failure-class");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const result = makeResult({
+    passed: false,
+    checks: [{
+      command: "grep -q expected app.css",
+      exitCode: 1,
+      stdout: "",
+      stderr: "'grep' is not recognized as an internal or external command",
+      durationMs: 50,
+      failureClass: "command-not-found",
+    }],
+  });
+
+  writeVerificationJSON(result, tmp, "T01");
+
+  const json = JSON.parse(readFileSync(join(tmp, "T01-VERIFY.json"), "utf-8"));
+  assert.equal(json.checks[0].failureClass, "command-not-found");
+  assert.equal(json.checks[0].verdict, "inconclusive");
+});
+
 test("verification-evidence: writeVerificationJSON bounds output excerpts and keeps failure tail", (t) => {
   const tmp = makeTempDir("ve-bounded-stdio");
   t.after(() => rmSync(tmp, { recursive: true, force: true }));

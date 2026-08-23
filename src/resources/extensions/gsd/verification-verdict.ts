@@ -6,6 +6,7 @@ import type { VerificationResult as VerificationGateResult } from "./types.js";
 export type VerificationVerdictReason =
   | "passed"
   | "no-host-checks"
+  | "command-not-found"
   | "checks-failed";
 
 export interface VerificationVerdict {
@@ -39,6 +40,16 @@ export function decideVerificationVerdict(
   unitType: string,
   result: VerificationGateResult,
 ): VerificationVerdict {
+  const unrunnableCheck = result.checks.find((check) => check.failureClass === "command-not-found");
+  if (unrunnableCheck) {
+    return {
+      passed: false,
+      reason: "command-not-found",
+      retryable: false,
+      failureContext: `Verify command not runnable on this platform: \`${unrunnableCheck.command}\``,
+    };
+  }
+
   if (!result.passed) {
     const failureContext = (result.runtimeErrors ?? [])
       .filter((error) => error.blocking)

@@ -816,6 +816,12 @@ function isCommandNotFound(error: NodeJS.ErrnoException): boolean {
   return /enoent|not found/i.test(error.message);
 }
 
+function isShellCommandNotFound(exitCode: number, stderr: string): boolean {
+  return exitCode === 127
+    || /command not found/i.test(stderr)
+    || /is not recognized as an internal or external command/i.test(stderr);
+}
+
 /**
  * Run the verification gate: discover commands, execute each via spawnSync,
  * and return a structured result.
@@ -901,6 +907,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
         );
       } else if (isCommandNotFound(spawnError)) {
         exitCode = 127;
+        failureClass = "command-not-found";
         stderr = truncate(
           capturedStderr + "\n" + spawnError.message,
           MAX_OUTPUT_BYTES,
@@ -916,6 +923,9 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
       // status is null when killed by signal — treat as failure
       exitCode = result.status ?? 1;
       stderr = capturedStderr;
+      if (isShellCommandNotFound(exitCode, stderr)) {
+        failureClass = "command-not-found";
+      }
     }
 
     const warning = countSearchWarning(command, exitCode);

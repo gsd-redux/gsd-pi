@@ -41,6 +41,69 @@ test("post-unit verification continues when no host-owned verification is needed
 	assert.equal(paused, false);
 });
 
+test("missing host command pauses without recording an auto-fix retry (#1943)", async () => {
+	let paused = false;
+	let recordedVerdict = false;
+	let routedFailure = false;
+	const retryKey = "execute-task:M001/S01/T01";
+	const session = {
+		basePath: process.cwd(),
+		canonicalProjectRoot: process.cwd(),
+		currentUnit: { type: "execute-task", id: "M001/S01/T01" },
+		lastTaskRecoveryAbortId: null,
+		pendingVerificationRetry: { unitId: "stale", failureContext: "stale", attempt: 1 },
+		verificationRetryCount: new Map([[retryKey, 1]]),
+		verificationRetryFailureHashes: new Map([[retryKey, "stale"]]),
+	};
+	const result = await runPostUnitVerification({
+		s: session,
+		ctx: { ui: { notify() {} } },
+		pi: {},
+		taskAuthority: {
+			readLatestTaskAttempt: () => ({
+				attemptId: "attempt-1",
+				resultId: "result-1",
+				state: "settled",
+				outcome: "succeeded",
+				nextStage: "verify",
+			}),
+			readTaskTechnicalVerdict: () => null,
+			recordTaskTechnicalVerdict: () => {
+				recordedVerdict = true;
+				throw new Error("must not record a requirement verdict");
+			},
+			invalidateTaskTechnicalPass: () => { throw new Error("must not invalidate"); },
+			routeTaskFailure: () => {
+				routedFailure = true;
+				throw new Error("must not enter auto-fix recovery");
+			},
+		},
+		runVerificationGate: () => ({
+			passed: false,
+			checks: [{
+				command: "grep -q expected app.css",
+				exitCode: 1,
+				stdout: "",
+				stderr: "'grep' is not recognized as an internal or external command",
+				durationMs: 10,
+				failureClass: "command-not-found",
+			}],
+			discoverySource: "task-plan",
+			timestamp: Date.now(),
+		}),
+	} as never, async () => {
+		paused = true;
+	});
+
+	assert.equal(result, "pause");
+	assert.equal(paused, true);
+	assert.equal(recordedVerdict, false);
+	assert.equal(routedFailure, false);
+	assert.equal(session.verificationRetryCount.has(retryKey), false);
+	assert.equal(session.verificationRetryFailureHashes.has(retryKey), false);
+	assert.equal(session.pendingVerificationRetry, null);
+});
+
 test("built-in verification retries a replayed authorized abort", () => {
 	const outcome = _routeHostTechnicalFailureForTest({
 		routeTaskFailure: () => ({

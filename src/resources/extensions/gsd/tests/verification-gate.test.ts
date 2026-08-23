@@ -704,15 +704,31 @@ describe("verification-gate: execution", () => {
     assert.equal(result.discoverySource, "none");
   });
 
-  test("command not found → exit code 127", () => {
-    const result = runVerificationGate({
+  test("command not found → inconclusive infrastructure failure", () => {
+    const result = withRtkDisabled(() => runVerificationGate({
       cwd: tmp,
       preferenceCommands: ["__nonexistent_command_xyz_42__"],
-    });
+    }));
     assert.equal(result.passed, false);
     assert.equal(result.checks.length, 1);
-    assert.ok(result.checks[0].exitCode !== 0, "should have non-zero exit code");
+    assert.notEqual(result.checks[0].exitCode, 0);
+    assert.equal(result.checks[0].failureClass, "command-not-found");
     assert.ok(result.checks[0].durationMs >= 0);
+  });
+
+  test("Windows cmd missing-command stderr is classified despite exit code 1 (#1943)", () => {
+    writeFileSync(
+      join(tmp, "windows-command-not-found.cjs"),
+      `process.stderr.write("'grep' is not recognized as an internal or external command"); process.exit(1);\n`,
+    );
+    const result = withRtkDisabled(() => runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: ["node windows-command-not-found.cjs"],
+    }));
+
+    assert.equal(result.passed, false);
+    assert.equal(result.checks[0]?.exitCode, 1);
+    assert.equal(result.checks[0]?.failureClass, "command-not-found");
   });
 
   test("no DEP0190 deprecation warning when running commands", () => {
@@ -1085,15 +1101,15 @@ test("runVerificationGate: timeout is failureClass timeout, not exit 127 (#1759)
   assert.match(result.checks[0]?.stderr ?? "", /verification_timeout_ms/);
 });
 
-test("runVerificationGate: missing binary is still exit 127 (#1759)", () => {
+test("runVerificationGate: missing binary is classified separately from timeout (#1759, #1943)", () => {
   const dir = makeTempDir("gsd-verify-enoent");
   const result = withRtkDisabled(() => runVerificationGate({
     cwd: dir,
     preferenceCommands: ["__gsd_missing_binary_1783__"],
   }));
   assert.equal(result.passed, false);
-  assert.equal(result.checks[0]?.exitCode, 127);
-  assert.equal(result.checks[0]?.failureClass, undefined);
+  assert.notEqual(result.checks[0]?.exitCode, 0);
+  assert.equal(result.checks[0]?.failureClass, "command-not-found");
 });
 
 test("validatePreferences: verification_timeout_ms override and default (#1759)", () => {

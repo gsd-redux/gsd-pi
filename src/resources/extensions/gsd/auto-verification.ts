@@ -988,6 +988,7 @@ export async function runPostUnitVerification(
     }
 
     const verdict = decideVerificationVerdict(s.currentUnit.type, result);
+    const unrunnableCheck = result.checks.find((check) => check.failureClass === "command-not-found");
     if (!verdict.passed) {
       result.passed = false;
     }
@@ -998,15 +999,19 @@ export async function runPostUnitVerification(
         id: "verification-gate",
         type: "verification",
         execute: async () => ({
-          outcome: result.passed ? "pass" : "fail",
-          failureClass: result.runtimeErrors?.some((e) => e.blocking)
+          outcome: unrunnableCheck ? "manual-attention" : result.passed ? "pass" : "fail",
+          failureClass: unrunnableCheck
+            ? "manual-attention"
+            : result.runtimeErrors?.some((e) => e.blocking)
             ? "execution"
             : "verification",
           rationale: result.passed
             ? "verification checks passed"
-            : verdict.reason === "no-host-checks"
-              ? "no runnable host-owned verification checks discovered"
-              : "verification checks failed",
+            : unrunnableCheck
+              ? verdict.failureContext
+              : verdict.reason === "no-host-checks"
+                ? "no runnable host-owned verification checks discovered"
+                : "verification checks failed",
           findings: result.passed
             ? ""
             : verdict.failureContext || formatFailureContext(result),
@@ -1031,6 +1036,8 @@ export async function runPostUnitVerification(
       const total = result.checks.length;
       if (result.passed) {
         ctx.ui.notify(formatPostUnitStatusCard("✓ Verification Gate", `${passCount}/${total} checks passed`));
+      } else if (unrunnableCheck) {
+        ctx.ui.notify(formatPostUnitStatusCard("⚠ Verification Gate", verdict.failureContext), "warning");
       } else {
         const failures = result.checks.filter((c) => c.exitCode !== 0);
         const failNames = failures.map((f) => f.command).join(", ");
@@ -1248,11 +1255,12 @@ export async function runPostUnitVerification(
       !sourceError &&
       !postExecInfrastructureError &&
       (result.passed || browserUatContinuation);
-    const hostTechnicalVerdict: RecordTaskTechnicalVerdictInput["verdict"] = sourceError || postExecInfrastructureError
-      ? "inconclusive"
-      : hostTechnicalPassed
-        ? "pass"
-        : "fail";
+    const hostTechnicalVerdict: RecordTaskTechnicalVerdictInput["verdict"] =
+      unrunnableCheck || sourceError || postExecInfrastructureError
+        ? "inconclusive"
+        : hostTechnicalPassed
+          ? "pass"
+          : "fail";
     let durableRecovery: "retry" | "abort" | null = null;
     if (mid && sid && tid) {
       let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result) ||
@@ -1266,42 +1274,44 @@ export async function runPostUnitVerification(
           ? "Canonical executor Result succeeded; browser-facing behavior continues to automated slice UAT."
           : "All host-owned technical verification checks passed.";
       }
-      canonicalVerdictWriteStarted = true;
-      const recordedVerdict = recordHostTechnicalVerdict({
-        context: vctx,
-        attempt: latestAttempt,
-        result,
-        verdict: hostTechnicalVerdict,
-        rationale,
-        ...(sourceBeforeResult.ok ? { sourceBefore: sourceBeforeResult.snapshot } : {}),
-        ...(sourceAfterResult.ok ? { sourceAfter: sourceAfterResult.snapshot } : {}),
-        ...(sourceError ? { sourceError } : {}),
-      });
-      canonicalVerdictWriteStarted = false;
-      if (hostTechnicalVerdict !== "pass") {
-        const failingCheck = result.checks.find((check) => check.failureClass === "timeout")
-          ?? result.checks.find((check) => check.exitCode !== 0);
-        durableRecovery = routeHostTechnicalFailure(taskAuthority, latestAttempt, {
-          verdictId: recordedVerdict.verdictId,
-          evidenceId: recordedVerdict.evidenceId,
+      if (!unrunnableCheck) {
+        canonicalVerdictWriteStarted = true;
+        const recordedVerdict = recordHostTechnicalVerdict({
+          context: vctx,
+          attempt: latestAttempt,
+          result,
           verdict: hostTechnicalVerdict,
-          rationale: describeHostVerificationRationale({
+          rationale,
+          ...(sourceBeforeResult.ok ? { sourceBefore: sourceBeforeResult.snapshot } : {}),
+          ...(sourceAfterResult.ok ? { sourceAfter: sourceAfterResult.snapshot } : {}),
+          ...(sourceError ? { sourceError } : {}),
+        });
+        canonicalVerdictWriteStarted = false;
+        if (hostTechnicalVerdict !== "pass") {
+          const failingCheck = result.checks.find((check) => check.failureClass === "timeout")
+            ?? result.checks.find((check) => check.exitCode !== 0);
+          durableRecovery = routeHostTechnicalFailure(taskAuthority, latestAttempt, {
+            verdictId: recordedVerdict.verdictId,
+            evidenceId: recordedVerdict.evidenceId,
             verdict: hostTechnicalVerdict,
-            checkName: failingCheck?.command ?? "host-verification",
-            observed: failingCheck?.failureClass === "timeout"
-              ? `timeout after ${failingCheck.durationMs}ms (exit ${failingCheck.exitCode})`
-              : failingCheck
-                ? `exit ${failingCheck.exitCode}`
-                : rationale,
-            expected: "exit 0 / pass",
-            evidenceRef: `db://host-verification/${latestAttempt.attemptId} (verdict ${recordedVerdict.verdictId})`,
-            nextAction: hostTechnicalVerdict === "inconclusive"
-              ? "To become conclusive, restore a stable source snapshot and matching evidence, then resume."
-              : failingCheck?.failureClass === "timeout"
-                ? "Raise verification_timeout_ms if this command is expected to run longer."
-                : undefined,
-          }),
-        }, "verification-failed", recordAbort);
+            rationale: describeHostVerificationRationale({
+              verdict: hostTechnicalVerdict,
+              checkName: failingCheck?.command ?? "host-verification",
+              observed: failingCheck?.failureClass === "timeout"
+                ? `timeout after ${failingCheck.durationMs}ms (exit ${failingCheck.exitCode})`
+                : failingCheck
+                  ? `exit ${failingCheck.exitCode}`
+                  : rationale,
+              expected: "exit 0 / pass",
+              evidenceRef: `db://host-verification/${latestAttempt.attemptId} (verdict ${recordedVerdict.verdictId})`,
+              nextAction: hostTechnicalVerdict === "inconclusive"
+                ? "To become conclusive, restore a stable source snapshot and matching evidence, then resume."
+                : failingCheck?.failureClass === "timeout"
+                  ? "Raise verification_timeout_ms if this command is expected to run longer."
+                  : undefined,
+            }),
+          }, "verification-failed", recordAbort);
+        }
       }
 
       try {
@@ -1322,6 +1332,7 @@ export async function runPostUnitVerification(
             const nextAttempt = attempt + 1;
             const includeRetryMetadata =
               !result.passed &&
+              !unrunnableCheck &&
               !browserUatContinuation &&
               autoFixEnabled &&
               nextAttempt <= maxRetries;
@@ -1375,7 +1386,19 @@ export async function runPostUnitVerification(
     }
 
     // ── Auto-fix retry logic ──
-    if (hostTechnicalPassed) {
+    if (unrunnableCheck) {
+      s.verificationRetryCount.delete(retryKey);
+      s.verificationRetryFailureHashes.delete(retryKey);
+      s.pendingVerificationRetry = null;
+      process.stderr.write(
+        `${verdict.failureContext}. Install the command or update the verify command, then resume.\n`,
+      );
+      await pauseAuto(ctx, pi, {
+        message: verdict.failureContext,
+        category: "unknown",
+      });
+      return "pause";
+    } else if (hostTechnicalPassed) {
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;

@@ -19,7 +19,8 @@ export interface EvidenceCheckJSON {
   command: string;
   exitCode: number;
   durationMs: number;
-  verdict: "pass" | "fail";
+  verdict: "pass" | "fail" | "inconclusive";
+  failureClass?: "timeout" | "command-not-found";
   stdoutExcerpt?: string;
   stderrExcerpt?: string;
 }
@@ -155,7 +156,12 @@ export function writeVerificationJSON(
         command: check.command,
         exitCode: check.exitCode,
         durationMs: check.durationMs,
-        verdict: check.exitCode === 0 ? "pass" : "fail",
+        verdict: check.failureClass === "command-not-found"
+          ? "inconclusive"
+          : check.exitCode === 0
+            ? "pass"
+            : "fail",
+        ...(check.failureClass ? { failureClass: check.failureClass } : {}),
         ...(stdoutExcerpt !== undefined ? { stdoutExcerpt } : {}),
         ...(stderrExcerpt !== undefined ? { stderrExcerpt } : {}),
       };
