@@ -1186,7 +1186,21 @@ describe("legacy .gsd captured-byte interpretation", () => {
         "- [ ] **T03** Missing colon grammar",
         "",
         "### T01: Make answer() return 42",
+        "",
+        "Inputs:",
+        "- `src/answer.js`",
+        "- `test/answer.test.js`",
+        "",
+        "Expected Output:",
+        "- `src/answer.js` — `answer()` returns `42`",
+        "",
+        "Verification:",
+        "- `node --test test/answer.test.js`",
+        "",
         "### T02: Add double(n)",
+        "",
+        "Verify:",
+        "- `node --test test/double.test.js`",
         "",
       ].join("\n"),
     }));
@@ -1196,8 +1210,24 @@ describe("legacy .gsd captured-byte interpretation", () => {
         .filter((candidate) => candidate.target.kind === "task")
         .map((candidate) => [candidate.target.key, candidate.reason_code, candidate.normalized]),
       [
-        ["M001/S01/T01", "nested-checkbox-task", { id: "T01", milestone_id: "M001", slice_id: "S01", status: "pending", title: "Make answer() return 42" }],
-        ["M001/S01/T02", "nested-checkbox-task", { id: "T02", milestone_id: "M001", slice_id: "S01", status: "complete", title: "Add double(n)" }],
+        ["M001/S01/T01", "nested-checkbox-task", {
+          id: "T01",
+          milestone_id: "M001",
+          slice_id: "S01",
+          status: "pending",
+          title: "Make answer() return 42",
+          verify: "node --test test/answer.test.js",
+          inputs: ["src/answer.js", "test/answer.test.js"],
+          expected_output: ["src/answer.js — answer() returns 42"],
+        }],
+        ["M001/S01/T02", "nested-checkbox-task", {
+          id: "T02",
+          milestone_id: "M001",
+          slice_id: "S01",
+          status: "complete",
+          title: "Add double(n)",
+          verify: "node --test test/double.test.js",
+        }],
       ],
     );
     assert.deepEqual(

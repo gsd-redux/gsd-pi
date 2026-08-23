@@ -713,6 +713,54 @@ function interpretFlat(
   for (const file of files) interpretFlatArtifact(file, claimsByDirectory, candidates, diagnoses);
 }
 
+const TASK_SECTION_FIELDS = {
+  "inputs": "inputs",
+  "expected output": "expected_output",
+  "verification": "verify",
+  "verify": "verify",
+} as const;
+
+type TaskSectionField = (typeof TASK_SECTION_FIELDS)[keyof typeof TASK_SECTION_FIELDS];
+
+/**
+ * Detail (verify/inputs/expected_output) from the task's own `### Txx:`
+ * section in the same plan file. Checkbox task lines only carry status and
+ * title; the per-task section is where plans state Inputs, Expected Output,
+ * and Verification bullets. Missing section or bullets → the field is
+ * omitted, leaving the canonical column at its empty default.
+ */
+function taskSectionDetail(
+  file: SourceFile,
+  taskId: string,
+): { verify?: string; inputs?: string[]; expected_output?: string[] } {
+  const headingPattern = new RegExp(`^###\\s+${taskId}\\b`, "u");
+  const start = file.lines.findIndex((line) => headingPattern.test(line.text));
+  if (start < 0) return {};
+  const buckets: Record<TaskSectionField, string[]> = { verify: [], inputs: [], expected_output: [] };
+  let current: TaskSectionField | undefined;
+  for (const line of file.lines.slice(start + 1)) {
+    if (/^#{1,3}\s/u.test(line.text)) break;
+    const text = line.text.trim();
+    if (text === "") continue;
+    const label = /^(inputs|expected output|verification|verify):$/iu.exec(text);
+    if (label !== null) {
+      current = TASK_SECTION_FIELDS[label[1].toLowerCase() as keyof typeof TASK_SECTION_FIELDS];
+      continue;
+    }
+    const bullet = /^[-*]\s+(.+)$/u.exec(text);
+    if (bullet === null || current === undefined) {
+      current = undefined;
+      continue;
+    }
+    buckets[current].push(bullet[1].replaceAll("`", "").trim());
+  }
+  return {
+    ...(buckets.verify.length > 0 ? { verify: buckets.verify.join("\n") } : {}),
+    ...(buckets.inputs.length > 0 ? { inputs: buckets.inputs } : {}),
+    ...(buckets.expected_output.length > 0 ? { expected_output: buckets.expected_output } : {}),
+  };
+}
+
 function nestedTaskCandidates(
   file: SourceFile,
   milestoneId: string,
@@ -766,6 +814,7 @@ function nestedTaskCandidates(
         slice_id: sliceId,
         status: entry.match[1].toLowerCase() === "x" ? "complete" : "pending",
         title: entry.match[3].trim(),
+        ...taskSectionDetail(file, entry.match[2]),
       }, "nested-checkbox-task", entry.span);
     }
     return;

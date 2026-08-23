@@ -103,6 +103,7 @@ function getApplyLegacyImport(): ApplyLegacyImport {
 function prepareCase(
   caseName: "gsd-nested" | "custom-workflow",
   seed?: () => void,
+  mutateSource?: (sourceDirectory: string) => void,
 ): PreparedApplicationCase {
   applicationSequence += 1;
   const workspace = mkdtempSync(join(tmpdir(), `gsd-legacy-application-${caseName}-`));
@@ -116,6 +117,7 @@ function prepareCase(
     verbatimSymlinks: true,
   });
   mkdirSync(destination);
+  mutateSource?.(source);
   assert.equal(openDatabase(databasePath), true);
   seed?.();
   const roots = createLegacyImportCorpusSourceRoots(source);
@@ -681,6 +683,39 @@ test("public Application commits one real mutating Preview with exact durable ou
   assert.deepEqual(row("SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1"), {
     revision: prepared.base.authority.revision + 1,
     authority_epoch: prepared.base.authority.authority_epoch,
+  });
+});
+
+test("Application persists per-task Verification, Inputs, and Expected Output from a nested slice plan", () => {
+  const applyLegacyImport = getApplyLegacyImport();
+  const prepared = prepareCase("gsd-nested", undefined, (source) => {
+    appendFileSync(
+      join(source, ".gsd", "milestones", "M001-foundation", "slices", "S01-core", "S01-PLAN.md"),
+      [
+        "",
+        "### T01: Create the project skeleton",
+        "",
+        "Inputs:",
+        "- `src/skeleton.js`",
+        "- `test/skeleton.test.js`",
+        "",
+        "Expected Output:",
+        "- `src/skeleton.js` — module skeleton exists",
+        "",
+        "Verification:",
+        "- `node --test test/skeleton.test.js`",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  applyLegacyImport(prepared.input);
+
+  assert.deepEqual(row(`SELECT verify, inputs, expected_output FROM tasks
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'`), {
+    verify: "node --test test/skeleton.test.js",
+    inputs: "[\"src/skeleton.js\",\"test/skeleton.test.js\"]",
+    expected_output: "[\"src/skeleton.js — module skeleton exists\"]",
   });
 });
 
