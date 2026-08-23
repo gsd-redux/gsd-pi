@@ -22,6 +22,7 @@ import { AutoSession } from "../auto/session.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import type { DispatchContext } from "../auto-dispatch.ts";
 import { buildPlanSlicePrompt } from "../auto-prompts.ts";
+import { formatPreExecutionRetryContext } from "../auto-post-unit.ts";
 import {
   openDatabase,
   closeDatabase,
@@ -70,6 +71,41 @@ function cleanup(base: string, originalCwd: string): void {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+
+test("pre-exec retry context leads with the real findings and only adds Verify guidance for unsafe Verify commands", () => {
+  const artifactCheck = {
+    category: "file" as const,
+    target: ".gsd/phases/01-answer-fixture/01-03-ASSESSMENT.md",
+    passed: false,
+    message: "Task T03 lists '.gsd/phases/01-answer-fixture/01-03-ASSESSMENT.md' in expectedOutput — GSD planning artifacts are written by workflow tools (e.g. gsd_summary_save), never by tasks; remove it",
+    blocking: true,
+  };
+  const base = {
+    unitType: "plan-slice",
+    unitId: "M001/S04",
+    verdictExcerpt: "status=fail; 1 blocking issue detected",
+    evidencePath: ".gsd/phases/01-answer-fixture/S04-PRE-EXEC-VERIFY.json",
+  };
+
+  const artifactContext = formatPreExecutionRetryContext({ ...base, checks: [artifactCheck] });
+  // The liveness backstop excerpts the first 300 chars of this text as the
+  // wedge's sanctioned exit, so the real blocker must come first.
+  assert.ok(artifactContext.slice(0, 300).includes("01-03-ASSESSMENT.md' in expectedOutput"));
+  assert.ok(!artifactContext.includes("Verify commands must not use shell pipes"));
+
+  const verifyContext = formatPreExecutionRetryContext({
+    ...base,
+    checks: [{
+      category: "tool",
+      target: "T01 Verify",
+      passed: false,
+      message: "Unsafe or non-runnable Verify command: cat a | grep b (pipes are not allowed)",
+      blocking: true,
+    }],
+  });
+  assert.ok(verifyContext.includes("Unsafe or non-runnable Verify command"));
+  assert.ok(verifyContext.includes("Verify commands must not use shell pipes"));
+});
 
 test("#4551: AutoSession.lastPreExecFailure defaults to null", () => {
   const s = new AutoSession();

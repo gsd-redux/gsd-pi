@@ -873,6 +873,34 @@ test('handlePlanSlice rejects absolute task IO paths outside the active worktree
   }
 });
 
+test('handlePlanSlice strips GSD planning artifacts from task inputs/files instead of refusing the plan', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    const params = validParams();
+    const result = await handlePlanSlice({
+      ...params,
+      tasks: [
+        {
+          ...params.tasks[0],
+          inputs: ['.gsd/phases/01-test/01-01-ASSESSMENT.md', ...params.tasks[0].inputs],
+          files: [...params.tasks[0].files, '.gsd/phases/01-test/01-01-SUMMARY.md'],
+        },
+        params.tasks[1],
+      ],
+    }, base);
+
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+    const tasks = getSliceTasks('M001', 'S02');
+    assert.deepEqual(tasks[0]?.inputs, params.tasks[0].inputs);
+    assert.deepEqual(tasks[0]?.files, params.tasks[0].files);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice rejects missing task input paths before persisting tasks', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

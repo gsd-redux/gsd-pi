@@ -99,6 +99,28 @@ test('handlePlanTask writes planning state and renders the flat-phase slice plan
   }
 });
 
+test('handlePlanTask strips GSD planning artifacts from inputs/files instead of persisting them', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    const params = validParams();
+    const result = await handlePlanTask({
+      ...params,
+      inputs: ['.gsd/phases/01-test/01-01-ASSESSMENT.md', ...params.inputs],
+      files: [...params.files, '.gsd/phases/01-test/01-01-SUMMARY.md'],
+    }, base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const task = getTask('M001', 'S02', 'T02');
+    assert.deepEqual(task?.inputs, params.inputs);
+    assert.deepEqual(task?.files, params.files);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanTask seeds execute-task gate rows for incremental planning', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

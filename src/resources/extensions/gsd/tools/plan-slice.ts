@@ -25,7 +25,7 @@ import { writeManifestAndFlush } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../planning-path-scope.js";
-import { runTaskPathChecks } from "../pre-execution-checks.js";
+import { runTaskPathChecks, stripPlanningArtifactReferences } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { normalizeRealPath, resolveSliceFile, resolveTaskFile } from "../paths.js";
@@ -285,13 +285,19 @@ function toTaskRows(params: PlanSliceParams, defaultTargets: string[]): TaskRow[
   }));
 }
 
+/**
+ * Run the shared path checks on the task payload before it is persisted.
+ * Planning-artifact references in `inputs` / `files` are stripped from
+ * `params.tasks` in place (they are redundant — the executor preloads those
+ * projections) so the stored rows never carry them; only blocking findings
+ * are returned.
+ */
 function validateTaskPathsBeforePersist(
   params: PlanSliceParams,
   basePath: string,
   defaultTargets: string[],
   allowedRoots: string[],
 ): string | null {
-  const taskRows = toTaskRows(params, defaultTargets);
   const baseRoot = resolve(basePath);
   const additionalRoots = allowedRoots
     .map((root) => resolve(root))
@@ -305,6 +311,10 @@ function validateTaskPathsBeforePersist(
         ...(canonicalProjectRoot !== undefined ? { canonicalProjectRoot } : {}),
       }
     : undefined;
+  for (const task of params.tasks ?? []) {
+    stripPlanningArtifactReferences(task, basePath, context);
+  }
+  const taskRows = toTaskRows(params, defaultTargets);
   const checks = runTaskPathChecks(taskRows, basePath, context);
   const blocking = checks.filter((check) => !check.passed && check.blocking);
 

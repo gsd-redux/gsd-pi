@@ -676,14 +676,46 @@ function isPlanningArtifactReference(
   );
 }
 
+/** Task IO fields that are auto-repaired rather than blocked. */
+export type RepairablePlanningIOField = "inputs" | "files";
+
 /**
- * Block GSD planning artifacts in task IO fields (inputs, files, expectedOutput).
+ * Drop GSD planning-artifact references from a task's `inputs` and `files`
+ * and return the removed entries. The arrays are replaced, never mutated, so
+ * tool params can be passed in without leaking into the raw request.
  *
- * For inputs/files the violation smuggles a projection into the executor's
- * preloaded source context; for expectedOutput it promises a write the runtime
- * write-gate would reject mid-execution. Both get a precise message so the
- * planning retry steers toward *removing* the reference, not creating the file.
- * checkFilePathConsistency and checkTaskOrdering skip entries this check owns.
+ * Shared by the plan-persist tools (gsd_plan_slice / gsd_plan_task) and
+ * checkPlanningArtifactReferences so the stored rows and the dispatch-gate
+ * check agree: a preloaded projection listed as input is merely redundant and
+ * must not cost a re-plan round.
+ */
+export function stripPlanningArtifactReferences(
+  task: { inputs: string[]; files: string[] },
+  basePath: string,
+  context?: PreExecutionCheckContext,
+): Array<{ label: RepairablePlanningIOField; path: string }> {
+  const removed: Array<{ label: RepairablePlanningIOField; path: string }> = [];
+  for (const label of ["inputs", "files"] as const) {
+    const kept = task[label].filter((entry) => {
+      const artifact = isPlanningArtifactReference(entry, basePath, context);
+      if (artifact) removed.push({ label, path: entry });
+      return !artifact;
+    });
+    if (kept.length !== task[label].length) task[label] = kept;
+  }
+  return removed;
+}
+
+/**
+ * Repair or block GSD planning artifacts in task IO fields.
+ *
+ * For inputs/files the reference only duplicates context the executor already
+ * has preloaded, so it is stripped from the task and reported as a
+ * non-blocking finding. For expectedOutput it promises a write the runtime
+ * write-gate would reject mid-execution, so it stays blocking with a message
+ * that steers the planning retry toward *removing* the reference, not creating
+ * the file. checkFilePathConsistency and checkTaskOrdering skip entries this
+ * check owns.
  */
 export function checkPlanningArtifactReferences(
   tasks: TaskRow[],
@@ -693,26 +725,24 @@ export function checkPlanningArtifactReferences(
   const results: PreExecutionCheckJSON[] = [];
 
   for (const task of tasks) {
-    const fields = [
-      { label: "inputs", entries: task.inputs },
-      { label: "files", entries: task.files },
-      { label: "expectedOutput", entries: task.expected_output },
-    ];
-    for (const { label, entries } of fields) {
-      for (const file of entries) {
-        if (!isPlanningArtifactReference(file, basePath, context)) continue;
-        const message =
-          label === "expectedOutput"
-            ? `Task ${task.id} lists '${file}' in expectedOutput — GSD planning artifacts are written by workflow tools (e.g. gsd_summary_save), never by tasks; remove it`
-            : `Task ${task.id} lists '${file}' in ${label} — GSD planning artifacts are projections preloaded as context, never task ${label}; remove it`;
-        results.push({
-          category: "file",
-          target: file,
-          passed: false,
-          message,
-          blocking: true,
-        });
-      }
+    for (const { label, path } of stripPlanningArtifactReferences(task, basePath, context)) {
+      results.push({
+        category: "file",
+        target: path,
+        passed: false,
+        message: `Task ${task.id}: removed '${path}' from ${label}: GSD planning artifacts are preloaded context`,
+        blocking: false,
+      });
+    }
+    for (const file of task.expected_output) {
+      if (!isPlanningArtifactReference(file, basePath, context)) continue;
+      results.push({
+        category: "file",
+        target: file,
+        passed: false,
+        message: `Task ${task.id} lists '${file}' in expectedOutput — GSD planning artifacts are written by workflow tools (e.g. gsd_summary_save), never by tasks; remove it`,
+        blocking: true,
+      });
     }
   }
 

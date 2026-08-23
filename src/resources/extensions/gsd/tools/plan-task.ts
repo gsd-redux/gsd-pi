@@ -24,6 +24,7 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../planning-path-scope.js";
+import { stripPlanningArtifactReferences } from "../pre-execution-checks.js";
 import {
   createRepositoryRegistryFromPreferences,
   defaultRepositoryTargets,
@@ -184,6 +185,10 @@ export async function handlePlanTask(
   } catch (err) {
     return { error: `validation failed: ${(err as Error).message}` };
   }
+  // Planning artifacts in inputs/files are redundant (the executor preloads
+  // them); drop them here so the stored row never carries them and the
+  // dispatch-gate check has nothing to re-flag.
+  stripPlanningArtifactReferences(params, basePath);
 
   const toolRequirementError = validateTaskToolRequirements(params.taskId, params.requiredWorkflowTools ?? []);
   if (toolRequirementError) {

@@ -336,25 +336,38 @@ function formatPreExecutionFinding(check: PreExecutionCheckJSON): string {
   return `[${category}] ${target}: ${message}`;
 }
 
-function formatPreExecutionRetryContext(input: {
+/** Guidance that only applies when checkVerificationCommands rejected a Verify command. */
+const UNSAFE_VERIFY_COMMAND_GUIDANCE = [
+  "Rewrite the slice plan so every task has safe, mechanically runnable Verify commands.",
+  "Verify commands must not use shell pipes, redirects, semicolons, backticks, command substitution, output trimming, or grep regex alternation with \"|\".",
+  "Use package scripts, node:test files, or separate simple commands joined only with \"&&\" when multiple checks are needed.",
+];
+
+function isUnsafeVerifyCommandCheck(check: PreExecutionCheckJSON): boolean {
+  return check.category === "tool" && check.message.startsWith("Unsafe or non-runnable Verify command");
+}
+
+/**
+ * Failure context for the re-dispatched planning unit. The findings lead so
+ * the ledger summary (and the liveness-backstop wedge hint derived from it)
+ * names the real blocker; the Verify-command guidance is appended only when
+ * a Verify command was actually rejected.
+ */
+export function formatPreExecutionRetryContext(input: {
   unitType: string;
   unitId: string;
   verdictExcerpt: string;
-  findings: string[];
+  checks: PreExecutionCheckJSON[];
   evidencePath: string;
 }): string {
-  const findings = input.findings.length > 0
-    ? input.findings.map((finding) => `- ${finding}`).join("\n")
+  const findings = input.checks.length > 0
+    ? input.checks.map((check) => `- ${formatPreExecutionFinding(check)}`).join("\n")
     : "- No specific findings captured";
   return [
-    `Pre-execution checks failed after ${input.unitType} ${input.unitId}.`,
-    "Rewrite the slice plan so every task has safe, mechanically runnable Verify commands.",
-    "Verify commands must not use shell pipes, redirects, semicolons, backticks, command substitution, output trimming, or grep regex alternation with \"|\".",
-    "Use package scripts, node:test files, or separate simple commands joined only with \"&&\" when multiple checks are needed.",
-    "",
-    `Verdict: ${input.verdictExcerpt}`,
+    `Pre-execution checks failed after ${input.unitType} ${input.unitId}: ${input.verdictExcerpt}`,
     "Findings:",
     findings,
+    ...(input.checks.some(isUnsafeVerifyCommandCheck) ? ["", ...UNSAFE_VERIFY_COMMAND_GUIDANCE] : []),
     "",
     `Evidence: ${input.evidencePath}`,
   ].join("\n");
@@ -2967,7 +2980,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
               unitType: currentUnit.type,
               unitId: currentUnit.id,
               verdictExcerpt,
-              findings,
+              checks,
               evidencePath,
             }),
             attempt,

@@ -324,8 +324,12 @@ describe("Pre-execution checks → retry/pause wiring", () => {
     assert.equal(s.pendingVerificationRetry?.unitId, "M001/S01");
     assert.equal(s.pendingVerificationRetry?.attempt, 1);
     assert.ok(
-      s.pendingVerificationRetry?.failureContext.includes("Verify commands must not use shell pipes"),
-      "retry context should tell the planner how to produce safe Verify commands",
+      s.pendingVerificationRetry?.failureContext.includes("nonexistent-file-that-does-not-exist.ts"),
+      "retry context should lead with the actual blocking finding",
+    );
+    assert.ok(
+      !s.pendingVerificationRetry?.failureContext.includes("Verify commands must not use shell pipes"),
+      "Verify-command guidance must not be attached to a failure that is not about Verify commands",
     );
     assert.ok(
       s.pendingVerificationRetry?.failureContext.includes("S01-PRE-EXEC-VERIFY.json"),

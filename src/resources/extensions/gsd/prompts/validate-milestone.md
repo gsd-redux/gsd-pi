@@ -82,6 +82,7 @@ If verdict is `needs-remediation`:
 - First call `gsd_validate_milestone` to persist this failed validation verdict.
 - Then use `gsd_reassess_roadmap` to add remediation slices instead of editing `{{roadmapPath}}` manually.
 - Those slices will be planned and executed before validation re-runs.
+- Remediation slices fix code, tests, or docs. Never make a `.gsd/` planning artifact (SUMMARY, ASSESSMENT, PLAN, …) a remediation deliverable: those are preloaded as context and rewritten by workflow tools on the next validation pass, so a task that lists one as an input, file, or expected output cannot pass pre-execution checks.
 
 **You MUST call `gsd_validate_milestone` before finishing. Do not manually write `{{validationPath}}`.**
 
