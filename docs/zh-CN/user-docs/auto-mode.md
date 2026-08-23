@@ -172,11 +172,11 @@ auto_supervisor:
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true    # 默认开启自动重试修复
+verification_auto_fix: true    # 默认对可运行但失败的命令自动重试修复
 verification_max_retries: 2    # 最大重试次数（默认 2）
 ```
 
-一旦失败，agent 会看到 verification 输出并尝试自动修复后重试，再决定是否继续。这意味着代码质量门禁是靠机制强制执行，而不是靠 LLM“自觉遵守”。
+对于能够运行但检查失败的命令，agent 会看到 verification 输出，并在有限次数内尝试自动修复后重试。如果缺少可执行文件（包括 Windows 的 `is not recognized as an internal or external command` 错误），GSD 会将该检查归类为 `command-not-found`，在 verification evidence 中记为 `inconclusive`，并暂停自动模式且不消耗自动修复重试次数。安装缺失的可执行文件或修改 verification 命令后，再恢复自动模式。这意味着代码质量门禁由机制强制执行，同时不会把修复次数浪费在环境或配置问题上。
 
 ### Slice 讨论门
 

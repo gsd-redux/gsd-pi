@@ -316,11 +316,11 @@ Configure shell commands that run automatically after every task execution:
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true    # auto-retry on failure (default)
+verification_auto_fix: true    # auto-retry runnable failures (default)
 verification_max_retries: 2    # max retry attempts (default: 2)
 ```
 
-Failures trigger auto-fix retries — the agent sees the verification output and attempts to fix the issues before advancing. This ensures code quality gates are enforced mechanically, not by LLM compliance.
+Runnable checks that fail are eligible for bounded auto-fix retries — the agent sees the verification output and attempts to fix the issues before advancing. If an executable is missing, including a Windows `is not recognized as an internal or external command` error, GSD classifies the check as `command-not-found`, records its verification evidence as inconclusive, and pauses without consuming an auto-fix retry. Install the executable or update the verification command, then resume auto mode. This ensures code quality gates are enforced mechanically without wasting repair attempts on an environment or configuration problem.
 
 Commands must be directly runnable checks such as `npm run lint`, `npm run test`, or `python3 -m pytest`. GSD supports single shell pipelines with `|`, so commands like `python3 -m pytest | tail -5` are valid. Logical OR fallbacks (`||`) are rejected, and GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution because verification is run as a controlled command list, not as an arbitrary shell program.
 

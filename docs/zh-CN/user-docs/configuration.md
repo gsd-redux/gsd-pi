@@ -369,21 +369,23 @@ uat_dispatch: true
 
 ### Verification
 
-配置在每次 task 执行后自动运行的 shell 命令。若失败，会先尝试自动修复重试，再决定是否继续。
+配置在每次 task 执行后自动运行的 shell 命令。对于能够运行但检查失败的命令，可以先尝试自动修复重试，再决定是否继续。
 
 ```yaml
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true       # 失败时自动重试修复（默认：true）
+verification_auto_fix: true       # 可运行但失败时自动重试修复（默认：true）
 verification_max_retries: 2       # 最大重试次数（默认：2）
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `verification_commands` | string[] | `[]` | task 执行后要运行的 shell 命令 |
-| `verification_auto_fix` | boolean | `true` | verification 失败时是否自动重试 |
-| `verification_max_retries` | number | `2` | 自动修复重试的最大次数 |
+| `verification_auto_fix` | boolean | `true` | 可运行的 verification 命令失败时是否自动重试 |
+| `verification_max_retries` | number | `2` | 对可运行但失败的命令自动修复重试的最大次数 |
+
+如果 shell 找不到可执行文件，GSD 会将该检查归类为 `failureClass: command-not-found`。这包括退出码 127、`command not found` 输出，以及 Windows 的 `is not recognized as an internal or external command` 错误。该检查会在 verification evidence 中记为 `inconclusive`，不会消耗 `verification_max_retries`，并会暂停自动模式，等待你安装缺失的可执行文件或修正命令后再恢复。
 
 <a id="url-blocking-fetch_page"></a>
 ### URL Blocking（`fetch_page`）

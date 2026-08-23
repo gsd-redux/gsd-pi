@@ -317,11 +317,13 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   - Values must match declared repository IDs or the implicit `project`; omitted plan/task `targetRepositories` defaults to `["project"]`.
   - `/gsd codebase` is workspace-aware in parent mode with declared child repositories: generated `.gsd/CODEBASE.md` uses workspace-relative paths, groups files under `## [repo-id]` headings, and refreshes when repository registry metadata changes.
 
-- `verification_commands`: string[] — shell commands to run as host-owned verification after task execution (e.g., `["npm test", "npm run lint"]`). Commands run in order; if any fails, GSD records a failing Technical Verdict for the task Attempt and routes the task to retry or pause instead of publishing completion.
+- `verification_commands`: string[] — shell commands to run as host-owned verification after task execution (e.g., `["npm test", "npm run lint"]`). Commands run in order; if a runnable command fails, GSD records a failing Technical Verdict for the task Attempt and routes the task to retry or pause instead of publishing completion. A missing executable is handled as inconclusive evidence as described below.
 
-- `verification_auto_fix`: boolean — when `true`, automatically attempt to fix verification failures instead of just reporting them. Default: `true`; set to `false` to pause on the first failed or inconclusive host verdict.
+- `verification_auto_fix`: boolean — when `true`, automatically attempt to fix runnable verification failures instead of just reporting them. Default: `true`; set to `false` to pause on the first failed or inconclusive host verdict. This setting does not make a missing executable retryable.
 
-- `verification_max_retries`: number — maximum number of fix-and-retry cycles for verification failures. Default: `2`.
+- `verification_max_retries`: number — maximum number of fix-and-retry cycles for runnable verification failures. Default: `2`.
+
+  If the shell cannot find an executable, GSD classifies the check as `command-not-found`. This includes exit code 127, `command not found` output, and Windows `is not recognized as an internal or external command` errors. The check is recorded as `inconclusive` in verification evidence, auto-fix retry state is cleared without consuming this limit, and auto mode pauses so you can install the executable or correct the verification command before resuming.
 
 - `per_unit_cost_cap_usd`: number — per-unit retry cost ceiling in USD for verification retries. Must be a positive finite number when set; invalid values are rejected during preference validation. Default: `5.0`. During auto-verification and artifact-retry flows, auto-mode pauses when the current unit reaches this cap or when current unit cost spikes to at least `3.0x` the rolling average.
 
@@ -336,9 +338,10 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   ```
 
   These settings control how verification is attempted; they do not grant
-  lifecycle authority. Failures are repaired and retried within the configured
-  limits. A pause should mean the agent exhausted its available repair path,
-  needs external access or a dependency, or genuinely needs a user decision.
+  lifecycle authority. Runnable failures are repaired and retried within the
+  configured limits. A missing executable pauses immediately for manual
+  correction; other pauses should mean the agent exhausted its available repair
+  path, needs external access or a dependency, or genuinely needs a user decision.
   No preference or Markdown UAT result can bypass canonical Task proof or
   complete a Slice.
 
@@ -870,7 +873,7 @@ verification_max_retries: 2
 ---
 ```
 
-Runs test, lint, and typecheck after each task. On failure, auto-fix is attempted up to 2 times before reporting the issue.
+Runs test, lint, and typecheck after each task. Runnable failures receive up to 2 auto-fix attempts. A missing executable is recorded as inconclusive and pauses auto mode without consuming those attempts.
 
 ## Experimental Features Example
 

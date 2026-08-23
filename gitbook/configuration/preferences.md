@@ -175,12 +175,14 @@ Shell commands that run after every task execution:
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true       # auto-retry on failure (default)
+verification_auto_fix: true       # auto-retry runnable failures (default)
 verification_max_retries: 2       # max attempts (default: 2)
 verification_timeout_ms: 120000   # host verification and verification-oriented gsd_exec default (default: 120000)
 ```
 
 `verification_timeout_ms` also supplies the default timeout for verification-oriented `gsd_exec` workloads such as builds, tests, linting, type checks, and verification commands. An explicit `context_mode.exec_timeout_ms` takes precedence; unrelated `gsd_exec` workloads keep the sandbox's 30-second default when `context_mode.exec_timeout_ms` is unset.
+
+Auto-fix retries apply to runnable checks that fail. A missing executable—including exit code 127, `command not found`, or the Windows `is not recognized as an internal or external command` error—is classified as `command-not-found` and recorded as inconclusive verification evidence. Auto mode pauses for manual correction without consuming `verification_max_retries`; install the executable or update the command, then resume.
 
 Verification commands must be simple executable commands. Shell piping (`|`) is supported, but logical OR (`||`) is rejected. GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution (`$(...)`) because verification is run as a controlled command list, not as an arbitrary shell program.
 

@@ -229,11 +229,11 @@ Configure shell commands that run automatically after every task:
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true    # auto-retry on failure
+verification_auto_fix: true    # auto-retry runnable failures
 verification_max_retries: 2    # max retry attempts
 ```
 
-If verification fails, the failed host Technical Verdict is recorded against the Attempt and the AI sees the output before a bounded retry. The task does not publish completion or unlock downstream work until host verification records a passing verdict for the same source revision.
+If a runnable verification check fails, the failed host Technical Verdict is recorded against the Attempt and the AI sees the output before a bounded retry. If an executable is missing, including when Windows reports that it `is not recognized as an internal or external command`, GSD instead classifies the check as `command-not-found`, records its verification evidence as inconclusive, and pauses without consuming an auto-fix retry. Install the executable or update the verification command before resuming. The task does not publish completion or unlock downstream work until host verification records a passing verdict for the same source revision.
 
 Commands must be directly runnable checks such as `npm run lint`, `npm run test`, or `python3 -m pytest`. GSD supports single shell pipelines with `|`, so commands like `python3 -m pytest | tail -5` are valid. Logical OR fallbacks (`||`) are rejected, and GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution because verification is run as a controlled command list, not as an arbitrary shell program.
 

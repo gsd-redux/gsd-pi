@@ -683,13 +683,13 @@ When enabled, auto-mode runs UAT after slice completion. Non-PASS verdicts on cl
 
 ### Verification
 
-Configure shell commands that run automatically after every task execution. Failures trigger auto-fix retries before advancing.
+Configure shell commands that run automatically after every task execution. Runnable failures can trigger auto-fix retries before advancing.
 
 ```yaml
 verification_commands:
   - npm run lint
   - npm run test
-verification_auto_fix: true       # auto-retry on failure (default: true)
+verification_auto_fix: true       # auto-retry runnable failures (default: true)
 verification_max_retries: 2       # max retry attempts (default: 2)
 verification_timeout_ms: 120000   # host verification and verification-oriented gsd_exec default (default: 120000)
 ```
@@ -697,9 +697,11 @@ verification_timeout_ms: 120000   # host verification and verification-oriented 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `verification_commands` | string[] | `[]` | Simple executable commands to run after task execution |
-| `verification_auto_fix` | boolean | `true` | Auto-retry when verification fails |
-| `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts |
+| `verification_auto_fix` | boolean | `true` | Auto-retry runnable verification failures |
+| `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts for runnable failures |
 | `verification_timeout_ms` | number | `120000` | Per-command host-verification timeout in milliseconds and the default timeout for verification-oriented `gsd_exec` workloads. Unset keeps the 120s host-verification default. A timeout is reported as `failureClass: timeout`, never as exit 127. |
+
+If the shell cannot find an executable, GSD classifies the check as `failureClass: command-not-found`. This includes exit code 127, `command not found` output, and Windows `is not recognized as an internal or external command` errors. The check is recorded as `inconclusive` in verification evidence, its failure does not consume `verification_max_retries`, and auto mode pauses for you to install the executable or correct the command before resuming.
 
 Verification commands must be simple executable commands. Shell piping (`|`) is supported, but logical OR (`||`) is rejected. GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution (`$(...)`) because verification is run as a controlled command list, not as an arbitrary shell program.
 
