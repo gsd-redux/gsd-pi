@@ -212,15 +212,42 @@ export type AcknowledgeResult =
   | { ok: true; wedge: WedgeRecord }
   | { ok: false; reason: string };
 
+export type WedgeBlockerRecheck = (
+  wedge: WedgeRecord,
+) => Promise<{ blocking: boolean; reason?: string }> | { blocking: boolean; reason?: string };
+
 /**
- * Acknowledge a wedge and permit one re-entry probe. The tripped signature is
- * deliberately retained: unchanged guard input immediately reopens the same
- * wedge, while changed input supersedes the old signature during adjudication.
- * Acknowledgment is always explicit (ADR-047 §5).
+ * Acknowledge a wedge only after its originating guard has been re-evaluated.
+ * A still-live blocker leaves the wedge and its signature counter intact.
+ * Otherwise the record is acknowledged and one re-entry probe is permitted;
+ * the tripped signature is deliberately retained so unchanged guard input
+ * immediately reopens the same wedge, while changed input supersedes the old
+ * signature during adjudication. Acknowledgment is always explicit (ADR-047 §5).
  */
-export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeResult {
+export async function acknowledgeWedge(
+  scopeId: string,
+  wedgeId: string,
+  recheck: WedgeBlockerRecheck,
+): Promise<AcknowledgeResult> {
   if (!isDbAvailable()) return { ok: false, reason: 'workflow database unavailable' };
   try {
+    const stored = _getAdapter()!.prepare(
+      `SELECT * FROM liveness_wedge_records WHERE wedge_id = :wid AND scope_id = :scope`,
+    ).get({ ':wid': wedgeId, ':scope': scopeId }) as Record<string, unknown> | undefined;
+    if (!stored) return { ok: false, reason: `no wedge record ${wedgeId} for this project` };
+    const currentWedge = rowToWedge(stored);
+    if (currentWedge.acknowledgedAt) return { ok: true, wedge: currentWedge };
+
+    const blocker = await recheck(currentWedge);
+    if (blocker.blocking) {
+      return {
+        ok: false,
+        reason: blocker.reason
+          ? `originating guard ${currentWedge.guardId} still blocks: ${blocker.reason}`
+          : `originating guard ${currentWedge.guardId} still blocks ${currentWedge.unitType} ${currentWedge.unitId}`,
+      };
+    }
+
     return transaction(() => {
       const db = _getAdapter()!;
       const row = db.prepare(

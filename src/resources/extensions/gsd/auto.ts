@@ -243,7 +243,7 @@ import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
 import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
-import { formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop.js";
+import { acknowledgeWedge, formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop.js";
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
 import { clearSessionModelOverride } from "./session-model-override.js";
@@ -667,6 +667,7 @@ export function startAutoDetached(
     step?: boolean;
     interrupted?: InterruptedSessionAssessment;
     milestoneLock?: string | null;
+    resumeWedgeId?: string | null;
   },
 ): void {
   void withDetachedAutoKeepalive(startAuto(ctx, pi, base, verboseMode, options)).catch(async (err) => {
@@ -2621,6 +2622,7 @@ export async function startAuto(
     step?: boolean;
     interrupted?: InterruptedSessionAssessment;
     milestoneLock?: string | null;
+    resumeWedgeId?: string | null;
   },
 ): Promise<void> {
   if (s.active) {
@@ -2705,11 +2707,36 @@ export async function startAuto(
     return;
   }
   const openWedge = openWedgeResult.wedge;
-  if (openWedge) {
+  if (openWedge && options?.resumeWedgeId !== openWedge.wedgeId) {
     ctx.ui.notify(`Auto-mode blocked — ${formatWedgeRefusalNotice(openWedge)}`, "error");
     debugLog("startAuto", { phase: "wedge-blocked", wedgeId: openWedge.wedgeId, base });
     return;
   }
+  if (!openWedge && options?.resumeWedgeId) {
+    ctx.ui.notify(`Cannot acknowledge wedge ${options.resumeWedgeId}: no open wedge exists for this project.`, "error");
+    return;
+  }
+
+  const acknowledgeRequestedWedge = async (): Promise<boolean> => {
+    const wedgeId = options?.resumeWedgeId;
+    if (!wedgeId) return true;
+    if (!s.orchestration?.recheckWedge) {
+      ctx.ui.notify(`Cannot acknowledge wedge ${wedgeId}: auto orchestration is unavailable.`, "error");
+      return false;
+    }
+    const scopeId = normalizeRealPath(base) || base;
+    const recheckWedge = s.orchestration.recheckWedge.bind(s.orchestration);
+    const ack = await acknowledgeWedge(scopeId, wedgeId, recheckWedge);
+    if (!ack.ok) {
+      ctx.ui.notify(`Cannot acknowledge wedge ${wedgeId}: ${ack.reason}`, "error");
+      return false;
+    }
+    ctx.ui.notify(
+      `Wedge ${wedgeId} acknowledged — its originating guard is clear. Re-entering auto-mode.`,
+      "info",
+    );
+    return true;
+  };
 
   const freshStartAssessment = await (interruptedAssessment
     ?? (() => {
@@ -2989,6 +3016,10 @@ export async function startAuto(
 
     const loopDeps = buildLoopDeps(pi, ctx);
     ensureOrchestrationModule(ctx, pi, s.basePath || base);
+    if (!(await acknowledgeRequestedWedge())) {
+      await cleanupAfterLoopExit(ctx);
+      return;
+    }
     registerSigtermHandler(lockBase());
 
     setAutoActiveStatus(ctx, s.stepMode ? "next" : "auto");
@@ -3126,6 +3157,10 @@ export async function startAuto(
   ensureOrchestrationModule(ctx, pi, s.basePath || base);
   captureProjectRootEnv(s.originalBasePath || s.basePath);
   registerAutoWorkerForSession(s);
+  if (!(await acknowledgeRequestedWedge())) {
+    await cleanupAfterLoopExit(ctx);
+    return;
+  }
   try {
     pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, state: await deriveState(s.basePath) });
   } catch (err) {

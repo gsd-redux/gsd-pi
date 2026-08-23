@@ -21,6 +21,16 @@ export interface UnitRef {
   unitId: string;
 }
 
+export interface WedgeRecheckTarget extends UnitRef {
+  guardId: string;
+  inputHash: string;
+}
+
+export interface WedgeRecheckResult {
+  blocking: boolean;
+  reason?: string;
+}
+
 export type AutoSkipCode =
   | "unit-already-active"
   | "completed-no-advance"
@@ -93,6 +103,7 @@ export type AutoAdvanceResult =
 export interface AutoOrchestrationModule {
   start(sessionContext: AutoSessionContext): Promise<AutoAdvanceResult>;
   advance(): Promise<AutoAdvanceResult>;
+  recheckWedge?(wedge: WedgeRecheckTarget): Promise<WedgeRecheckResult>;
   settle(
     dispatchId: number,
     outcome: "completed" | "failed" | "retry" | "canceled",
