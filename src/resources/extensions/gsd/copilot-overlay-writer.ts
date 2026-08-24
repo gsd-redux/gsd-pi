@@ -232,6 +232,24 @@ export function readModelsCatalogOverlay(path: string): ModelsCatalogOverlay | n
 }
 
 /**
+ * Distinguish "file exists but is corrupt/invalid" from "no file yet" — the two
+ * cases `readModelsCatalogOverlay()` intentionally collapses into `null` for
+ * read-only callers. Registration must NOT conflate them: merging on top of a
+ * `null` "existing" overlay starts from an empty `models` map, so if the file
+ * actually exists with unrelated provider entries, writing the merge result
+ * would silently delete them. This lets the registration path fail closed.
+ */
+function overlayFileIsMalformed(path: string): boolean {
+  if (!existsSync(path)) return false;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    return !isModelsCatalogOverlay(parsed);
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Atomic write: temp file in the same directory, then rename — mirrors the
  * exact pattern already used by `gsd update --models` (`src/update-cmd.ts`'s
  * `runModelsUpdate()`), so a crash mid-write never corrupts the overlay.
@@ -259,6 +277,8 @@ export interface RegisterCopilotModelsResult {
   candidates: CatalogRegistrationCandidate[];
   quarantined: CatalogRegistrationCandidate[];
   overlayPath: string;
+  /** Set when the existing overlay file could not be read; registration was skipped to avoid data loss. */
+  overlayError?: string;
 }
 
 /**
@@ -305,6 +325,16 @@ export function registerCopilotModelsInOverlay(
   discovered: CopilotModelRecord[],
   localModels: Array<{ id: string; provider?: string }> = [],
 ): RegisterCopilotModelsResult {
+  if (overlayFileIsMalformed(overlayPath)) {
+    return {
+      registeredIds: [],
+      candidates: [],
+      quarantined: [],
+      overlayPath,
+      overlayError: `${overlayPath} exists but is not valid JSON or does not match the expected models-catalog.json schema. Registration was skipped to avoid overwriting its contents — fix or remove the file, then retry.`,
+    };
+  }
+
   const existingOverlay = readModelsCatalogOverlay(overlayPath);
   const overlayLocalModels = existingOverlay
     ? Object.entries(existingOverlay.models).flatMap(([provider, entries]) =>

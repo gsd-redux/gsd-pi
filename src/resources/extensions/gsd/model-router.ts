@@ -798,6 +798,21 @@ export function resolveModelForComplexity(
   // STEP 3: Fallback — use first eligible model (cheapest in tier, or single eligible)
   const targetModelId = eligibleModels[0];
 
+  // This automatic path bypasses STEP 2's capability-confidence gate whenever
+  // scoring is disabled, only one model is eligible, or unitType is missing.
+  // Apply the same fail-closed gate here so an unknown-confidence model can't
+  // slip through as an automatic pick — explicit/manual selection is unaffected.
+  if (getModelProfileConfidence(targetModelId, capabilityOverrides) === "unknown") {
+    return {
+      modelId: configuredPrimary,
+      fallbacks: phaseConfig.fallbacks,
+      tier: requestedTier,
+      wasDowngraded: false,
+      reason: "no profiled candidate eligible for automatic routing — fail closed",
+      selectionMethod: "tier-only",
+    };
+  }
+
   // Build fallback chain: [downgraded_model, ...configured_fallbacks, configured_primary]
   const fallbacks = buildFallbackChain(targetModelId, phaseConfig);
 
@@ -1046,7 +1061,17 @@ function getModelCost(modelId: string, availableModels?: Array<Model<Api>>): num
   const bareId = bareModelId(modelId);
 
   const runtimeModel = availableModels?.find((candidate) => sameProviderQualifiedModel(modelId, candidate));
-  if (runtimeModel?.cost) {
+  // All-zero cost is the registry's placeholder for "unknown", not a real free
+  // price (see model-registry.ts's defaultCost) — require a meaningful nonzero
+  // field before trusting it, same gate buildStaticEconomics uses.
+  const hasMeaningfulRuntimeCost = runtimeModel?.cost && (
+    runtimeModel.cost.input > 0
+    || runtimeModel.cost.output > 0
+    || runtimeModel.cost.cacheRead > 0
+    || runtimeModel.cost.cacheWrite > 0
+    || (runtimeModel.cost.tiers?.length ?? 0) > 0
+  );
+  if (hasMeaningfulRuntimeCost && runtimeModel?.cost) {
     const runtimeLongContextTiers = runtimeModel.cost.tiers
       ?.filter(
         (tier): tier is typeof tier & { input: number; output: number } =>

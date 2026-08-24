@@ -474,9 +474,13 @@ function normalizeGitHubCopilotModel(
   const reasoning = liveReasoning ?? staticModel?.reasoning;
   const liveVision = toBoolean(record.vision ?? record.multimodal);
   const modalities = record.modalities as Record<string, unknown> | undefined;
-  const vision = liveVision ?? modalities?.input !== undefined
-    ? normalizeStringArray(modalities?.input).includes("image")
-    : staticModel?.input.includes("image");
+  // Parenthesized so an explicit true/false liveVision always wins; only fall
+  // through to modalities/static when liveVision itself is nullish.
+  const vision = liveVision ?? (
+    modalities?.input !== undefined
+      ? normalizeStringArray(modalities?.input).includes("image")
+      : staticModel?.input.includes("image")
+  );
 
   const liveContextWindow = toFinitePositiveInteger(
     record.context_window
@@ -644,6 +648,26 @@ function buildSnapshot(generatedAt: string, models: CopilotModelRecord[]): Copil
   };
 }
 
+/** Combine abort signals with a manual-composition fallback for runtimes without `AbortSignal.any`. */
+function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
+  if (signals.length === 1) return signals[0];
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(signals);
+  }
+  const controller = new AbortController();
+  const abort = (): void => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  if (signals.some((signal) => signal.aborted)) {
+    abort();
+  } else {
+    for (const signal of signals) {
+      signal.addEventListener("abort", abort, { once: true });
+    }
+  }
+  return controller.signal;
+}
+
 export async function fetchGitHubCopilotModels(options: FetchCopilotModelsOptions): Promise<FetchCopilotModelsResult> {
   if (options.provider !== "github-copilot") {
     return { skipped: true, reason: "provider-not-copilot", models: [] };
@@ -657,7 +681,7 @@ export async function fetchGitHubCopilotModels(options: FetchCopilotModelsOption
 
   const timeoutController = new AbortController();
   const combinedSignal = timeoutMs > 0 || options.signal
-    ? AbortSignal.any([
+    ? combineAbortSignals([
         timeoutController.signal,
         ...(options.signal ? [options.signal] : []),
       ])

@@ -34,6 +34,11 @@ function createFakeCtx(options: {
       getAll: () => models.map((model) => ({ ...model, api: "openai-completions", name: model.id, baseUrl: "https://example.test", provider: model.provider, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096, compat: {} })),
       getAvailable: () => models,
       getApiKey: async (_model: FakeModel) => options.apiKey,
+      hasConfiguredAuth: (_model: FakeModel) => options.apiKey !== undefined,
+      authStorage: {
+        get: (_provider: string) => (options.apiKey !== undefined ? { type: "api_key" as const, key: options.apiKey } : undefined),
+      },
+      refresh: () => {},
     },
     ui: {
       notify: (message: string, level: string = "info") => {

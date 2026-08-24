@@ -240,3 +240,23 @@ test("registerCopilotModelsInOverlay does not clobber a pre-existing overlay wri
   assert.ok(onDiskGitHubCopilotModels["gpt-5.4"], "existing copilot entry survives");
   assert.equal(onDiskGitHubCopilotModels["brand-new"], undefined, "remote-only model stays quarantined and is never materialized");
 });
+
+test("registerCopilotModelsInOverlay fails closed instead of overwriting a malformed existing overlay", (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-overlay-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+  mkdirSync(tmp, { recursive: true });
+
+  // Not valid JSON at all — indistinguishable from "missing" if read via
+  // readModelsCatalogOverlay() alone, which would otherwise let registration
+  // silently start a merge from an empty overlay and overwrite this file.
+  writeFileSync(overlayPath, "not json at all");
+  const rawBefore = readFileSync(overlayPath, "utf-8");
+
+  const result = registerCopilotModelsInOverlay(overlayPath, [completeRecord("model-complete")]);
+
+  assert.deepEqual(result.registeredIds, [], "registration must be skipped, not silently succeed against a corrupt file");
+  assert.deepEqual(result.quarantined, []);
+  assert.ok(result.overlayError, "a malformed existing overlay must be reported, not silently treated as absent");
+  assert.equal(readFileSync(overlayPath, "utf-8"), rawBefore, "the corrupt file on disk must be left completely untouched");
+});
