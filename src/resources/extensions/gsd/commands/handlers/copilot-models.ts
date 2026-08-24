@@ -3,6 +3,7 @@
 // sync, diff, diagnostics, pricing, promotions, and local-only why analysis.
 
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { getGitHubCopilotBaseUrl } from "@gsd/pi-ai/oauth";
@@ -126,15 +127,18 @@ function hashAccountKey(baseUrl: string, token: string): string {
  * access token. GitHub Copilot OAuth refresh replaces `access` on every
  * renewal, so hashing it would silently drop this account's cached
  * snapshot/diff/notification state each time the token rotates.
- * Synchronous and network-free — safe to call from local-only commands.
- * Always returns a key: auth configured via an environment variable or a
- * models.json provider key has no entry in authStorage at all, but those
- * modes represent a single stable configuration with no account-switching
- * concept, so they get a fixed key rather than forcing every local-only
- * command to miss the state runSync just recorded.
+ * Always returns a key: auth configured via a runtime override, environment
+ * variable, or models.json fallback resolver has no entry in authStorage at
+ * all. For that case, resolving the actual key via getApiKey() is safe here
+ * (not just network-free) — AuthStorage.getApiKeyWithOAuthState() only ever
+ * does network I/O on its oauth-credential-needs-refresh branch, which is
+ * unreachable when authStorage has neither an oauth nor an api_key credential
+ * for this provider. Hashing the real resolved value (rather than a shared
+ * per-provider placeholder) keeps different credentials from colliding onto
+ * the same cached session state if the configured key changes mid-process.
  */
-function resolveCopilotAccountKey(ctx: ExtensionCommandContext, provider: string): string {
-  const cred = ctx.modelRegistry.authStorage.get(provider) as
+async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotModel: any): Promise<string> {
+  const cred = ctx.modelRegistry.authStorage.get(copilotModel.provider) as
     | { type: "oauth"; refresh: string; enterpriseUrl?: string }
     | { type: "api_key"; key: string }
     | undefined;
@@ -144,7 +148,14 @@ function resolveCopilotAccountKey(ctx: ExtensionCommandContext, provider: string
   if (cred?.type === "api_key") {
     return hashAccountKey("github.com", cred.key);
   }
-  return hashAccountKey("github.com", `unstored-credential:${provider}`);
+  // getApiKey() can still throw for reasons unrelated to OAuth refresh (e.g. a
+  // misconfigured fallback resolver) — fall back to the provider-only
+  // placeholder rather than letting a local-only command fail on it.
+  const resolvedKey = await ctx.modelRegistry.getApiKey(copilotModel).catch(() => undefined);
+  return hashAccountKey(
+    "github.com",
+    resolvedKey ? `unstored-credential:${resolvedKey}` : `unstored-credential:${copilotModel.provider}`,
+  );
 }
 
 function redactSensitive(message: string): string {
@@ -208,7 +219,7 @@ async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<
     return { auth: { configured: false, tokenAvailable: false }, accountKey: null, state: null };
   }
 
-  const accountKey = resolveCopilotAccountKey(ctx, copilotModel.provider);
+  const accountKey = await resolveCopilotAccountKey(ctx, copilotModel);
   return {
     auth: { configured: true, tokenAvailable: ctx.modelRegistry.hasConfiguredAuth(copilotModel) },
     accountKey,
@@ -237,7 +248,7 @@ async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
     return { configured: false, tokenAvailable: false };
   }
 
-  const stableAccountKey = resolveCopilotAccountKey(ctx, copilotModel.provider);
+  const stableAccountKey = await resolveCopilotAccountKey(ctx, copilotModel);
 
   try {
     const token = await ctx.modelRegistry.getApiKey(copilotModel);
@@ -373,7 +384,61 @@ function buildStaticEconomics(modelId: string, localModel?: any): Partial<Runtim
   };
 }
 
+/** Strip `//` line comments and trailing commas, mirroring ModelRegistry's own models.json parsing (model-registry.ts's stripJsonComments), so a genuinely user-authored override can be told apart from bundled/overlay data without depending on private registry state. */
+function stripJsonComments(input: string): string {
+  return input
+    .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+    .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : ""));
+}
+
+/**
+ * Read a genuine user-authored cost override for a github-copilot model
+ * directly from models.json — either a full custom model definition or a
+ * modelOverrides entry. Returns undefined for any read/parse error (a
+ * malformed models.json is already surfaced elsewhere by ModelRegistry
+ * itself) so pricing/why never fail because of this best-effort lookup.
+ */
+function readGithubCopilotModelsJsonCost(
+  ctx: ExtensionCommandContext,
+  modelId: string,
+): { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined {
+  try {
+    const modelsJsonPath = ctx.modelRegistry.modelsJsonPath;
+    if (!modelsJsonPath || !existsSync(modelsJsonPath)) return undefined;
+
+    const parsed = JSON.parse(stripJsonComments(readFileSync(modelsJsonPath, "utf-8")));
+    const providerConfig = parsed?.providers?.["github-copilot"];
+    if (!providerConfig || typeof providerConfig !== "object") return undefined;
+
+    const modelDef = Array.isArray(providerConfig.models)
+      ? providerConfig.models.find((model: any) => model?.id === modelId)
+      : undefined;
+    const rawCost = modelDef?.cost ?? providerConfig.modelOverrides?.[modelId]?.cost;
+    if (!rawCost || typeof rawCost.input !== "number" || typeof rawCost.output !== "number") return undefined;
+
+    return {
+      input: rawCost.input,
+      output: rawCost.output,
+      cacheRead: typeof rawCost.cacheRead === "number" ? rawCost.cacheRead : 0,
+      cacheWrite: typeof rawCost.cacheWrite === "number" ? rawCost.cacheWrite : 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function buildUserOverrideEconomics(ctx: ExtensionCommandContext, modelId: string): Partial<RuntimeModelEconomics> | undefined {
+  const cost = readGithubCopilotModelsJsonCost(ctx, modelId);
+  if (!hasMeaningfulCost(cost)) return undefined;
+  return {
+    billingUnit: "tokens",
+    stale: false,
+    tokenPrices: tokenPricesFromCost(cost),
+  };
+}
+
 function resolveEconomicsForModel(
+  ctx: ExtensionCommandContext,
   bareId: string,
   liveRecord: CopilotModelRecord | undefined,
   localModel: any | undefined,
@@ -381,6 +446,7 @@ function resolveEconomicsForModel(
   return resolveModelEconomics({
     provider: "github-copilot",
     modelId: bareId,
+    userOverride: buildUserOverrideEconomics(ctx, bareId),
     liveEconomics: liveRecord ? buildLiveEconomics(liveRecord) : undefined,
     staticEconomics: buildStaticEconomics(bareId, localModel),
     // BUNDLED_COST_TABLE's bare-ID lookup isn't provider-qualified; without this,
@@ -522,7 +588,7 @@ function buildWhyExplanation(
     : undefined;
   const tier = MODEL_CAPABILITY_TIER[bareId] ?? "unknown";
   const confidence = getModelProfileConfidence(bareId);
-  const economics = resolveEconomicsForModel(bareId, liveRecord, localModel);
+  const economics = resolveEconomicsForModel(ctx, bareId, liveRecord, localModel);
 
   let routingEligible = false;
   let routingReason = "no live/task routing context available";
@@ -584,8 +650,8 @@ function buildWhyExplanation(
   ].join("\n");
 }
 
-function formatPricingRecord(record: CopilotModelRecord | undefined, localModel: any | undefined, bareId: string): string[] {
-  const economics = resolveEconomicsForModel(bareId, record, localModel);
+function formatPricingRecord(ctx: ExtensionCommandContext, record: CopilotModelRecord | undefined, localModel: any | undefined, bareId: string): string[] {
+  const economics = resolveEconomicsForModel(ctx, bareId, record, localModel);
   const lines = [
     `GitHub Copilot pricing: github-copilot/${bareId}`,
     `- economics: ${economicsSummary(economics)}`,
@@ -841,7 +907,7 @@ export async function handleCopilotModels(
     if (parsed.target) {
       const bareId = parsed.target;
       ctx.ui.notify(
-        formatPricingRecord(findLiveRecord(currentSnapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n"),
+        formatPricingRecord(ctx, findLiveRecord(currentSnapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n"),
         "info",
       );
       return;
@@ -855,7 +921,7 @@ export async function handleCopilotModels(
     }
     const blocks = records.map((record) => {
       const bareId = normalizeBareModelId(record.id);
-      return formatPricingRecord(findLiveRecord(snapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n");
+      return formatPricingRecord(ctx, findLiveRecord(snapshot, bareId), findLocalModel(ctx, bareId), bareId).join("\n");
     });
     ctx.ui.notify(blocks.join("\n\n"), "info");
     return;

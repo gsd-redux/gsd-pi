@@ -333,11 +333,12 @@ Quarantined models are intentionally **not** written as placeholder entries with
 
 Copilot economics resolve per provider + model identity. The precedence is:
 
-1. explicit user override;
+1. explicit user override from `models.json` (a full custom model definition or a `modelOverrides` entry for `github-copilot`);
 2. fresh provider-live economics from the accepted Copilot snapshot;
 3. provider-static economics from the current bundled GitHub Copilot catalog entry;
-4. bundled fallback table;
-5. unknown.
+4. unknown.
+
+There is intentionally no generic cross-provider bundled-fallback tier for Copilot: the shared bundled cost table is keyed by bare model ID only, so a Copilot model reusing an ID from another provider (for example `gpt-5.5`) could otherwise silently report that other provider's price. Unmatched models report `unknown` pricing instead of a possibly-wrong guess.
 
 `/gsd copilot-models pricing` and `/gsd copilot-models why <model>` show both the resolved value and its source/freshness. Unknown values stay `unknown`; they are never silently rewritten to `$0.0000`.
 

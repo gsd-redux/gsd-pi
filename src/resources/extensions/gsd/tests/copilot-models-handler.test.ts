@@ -6,7 +6,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,7 @@ function createFakeCtx(options: {
   apiKey?: string | undefined;
   /** Simulate auth resolved outside authStorage (e.g. an env var or a models.json provider key). */
   credentialOutsideAuthStorage?: boolean;
+  modelsJsonPath?: string;
 }): { ctx: any; notifications: Array<{ message: string; level: string }> } {
   const notifications: Array<{ message: string; level: string }> = [];
   const models = options.models ?? [];
@@ -45,6 +46,7 @@ function createFakeCtx(options: {
             : undefined,
       },
       refresh: () => {},
+      modelsJsonPath: options.modelsJsonPath,
     },
     ui: {
       notify: (message: string, level: string = "info") => {
@@ -474,6 +476,48 @@ test("handleCopilotModels: why reports a meaningful local cost as provider-stati
   assert.match(notifications[0].message, /^- economics: \$0\.5000 per 1K input \/ \$2\.5000 per 1K output$/m);
   assert.match(notifications[0].message, /^- source: provider-static$/m);
   assert.match(notifications[0].message, /^- freshness: stale$/m);
+});
+
+test("handleCopilotModels: why reports a genuine models.json cost override as fresh user data, beating live pricing", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-json-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const modelsJsonPath = join(tmp, "models.json");
+  writeFileSync(
+    modelsJsonPath,
+    JSON.stringify({
+      providers: {
+        "github-copilot": {
+          modelOverrides: {
+            "gpt-5.4": { cost: { input: 111, output: 222 } },
+          },
+        },
+      },
+    }),
+  );
+
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+    modelsJsonPath,
+  });
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        tool_call: true,
+        cost: { input_cost_per_token: 0.000006, output_cost_per_token: 0.00003 },
+      },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[1].message, /^- economics: \$0\.1110 per 1K input \/ \$0\.2220 per 1K output$/m, "the models.json override must win over the accepted live snapshot's pricing");
+  assert.match(notifications[1].message, /^- source: user$/m);
+  assert.match(notifications[1].message, /^- freshness: fresh$/m);
 });
 
 test("handleCopilotModels: why succeeds even when getApiKey() throws", async () => {
