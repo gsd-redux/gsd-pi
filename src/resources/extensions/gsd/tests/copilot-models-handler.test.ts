@@ -1096,9 +1096,9 @@ test("handleCopilotModels: pricing suggests a cheaper same-tier Copilot model wh
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [
-      { id: "claude-sonnet-5", provider: "github-copilot" },
-      { id: "gpt-4.1", provider: "github-copilot" },
-      { id: "mai-code-1.1-flash", provider: "github-copilot" },
+      { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+      { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+      { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
     ],
     apiKey: undefined,
   });
@@ -1291,9 +1291,9 @@ test("handleCopilotModels: why highlights a cheaper same-tier model when one is 
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [
-      { id: "claude-sonnet-5", provider: "github-copilot" },
-      { id: "gpt-4.1", provider: "github-copilot" },
-      { id: "mai-code-1.1-flash", provider: "github-copilot" },
+      { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+      { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+      { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
     ],
     apiKey: undefined,
   });

@@ -415,7 +415,7 @@ function stripJsonComments(input: string): string {
  * itself) so pricing/why never fail because of this best-effort lookup.
  */
 function readGithubCopilotModelsJsonCost(
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
   modelId: string,
 ): { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined {
   try {
@@ -443,7 +443,7 @@ function readGithubCopilotModelsJsonCost(
   }
 }
 
-function buildUserOverrideEconomics(ctx: ExtensionCommandContext, modelId: string): Partial<RuntimeModelEconomics> | undefined {
+function buildUserOverrideEconomics(ctx: ExtensionContext, modelId: string): Partial<RuntimeModelEconomics> | undefined {
   const cost = readGithubCopilotModelsJsonCost(ctx, modelId);
   if (!cost || !hasMeaningfulCost(cost)) return undefined;
   return {
@@ -454,7 +454,7 @@ function buildUserOverrideEconomics(ctx: ExtensionCommandContext, modelId: strin
 }
 
 function resolveEconomicsForModel(
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
   bareId: string,
   liveRecord: CopilotModelRecord | undefined,
   localModel: Model<Api> | undefined,
