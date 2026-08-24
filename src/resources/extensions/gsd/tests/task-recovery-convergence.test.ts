@@ -45,6 +45,7 @@ import { executeTaskReopen } from "../tools/workflow-tool-executors.ts";
 import { registerWorkflowTools } from "../../../../../packages/mcp-server/src/workflow-tools.ts";
 import { handleReopenTask } from "../tools/reopen-task.ts";
 import { writeReactiveExecuteBlocker } from "../auto-recovery.ts";
+import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-iteration.ts";
 import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
 import { buildRunUatCanonicalToolNames } from "../tool-presentation-plan.ts";
 
@@ -424,6 +425,27 @@ test("agent recovery exhausts durably, resumes once, then passes host verificati
   assert.equal(resumed.status, "committed");
   assert.equal(readTaskRecoveryRoute(third.attemptId)?.resumeAuthorized, true);
 
+  const recoveryPrompt = (await buildCustomEngineIterationData({
+    step: {
+      unitType: "execute-task",
+      unitId: `M001/S01/${taskId}`,
+      prompt: "Continue the custom-engine Task.",
+    },
+    basePath,
+    canonicalProjectRoot: basePath,
+    currentMilestoneId: "M001",
+    deriveState: async () => ({
+      activeMilestone: { id: "M001", title: "Recovery" },
+      activeSlice: { id: "S01", title: "Convergence" },
+      activeTask: { id: taskId, title: "Task T01" },
+      phase: "executing",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [],
+    }),
+    logPostDerive: () => {},
+  })).prompt;
   const dispatchId4 = insertClaimedDispatch(taskId, 4);
   const claim4 = claimTaskAttempt({
     invocation: invocation("convergence/claim/4"),
@@ -433,6 +455,9 @@ test("agent recovery exhausts durably, resumes once, then passes host verificati
     coordinationDispatchId: dispatchId4,
     retryOfAttemptId: third.attemptId,
   });
+  assert.match(recoveryPrompt, /Required action:\*\* continue/);
+  assert.match(recoveryPrompt, /do not call `gsd_task_recovery_resume`/i);
+  assert.doesNotMatch(recoveryPrompt, /Required action:\*\* resume/);
   const settled4 = await stageTaskCompletion(
     completionInput(basePath, taskId, "convergence/settle/4"),
   );

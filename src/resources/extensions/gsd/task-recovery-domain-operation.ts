@@ -117,8 +117,12 @@ export interface TaskRecoveryResumeReceipt {
   workCheckpointId: string;
 }
 
-export interface PendingTaskRecoveryContext {
-  action: Extract<RecoveryDecision["action"], "retry" | "repair" | "remediate" | "replan"> | "resume";
+type PendingTaskRecoveryAction = Extract<
+  RecoveryDecision["action"],
+  "retry" | "repair" | "remediate" | "replan"
+>;
+
+interface PendingTaskRecoveryContextBase {
   recoveryActionId: string;
   attemptId: string;
   resultId: string;
@@ -135,6 +139,14 @@ export interface PendingTaskRecoveryContext {
     suggestedNextAction: string;
   };
 }
+
+export type PendingTaskRecoveryContext = PendingTaskRecoveryContextBase & (
+  | {
+      action: PendingTaskRecoveryAction;
+      resumeAuthorized?: false;
+    }
+  | { action: "continue"; resumeAuthorized: true }
+);
 
 export interface BlockerResolutionReceipt {
   status: ReceiptStatus;
@@ -428,9 +440,9 @@ export function readPendingTaskRecoveryContext(
     checkpoint = resumed;
   }
   return {
-    action: storedAction === "abort"
-      ? "resume"
-      : storedAction as PendingTaskRecoveryContext["action"],
+    ...(storedAction === "abort"
+      ? { action: "continue" as const, resumeAuthorized: true as const }
+      : { action: storedAction as PendingTaskRecoveryAction }),
     recoveryActionId: String(stored["recovery_action_id"]),
     attemptId,
     resultId: String(stored["result_id"]),
