@@ -58,12 +58,12 @@ export interface HandleCopilotModelsOptions {
 }
 
 let sessionStates = new Map<string, CopilotSessionState>();
-let notifiedMessagesByAccount = new Map<string, Set<string>>();
+let lastNotifiedContentByAccount = new Map<string, string>();
 
 /** Test-only hook to reset module-level session state between test cases. */
 export function _resetCopilotModelsSessionStateForTests(): void {
   sessionStates = new Map();
-  notifiedMessagesByAccount = new Map();
+  lastNotifiedContentByAccount = new Map();
 }
 
 function normalizeBareModelId(modelId: string): string {
@@ -133,7 +133,12 @@ function hashAccountKey(baseUrl: string, token: string): string {
  * resolved value — a models.json `apiKey` command can legitimately emit a
  * new short-lived token on every invocation, and hashing that value would
  * produce a different fingerprint each time and strand this account's
- * already-cached snapshot/diff/notification state.
+ * already-cached snapshot/diff/notification state. The source marker alone
+ * doesn't distinguish two different projects that each configure a
+ * models.json command/literal key for this same provider — module-level
+ * state here is shared by every session in the process, so also fold in
+ * modelsJsonPath (stable per project, never resolved/executed) to keep
+ * those from colliding onto the same cached account state.
  */
 async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotModel: Model<Api>): Promise<string> {
   const cred = ctx.modelRegistry.authStorage.get(copilotModel.provider) as
@@ -149,7 +154,8 @@ async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotMod
   const status = ctx.modelRegistry.getProviderAuthStatus(copilotModel.provider);
   const stableSource =
     status.source === "environment" && status.label ? `env:${status.label}` : (status.source ?? "unknown");
-  return hashAccountKey("github.com", `unstored-credential:${stableSource}`);
+  const projectScope = ctx.modelRegistry.modelsJsonPath ?? "no-models-json";
+  return hashAccountKey("github.com", `unstored-credential:${stableSource}:${projectScope}`);
 }
 
 function redactSensitive(message: string): string {
@@ -171,12 +177,12 @@ function getSessionState(accountKey: string): CopilotSessionState {
   return created;
 }
 
-function getNotificationState(accountKey: string): Set<string> {
-  const current = notifiedMessagesByAccount.get(accountKey);
-  if (current) return current;
-  const created = new Set<string>();
-  notifiedMessagesByAccount.set(accountKey, created);
-  return created;
+function getLastNotifiedContent(accountKey: string): string | undefined {
+  return lastNotifiedContentByAccount.get(accountKey);
+}
+
+function setLastNotifiedContent(accountKey: string, content: string): void {
+  lastNotifiedContentByAccount.set(accountKey, content);
 }
 
 /**
@@ -817,17 +823,20 @@ async function runSync(
     }
 
     const deduped = dedupeShellNotifications(messages);
-    // Dedupe by this specific (previous → new) snapshot transition, not by
-    // permanently remembering every message string ever shown: a model that
-    // is added, removed, and later re-added produces the identical "added"
-    // message twice, but each occurrence belongs to a different transition
-    // and must not be suppressed forever by the first one.
-    const transitionKey = `${previousSnapshot?.hash ?? "none"}:${result.snapshot.hash}`;
-    const notifiedTransitions = getNotificationState(auth.accountKey);
-    const alreadyNotifiedThisTransition = notifiedTransitions.has(transitionKey);
-    notifiedTransitions.add(transitionKey);
+    // Suppress only an exact repeat of the LAST notification shown for this
+    // account (e.g. two concurrent syncs racing on the same diff) — not a
+    // permanent set of every message/transition ever seen. A permanent
+    // transition-hash set would wrongly re-suppress a transition that
+    // recurs after a cycle (A->B->A->B), and would wrongly suppress a later
+    // `--register` run's own registration output just because an earlier,
+    // unrelated no-diff check happened to share the same snapshot-hash pair.
+    const contentFingerprint = deduped.join("\n");
+    const isRepeatOfLastNotification = deduped.length > 0 && contentFingerprint === getLastNotifiedContent(auth.accountKey);
+    if (deduped.length > 0) {
+      setLastNotifiedContent(auth.accountKey, contentFingerprint);
+    }
 
-    if (previousSnapshot && (deduped.length === 0 || alreadyNotifiedThisTransition)) {
+    if (previousSnapshot && (deduped.length === 0 || isRepeatOfLastNotification)) {
       ctx.ui.notify("GitHub Copilot model catalog: no new changes since the last accepted check.", "info");
       return;
     }

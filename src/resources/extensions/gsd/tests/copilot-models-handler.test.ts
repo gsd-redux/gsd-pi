@@ -163,9 +163,11 @@ test("handleCopilotModels: reports added/removed/changed drift and dedupes repea
 });
 
 test("handleCopilotModels: a model added, removed, then re-added is reported again, not suppressed by the first add notice", async () => {
-  // Dedup is keyed on the (previous -> new) snapshot transition, not on
-  // permanently remembering every message string ever shown, so the second
-  // "added" occurrence for the same model must not be silently dropped.
+  // Dedup only suppresses an exact repeat of the immediately-preceding
+  // notification's content, not a permanent record of every message ever
+  // shown, so the second "added" occurrence for the same model (whose
+  // content differs from what was shown just before it, the "removed"
+  // notice) must not be silently dropped.
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [{ id: "gpt-5.4", provider: "github-copilot" }],
@@ -198,6 +200,74 @@ test("handleCopilotModels: a model added, removed, then re-added is reported aga
     /\+ github-copilot\/claude-sonnet-5 added/,
     "re-adding a previously-removed model must be reported again, not suppressed by the earlier add notice",
   );
+});
+
+test("handleCopilotModels: an add/remove cycle that repeats an earlier snapshot transition still reports the second occurrence", async () => {
+  // A permanent (previous -> new) snapshot-transition record would wrongly
+  // suppress this: the second A -> B transition reuses the exact same
+  // snapshot-hash pair as the first A -> B transition, even though a B -> A
+  // transition (a different, freshly-shown notice) happened in between.
+  // Dedup must compare against what was shown *immediately before*, not
+  // against a permanent history of transition hashes.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  const withoutExtra = jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch;
+  const withExtra = jsonResponse([
+    { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+    { id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true },
+  ]) as unknown as typeof fetch;
+
+  await handleCopilotModels("", ctx, { fetchImpl: withoutExtra }); // baseline: A
+  await handleCopilotModels("", ctx, { fetchImpl: withExtra }); // A -> B (1st time)
+  assert.match(notifications[1].message, /\+ github-copilot\/claude-sonnet-5 added/);
+
+  await handleCopilotModels("", ctx, { fetchImpl: withoutExtra }); // B -> A
+  assert.match(notifications[2].message, /- github-copilot\/claude-sonnet-5 removed/);
+
+  await handleCopilotModels("", ctx, { fetchImpl: withExtra }); // A -> B (2nd time, same hash pair as the 1st)
+  assert.equal(notifications.length, 4);
+  assert.doesNotMatch(
+    notifications[3].message,
+    /no new changes/,
+    "a snapshot transition repeating an earlier hash pair must still be reported when it wasn't the immediately-preceding notice",
+  );
+  assert.match(notifications[3].message, /\+ github-copilot\/claude-sonnet-5 added/);
+});
+
+test("handleCopilotModels: --register reports registration output even when an earlier plain sync already marked the unchanged catalog as notified", async (t) => {
+  // A permanent per-transition notified-set would mark the unchanged (A -> A)
+  // transition as "already notified" from the plain `sync` call below, then
+  // wrongly suppress the *different*, registration-specific content that a
+  // later `sync --register` call produces for that same unchanged catalog.
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-models-handler-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+  const fetchImpl = jsonResponse([
+    { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+    { id: "brand-new-model", name: "Brand New Model", tool_call: true },
+  ]) as unknown as typeof fetch;
+
+  await handleCopilotModels("", ctx, { fetchImpl, overlayPath }); // establishes the baseline snapshot
+  await handleCopilotModels("", ctx, { fetchImpl, overlayPath }); // unchanged (A -> A): "no new changes"
+  assert.match(notifications[1].message, /no new changes/);
+
+  await handleCopilotModels("--register", ctx, { fetchImpl, overlayPath }); // same unchanged catalog, but registers
+  assert.doesNotMatch(
+    notifications[2].message,
+    /no new changes/,
+    "registration output for the same unchanged catalog must not be suppressed by the earlier no-diff sync",
+  );
+  assert.match(notifications[2].message, /quarantined|registered/i);
 });
 
 test("handleCopilotModels: fetch failure preserves last-known-good snapshot", async () => {
@@ -623,6 +693,40 @@ test("handleCopilotModels: why finds the session state a prior sync recorded eve
     notifications[1].message,
     /^- last known live catalog: yes$/m,
     "a rotating resolved token must not fragment the account fingerprint across calls",
+  );
+});
+
+test("handleCopilotModels: two different projects with unstored credentials from the same source get distinct account keys, not shared session state", async () => {
+  // Module-level session/notification state is keyed by account fingerprint
+  // and shared by every session in the process. Two different projects that
+  // both resolve GitHub Copilot auth as an unstored "environment" credential
+  // must not collapse onto the same fingerprint just because they share that
+  // coarse source label — modelsJsonPath (stable per project) must also
+  // factor into the key, or project B's `why` would wrongly report project
+  // A's cached snapshot as its own.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx: ctxProjectA } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-from-env",
+    credentialOutsideAuthStorage: true,
+    modelsJsonPath: "/projects/project-a/models.json",
+  });
+  const { ctx: ctxProjectB, notifications: notificationsB } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-from-env",
+    credentialOutsideAuthStorage: true,
+    modelsJsonPath: "/projects/project-b/models.json",
+  });
+
+  await handleCopilotModels("sync", ctxProjectA, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why gpt-5.4", ctxProjectB, {});
+  assert.match(
+    notificationsB[0].message,
+    /^- last known live catalog: unknown$/m,
+    "a different project's unstored credential must not inherit another project's cached session state",
   );
 });
 
