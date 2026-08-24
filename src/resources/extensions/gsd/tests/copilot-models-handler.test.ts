@@ -21,22 +21,28 @@ import { showHelp } from "../commands/handlers/core.js";
 interface FakeModel {
   id: string;
   provider: string;
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 function createFakeCtx(options: {
   models?: FakeModel[];
   apiKey?: string | undefined;
+  /** Simulate auth resolved outside authStorage (e.g. an env var or a models.json provider key). */
+  credentialOutsideAuthStorage?: boolean;
 }): { ctx: any; notifications: Array<{ message: string; level: string }> } {
   const notifications: Array<{ message: string; level: string }> = [];
   const models = options.models ?? [];
   const ctx = {
     modelRegistry: {
-      getAll: () => models.map((model) => ({ ...model, api: "openai-completions", name: model.id, baseUrl: "https://example.test", provider: model.provider, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096, compat: {} })),
+      getAll: () => models.map((model) => ({ ...model, api: "openai-completions", name: model.id, baseUrl: "https://example.test", provider: model.provider, reasoning: false, input: ["text"], cost: model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096, compat: {} })),
       getAvailable: () => models,
       getApiKey: async (_model: FakeModel) => options.apiKey,
       hasConfiguredAuth: (_model: FakeModel) => options.apiKey !== undefined,
       authStorage: {
-        get: (_provider: string) => (options.apiKey !== undefined ? { type: "api_key" as const, key: options.apiKey } : undefined),
+        get: (_provider: string) =>
+          options.apiKey !== undefined && !options.credentialOutsideAuthStorage
+            ? { type: "api_key" as const, key: options.apiKey }
+            : undefined,
       },
       refresh: () => {},
     },
@@ -449,6 +455,27 @@ test("handleCopilotModels: why reports unknown economics without a synthetic zer
   assert.doesNotMatch(notifications[0].message, /\bstandard\b/);
 });
 
+test("handleCopilotModels: why reports a meaningful local cost as provider-static, not a fresh user override", async () => {
+  // The effective local model can be bundled/overlay-sourced, not necessarily
+  // user-authored — it must still win over this module's separate hardcoded
+  // static reference list, but must NOT be reported as fresh "user" data.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{
+      id: "totally-custom-model-x",
+      provider: "github-copilot",
+      cost: { input: 500, output: 2500, cacheRead: 0, cacheWrite: 0 },
+    }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("why totally-custom-model-x", ctx, {});
+
+  assert.match(notifications[0].message, /^- economics: \$0\.5000 per 1K input \/ \$2\.5000 per 1K output$/m);
+  assert.match(notifications[0].message, /^- source: provider-static$/m);
+  assert.match(notifications[0].message, /^- freshness: stale$/m);
+});
+
 test("handleCopilotModels: why succeeds even when getApiKey() throws", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
@@ -459,6 +486,25 @@ test("handleCopilotModels: why succeeds even when getApiKey() throws", async () 
 
   await assert.doesNotReject(handleCopilotModels("why gpt-5.4", ctx, {}));
   assert.match(notifications[0].message, /^GitHub Copilot: why github-copilot\/gpt-5\.4$/m);
+});
+
+test("handleCopilotModels: why finds the session state a prior sync recorded even when auth is resolved outside authStorage (e.g. an env var)", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-from-env",
+    credentialOutsideAuthStorage: true,
+  });
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+  assert.match(notifications[0].message, /1 model\(s\) available/);
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+  assert.match(notifications[1].message, /^- last known live catalog: yes$/m, "why must find the snapshot sync just recorded, not report it as unknown");
 });
 
 test("handleCopilotModels: why succeeds even when fetchImpl throws", async () => {

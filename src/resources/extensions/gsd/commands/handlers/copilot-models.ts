@@ -127,20 +127,24 @@ function hashAccountKey(baseUrl: string, token: string): string {
  * renewal, so hashing it would silently drop this account's cached
  * snapshot/diff/notification state each time the token rotates.
  * Synchronous and network-free — safe to call from local-only commands.
+ * Always returns a key: auth configured via an environment variable or a
+ * models.json provider key has no entry in authStorage at all, but those
+ * modes represent a single stable configuration with no account-switching
+ * concept, so they get a fixed key rather than forcing every local-only
+ * command to miss the state runSync just recorded.
  */
-function resolveCopilotAccountKey(ctx: ExtensionCommandContext, provider: string): string | undefined {
+function resolveCopilotAccountKey(ctx: ExtensionCommandContext, provider: string): string {
   const cred = ctx.modelRegistry.authStorage.get(provider) as
     | { type: "oauth"; refresh: string; enterpriseUrl?: string }
     | { type: "api_key"; key: string }
     | undefined;
-  if (!cred) return undefined;
-  if (cred.type === "oauth") {
+  if (cred?.type === "oauth") {
     return hashAccountKey(cred.enterpriseUrl ?? "github.com", cred.refresh);
   }
-  if (cred.type === "api_key") {
+  if (cred?.type === "api_key") {
     return hashAccountKey("github.com", cred.key);
   }
-  return undefined;
+  return hashAccountKey("github.com", `unstored-credential:${provider}`);
 }
 
 function redactSensitive(message: string): string {
@@ -204,11 +208,11 @@ async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<
     return { auth: { configured: false, tokenAvailable: false }, accountKey: null, state: null };
   }
 
-  const accountKey = resolveCopilotAccountKey(ctx, copilotModel.provider) ?? null;
+  const accountKey = resolveCopilotAccountKey(ctx, copilotModel.provider);
   return {
     auth: { configured: true, tokenAvailable: ctx.modelRegistry.hasConfiguredAuth(copilotModel) },
     accountKey,
-    state: accountKey ? sessionStates.get(accountKey) ?? null : null,
+    state: sessionStates.get(accountKey) ?? null,
   };
 }
 
@@ -242,7 +246,7 @@ async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
         configured: true,
         tokenAvailable: false,
         copilotModel,
-        ...(stableAccountKey ? { accountKey: stableAccountKey } : {}),
+        accountKey: stableAccountKey,
       };
     }
 
@@ -253,14 +257,14 @@ async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
       copilotModel,
       token,
       baseUrl,
-      accountKey: stableAccountKey ?? hashAccountKey(baseUrl, token),
+      accountKey: stableAccountKey,
     };
   } catch (error) {
     return {
       configured: true,
       tokenAvailable: false,
       copilotModel,
-      ...(stableAccountKey ? { accountKey: stableAccountKey } : {}),
+      accountKey: stableAccountKey,
       error: redactSensitive(error instanceof Error ? error.message : String(error)),
     };
   }
@@ -349,23 +353,23 @@ function tokenPricesFromCost(cost: any): RuntimeModelEconomics["tokenPrices"] {
   };
 }
 
-/** User-authored cost from the effective local model (e.g. a models.json override). Always fresh — it's the user's own current config, not stale provider data. */
-function buildUserOverrideEconomics(localModel?: any): Partial<RuntimeModelEconomics> | undefined {
-  if (!hasMeaningfulCost(localModel?.cost)) return undefined;
-  return {
-    billingUnit: "tokens",
-    stale: false,
-    tokenPrices: tokenPricesFromCost(localModel.cost),
-  };
-}
-
-function buildStaticEconomics(modelId: string): Partial<RuntimeModelEconomics> | undefined {
+/**
+ * The effective local model can come from bundled data, the models-catalog.json
+ * overlay, or a genuine models.json cost override — ModelRegistry itself already
+ * applies bundled < overlay < models.json precedence when building it, so its
+ * cost is at least as authoritative as this module's own separate hardcoded
+ * static reference list. It is NOT necessarily user-authored, though, so it
+ * stays in the same (stale, provider-static) precedence tier as staticModel —
+ * just preferred over it when present, rather than always losing to it.
+ */
+function buildStaticEconomics(modelId: string, localModel?: any): Partial<RuntimeModelEconomics> | undefined {
   const staticModel = findStaticCopilotModel(modelId);
-  if (!staticModel?.cost) return undefined;
+  const cost = hasMeaningfulCost(localModel?.cost) ? localModel.cost : staticModel?.cost;
+  if (!cost) return undefined;
   return {
     billingUnit: "tokens",
     stale: true,
-    tokenPrices: tokenPricesFromCost(staticModel.cost),
+    tokenPrices: tokenPricesFromCost(cost),
   };
 }
 
@@ -377,9 +381,12 @@ function resolveEconomicsForModel(
   return resolveModelEconomics({
     provider: "github-copilot",
     modelId: bareId,
-    userOverride: buildUserOverrideEconomics(localModel),
     liveEconomics: liveRecord ? buildLiveEconomics(liveRecord) : undefined,
-    staticEconomics: buildStaticEconomics(bareId),
+    staticEconomics: buildStaticEconomics(bareId, localModel),
+    // BUNDLED_COST_TABLE's bare-ID lookup isn't provider-qualified; without this,
+    // an unmatched github-copilot model can silently report another provider's
+    // price for the same bare ID instead of unknown pricing.
+    disableImplicitFallback: true,
   });
 }
 

@@ -798,11 +798,20 @@ export function resolveModelForComplexity(
   // STEP 3: Fallback — use first eligible model (cheapest in tier, or single eligible)
   const targetModelId = eligibleModels[0];
 
+  // getEligibleModels() honors an explicit tier_models pin unconditionally (its
+  // own step 1), so targetModelId can be that pin even without a capability
+  // profile — same "honor the user's explicit choice" precedent already used
+  // above for an unknown configuredPrimary. Only gate the automatic-detection
+  // path (STEP 2's own scoring skipped or reduced to one candidate) below.
+  const explicitTierPin = routingConfig.tier_models?.[requestedTier];
+  const isExplicitTierPin = !!explicitTierPin
+    && (targetModelId === explicitTierPin || bareModelId(targetModelId) === bareModelId(explicitTierPin));
+
   // This automatic path bypasses STEP 2's capability-confidence gate whenever
   // scoring is disabled, only one model is eligible, or unitType is missing.
   // Apply the same fail-closed gate here so an unknown-confidence model can't
   // slip through as an automatic pick — explicit/manual selection is unaffected.
-  if (getModelProfileConfidence(targetModelId, capabilityOverrides) === "unknown") {
+  if (!isExplicitTierPin && getModelProfileConfidence(targetModelId, capabilityOverrides) === "unknown") {
     return {
       modelId: configuredPrimary,
       fallbacks: phaseConfig.fallbacks,

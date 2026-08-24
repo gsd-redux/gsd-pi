@@ -93,6 +93,46 @@ test("resolveModelEconomics treats unknown costs as unknown rather than zero", (
   assert.equal(resolved.tokenPrices, undefined);
 });
 
+test("resolveModelEconomics applies the implicit bundled-fallback by bare ID by default", () => {
+  // "gpt-5.5" is bundled under the openai-codex entries; a github-copilot model
+  // reusing the same bare ID with no live/static data of its own would silently
+  // inherit that price unless the caller opts out via disableImplicitFallback.
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "github-copilot/gpt-5.5",
+  });
+
+  assert.equal(resolved.source, "bundled-fallback");
+  assert.equal(resolved.tokenPrices?.default.inputPer1k, 0.005);
+});
+
+test("resolveModelEconomics disableImplicitFallback reports unknown instead of a cross-provider bundled price", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "github-copilot/gpt-5.5",
+    disableImplicitFallback: true,
+  });
+
+  assert.equal(resolved.source, "unknown");
+  assert.equal(resolved.tokenPrices, undefined);
+});
+
+test("resolveModelEconomics disableImplicitFallback still honors an explicit fallbackEconomics candidate", () => {
+  const resolved = resolveModelEconomics({
+    provider: "github-copilot",
+    modelId: "gpt-5.5",
+    disableImplicitFallback: true,
+    fallbackEconomics: {
+      source: "bundled-fallback",
+      tokenPrices: { default: { inputPer1k: 0.0002, outputPer1k: 0.0012 } },
+      stale: true,
+    },
+  });
+
+  assert.equal(resolved.source, "bundled-fallback");
+  assert.equal(resolved.tokenPrices?.default.inputPer1k, 0.0002);
+});
+
 test("resolveModelEconomics applies per-field precedence and reports mixed provenance", () => {
   const resolved = resolveModelEconomics({
     provider: "github-copilot",

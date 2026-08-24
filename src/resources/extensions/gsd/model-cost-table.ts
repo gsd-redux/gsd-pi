@@ -86,6 +86,14 @@ export interface ResolveModelEconomicsInput {
   liveEconomics?: Partial<RuntimeModelEconomics>;
   staticEconomics?: Partial<RuntimeModelEconomics>;
   fallbackEconomics?: Partial<RuntimeModelEconomics>;
+  /**
+   * Skip the built-in bare-model-ID bundled-cost-table lookup. BUNDLED_COST_TABLE
+   * entries are not provider-qualified, so for callers whose own static/live data
+   * doesn't cover every model, this implicit fallback can silently apply a
+   * different provider's price to a same-named model. Callers that would rather
+   * report unknown pricing than risk a wrong cross-provider guess should set this.
+   */
+  disableImplicitFallback?: boolean;
 }
 
 function stripProviderPrefix(modelId: string): string {
@@ -260,7 +268,7 @@ function firstResolvedField<T>(
 export function resolveModelEconomics(input: ResolveModelEconomicsInput): RuntimeModelEconomics {
   const modelId = stripProviderPrefix(input.modelId || "unknown");
   const provider = input.provider || input.userOverride?.provider || input.liveEconomics?.provider || input.staticEconomics?.provider || input.fallbackEconomics?.provider || "unknown";
-  const implicitFallback = buildImplicitFallbackEconomics(modelId);
+  const implicitFallback = input.disableImplicitFallback ? undefined : buildImplicitFallbackEconomics(modelId);
   const fallbackEconomics = hasMeaningfulEconomics(input.fallbackEconomics)
     ? {
         ...implicitFallback,

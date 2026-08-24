@@ -1740,4 +1740,40 @@ describe("Phase J routing safety", () => {
     assert.ok(result.rejected?.some((candidate) => candidate.modelId === "brand-new-unreleased-model" && /manual selection only, not auto-routed/i.test(candidate.reason)));
     assert.ok(result.rejected?.some((candidate) => candidate.modelId === "gpt-4o" && /capability|confidence|cost/i.test(candidate.reason)));
   });
+
+  test("resolveModelForComplexity: STEP 3 automatic single-candidate fallback fails closed for an unknown-confidence model", () => {
+    // capability_routing: false skips STEP 2 entirely, landing directly on
+    // STEP 3's automatic single-eligible-model path with no capability profile.
+    const config = { ...defaultRoutingConfig(), enabled: true, capability_routing: false };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-model-solo"],
+      "execute-task",
+    );
+
+    assert.equal(result.modelId, "claude-opus-4-6", "must fail closed to configuredPrimary, not auto-select the unknown-confidence model");
+    assert.match(result.reason, /fail closed/i);
+    assert.equal(result.selectionMethod, "tier-only");
+  });
+
+  test("resolveModelForComplexity: STEP 3 honors an explicit tier_models pin even without a capability profile", () => {
+    const config: DynamicRoutingConfig = {
+      ...defaultRoutingConfig(),
+      enabled: true,
+      capability_routing: false,
+      tier_models: { standard: "brand-new-unreleased-model-pinned" },
+    };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-model-pinned"],
+      "execute-task",
+    );
+
+    assert.equal(result.modelId, "brand-new-unreleased-model-pinned", "an explicit tier_models pin must be honored even without a capability profile");
+    assert.equal(result.selectionMethod, "tier-only");
+  });
 });
