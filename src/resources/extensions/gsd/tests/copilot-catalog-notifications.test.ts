@@ -17,12 +17,14 @@ import { _resetCopilotModelsSessionStateForTests } from "../commands/handlers/co
 interface FakeModel {
   id: string;
   provider: string;
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
 }
 
 function createFakeCtx(models: FakeModel[]): { ctx: any; notifications: Array<{ message: string; level: string }> } {
   const notifications: Array<{ message: string; level: string }> = [];
   const ctx = {
     modelRegistry: {
+      getAll: () => models.map((model) => ({ ...model, cost: model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
       getAvailable: () => models,
       getApiKey: async () => undefined,
     },
@@ -36,9 +38,9 @@ function createFakeCtx(models: FakeModel[]): { ctx: any; notifications: Array<{ 
 }
 
 const SAME_TIER_SESSION: FakeModel[] = [
-  { id: "claude-sonnet-5", provider: "github-copilot" },
-  { id: "gpt-4.1", provider: "github-copilot" },
-  { id: "mai-code-1.1-flash", provider: "github-copilot" },
+  { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+  { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+  { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
 ];
 
 // ─── compareCapabilityScores (pure) ─────────────────────────────────────────
@@ -69,7 +71,7 @@ test("compareCapabilityScores: equal-or-lower when either profile is missing (ne
 test("maybeNotifyCheaperAlternative: no qualifying alternative sends no notification", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx([{ id: "claude-sonnet-5", provider: "github-copilot" }]);
+  const { ctx, notifications } = createFakeCtx([{ id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } }]);
 
   const sent = maybeNotifyCheaperAlternative({
     ctx,
