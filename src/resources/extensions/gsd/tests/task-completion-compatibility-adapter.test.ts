@@ -36,6 +36,7 @@ import {
   readLatestTaskAttempt,
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
+import { reopenTask } from "../task-lifecycle-domain-operation.js";
 import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
 import { resolveTaskCompletionAuthority } from "../task-completion-compatibility-adapter.js";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
@@ -716,6 +717,70 @@ test("#1771: a stale SUMMARY artifact row with no file on a pending task does no
     await taskSummaryDivergence(basePath),
     { doctorDivergence: false, reconciliationDivergence: false },
     "dead artifact bookkeeping on a pending task must not wedge drift detection",
+  );
+});
+
+test("#1983: a reopened Task SUMMARY with no Attempt lineage does not wedge", async () => {
+  const { basePath } = createFixture();
+  const summaryPath = join(basePath, ".gsd", "phases", "01-test", "T02-SUMMARY.md");
+  db().prepare(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at, sequence
+    ) VALUES (
+      'M001', 'S01', 'T02', 'Failed completion', 'completed',
+      '2026-07-12T00:01:00.000Z', 2
+    )
+  `).run();
+  insertArtifact({
+    path: summaryPath,
+    artifact_type: "SUMMARY",
+    milestone_id: "M001",
+    slice_id: "S01",
+    task_id: "T02",
+    full_content: "# T02 Summary\n",
+  });
+
+  reopenTask({
+    invocation: invocation("task-completion/reopen-without-attempt"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T02" },
+    reason: "completion failed before it could mint an Attempt",
+  });
+
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle ON lifecycle.lifecycle_id = attempt.lifecycle_id
+    WHERE lifecycle.task_id = 'T02'
+  `).count), 0, "reopen must not fabricate an Attempt");
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath, "T02"),
+    { doctorDivergence: false, reconciliationDivergence: false },
+    "the current task.reopened event proves the missing-file row is dead bookkeeping",
+  );
+});
+
+test("#1983: an unreopened pending Task SUMMARY with no Attempt lineage stays fail-closed", async () => {
+  const { basePath } = createFixture();
+  const summaryPath = join(basePath, ".gsd", "phases", "01-test", "T02-SUMMARY.md");
+  db().prepare(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, sequence
+    ) VALUES (
+      'M001', 'S01', 'T02', 'Unproven summary', 'pending', 2
+    )
+  `).run();
+  insertArtifact({
+    path: summaryPath,
+    artifact_type: "SUMMARY",
+    milestone_id: "M001",
+    slice_id: "S01",
+    task_id: "T02",
+    full_content: "# T02 Summary\n",
+  });
+
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath, "T02"),
+    { doctorDivergence: true, reconciliationDivergence: true },
   );
 });
 

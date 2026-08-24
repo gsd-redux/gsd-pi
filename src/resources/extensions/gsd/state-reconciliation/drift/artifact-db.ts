@@ -141,28 +141,48 @@ function stagedTaskSummaryExistsOnDisk(
 }
 
 /**
- * Whether the task ever ran: a SUMMARY row on a task that was previously
- * executed (and is now pending again) is dead bookkeeping (#1771), while a
- * row on a task that never ran is an unproven failure-path write and must
- * stay a blocker (ADR-017/#414).
+ * Whether a missing-file SUMMARY row has authoritative history proving that
+ * it is dead bookkeeping: either the task ran before returning to pending
+ * (#1771), or its current lifecycle head is an explicit reopen after a
+ * completion failed before minting an Attempt (#1983).
  */
-function taskHasAttemptHistory(milestoneId: string, sliceId: string, taskId: string): boolean {
+function taskHasExecutionOrReopenHistory(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): boolean {
   if (!isDbAvailable()) return false;
   const row = _getAdapter()!.prepare(`
     SELECT 1 AS present
     FROM workflow_item_lifecycles lifecycle
-    JOIN workflow_execution_attempts attempt
-      ON attempt.lifecycle_id = lifecycle.lifecycle_id
-     AND attempt.project_id = lifecycle.project_id
     WHERE lifecycle.item_kind = 'task'
       AND lifecycle.milestone_id = :milestone_id
       AND lifecycle.slice_id = :slice_id
       AND lifecycle.task_id = :task_id
+      AND (
+        EXISTS (
+          SELECT 1 FROM workflow_execution_attempts attempt
+          WHERE attempt.lifecycle_id = lifecycle.lifecycle_id
+            AND attempt.project_id = lifecycle.project_id
+        )
+        OR (
+          lifecycle.lifecycle_status = 'ready'
+          AND EXISTS (
+            SELECT 1 FROM workflow_domain_events reopened
+            WHERE reopened.project_id = lifecycle.project_id
+              AND reopened.operation_id = lifecycle.last_operation_id
+              AND reopened.event_type = 'task.reopened'
+              AND reopened.entity_type = 'task'
+              AND reopened.entity_id = :entity_id
+          )
+        )
+      )
     LIMIT 1
   `).get({
     ":milestone_id": milestoneId,
     ":slice_id": sliceId,
     ":task_id": taskId,
+    ":entity_id": `${milestoneId}/${sliceId}/${taskId}`,
   });
   return row !== undefined;
 }
@@ -320,12 +340,12 @@ function detectArtifactDbStatusDriftForMilestone(
         continue;
       }
       if (isClosedStatus(task.status)) continue;
-      // (#1771) A DB row whose file never existed, on a task that ran before
-      // and is back to pending, is dead bookkeeping — ignore it instead of
-      // wedging the project. A row on a task that never ran stays a blocker.
+      // A missing-file row on a task that ran before (#1771), or whose current
+      // lifecycle head is an explicit reopen (#1983), is dead bookkeeping.
+      // An unproven row stays a blocker (ADR-017/#414).
       if (
         task.status === "pending" &&
-        taskHasAttemptHistory(milestoneId, slice.id, task.id) &&
+        taskHasExecutionOrReopenHistory(milestoneId, slice.id, task.id) &&
         !stagedTaskSummaryExistsOnDisk(basePath, milestoneId, slice.id, task.id, row.path)
       ) {
         continue;
