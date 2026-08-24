@@ -1,29 +1,31 @@
 // Project/App: gsd-pi
 // File Purpose: Verifies model routing decisions and legacy provider-default telemetry.
-import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import test, { describe } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
-import {
-  resolveModelForComplexity,
-  escalateTier,
-  defaultRoutingConfig,
-  resolveModelForTier,
-  scoreModel,
-  computeTaskRequirements,
-  scoreEligibleModels,
-  getEligibleModels,
-  canonicalizeModelId,
-  MODEL_CAPABILITY_PROFILES,
-  MODEL_CAPABILITY_TIER,
-  getModelProfileConfidence,
-} from "../model-router.js";
-import type { DynamicRoutingConfig, RoutingDecision, ModelCapabilities } from "../model-router.js";
+import type { Api, Model } from "@gsd/pi-ai";
+
 import type { ClassificationResult } from "../complexity-classifier.js";
 import { getLegacyTelemetry, resetLegacyTelemetry } from "../legacy-telemetry.js";
+import {
+  canonicalizeModelId,
+  computeTaskRequirements,
+  defaultRoutingConfig,
+  escalateTier,
+  getEligibleModels,
+  getModelProfileConfidence,
+  MODEL_CAPABILITY_PROFILES,
+  MODEL_CAPABILITY_TIER,
+  resolveModelForComplexity,
+  resolveModelForTier,
+  scoreEligibleModels,
+  scoreModel,
+} from "../model-router.js";
+import type { DynamicRoutingConfig, ModelCapabilities, RoutingDecision } from "../model-router.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -571,7 +573,7 @@ test("resolveProfileDefaults: balanced with only OpenAI models returns OpenAI ID
   const defaults = resolveProfileDefaults("balanced", ["gpt-4o", "gpt-4o-mini"]);
   assert.ok(defaults.models, "balanced should populate models");
   // All slots must resolve to an available OpenAI ID — not a claude- canonical.
-  for (const [phase, modelId] of Object.entries(defaults.models!)) {
+  for (const [phase, modelId] of Object.entries(defaults.models)) {
     assert.ok(typeof modelId === "string" && modelId.length > 0, `${phase} should resolve to a model ID`);
     assert.ok(
       !String(modelId).startsWith("claude-"),
@@ -1074,7 +1076,7 @@ test("#2885: heavy openai-codex model downgrades to light for light task", () =>
 // ─── scoreModel ──────────────────────────────────────────────────────────────
 
 describe("scoreModel", () => {
-  const sonnetProfile: ModelCapabilities = MODEL_CAPABILITY_PROFILES["claude-sonnet-4-6"]!;
+  const sonnetProfile: ModelCapabilities = MODEL_CAPABILITY_PROFILES["claude-sonnet-4-6"];
 
   test("produces correct weighted average for two dimensions (coding:0.9, instruction:0.7)", () => {
     // (0.9*85 + 0.7*85) / (0.9+0.7) = (76.5+59.5)/1.6 = 136/1.6 = 85.0
@@ -1089,7 +1091,7 @@ describe("scoreModel", () => {
 
   test("returns correct score for single dimension coding:1.0", () => {
     // coding=90 for claude-opus-4-6
-    const opusProfile = MODEL_CAPABILITY_PROFILES["claude-opus-4-6"]!;
+    const opusProfile = MODEL_CAPABILITY_PROFILES["claude-opus-4-6"];
     const score = scoreModel(opusProfile, { coding: 1.0 });
     assert.equal(score, 95);
   });
@@ -1305,7 +1307,7 @@ describe("capability-aware routing integration", () => {
     );
     assert.equal(result.selectionMethod, "capability-scored", "should use capability scoring when enabled with multiple eligible models");
     assert.ok(result.capabilityScores !== undefined, "capabilityScores should be populated");
-    assert.ok(Object.keys(result.capabilityScores!).length > 1, "should have scores for multiple models");
+    assert.ok(Object.keys(result.capabilityScores ?? {}).length > 1, "should have scores for multiple models");
     assert.equal(result.wasDowngraded, true, "should be downgraded from opus");
   });
 
@@ -1349,7 +1351,6 @@ describe("capability-aware routing integration", () => {
   // 4. Unknown model with no profile gets uniform 50s and competes
   test("unknown model with no profile gets uniform score of 50 and can compete", () => {
     const unknownModel = "unknown-future-model-xyz";
-    const config: DynamicRoutingConfig = { ...defaultRoutingConfig(), enabled: true, capability_routing: true };
     // Add unknown model to available list at standard tier (unknown → standard per D-15)
     // scoring should still work with score=50 for the unknown model
     const requirements = { coding: 0.9, instruction: 0.7, speed: 0.3 };
@@ -1357,7 +1358,7 @@ describe("capability-aware routing integration", () => {
     const unknownEntry = scored.find(s => s.modelId === unknownModel);
     assert.ok(unknownEntry !== undefined, "unknown model should be in scored results");
     // Unknown model gets uniform 50s: (0.9*50 + 0.7*50 + 0.3*50) / (0.9+0.7+0.3) ≈ 50
-    assert.ok(Math.abs(unknownEntry!.score - 50) < 0.01, `expected score ~50, got ${unknownEntry!.score}`);
+    assert.ok(Math.abs(unknownEntry.score - 50) < 0.01, `expected score ~50, got ${unknownEntry.score}`);
   });
 
   // 5. Capability overrides change scoring outcome
@@ -1704,7 +1705,7 @@ describe("Phase J routing safety", () => {
           provider: "github-copilot",
           cost: { input: 0.5, output: 2.5, cacheRead: 0, cacheWrite: 0 },
         },
-      ] as any,
+      ] as unknown as Array<Model<Api>>,
     );
 
     assert.equal(results[0].modelId, "github-copilot/gpt-5.5");

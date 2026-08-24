@@ -2,12 +2,13 @@
 // GitHub Copilot models into the runtime `models-catalog.json` overlay.
 // Mirrors the fixture/harness style of `src/tests/update-models-cmd.test.ts`.
 
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 
+import { type CopilotModelRecord, sanitizeGitHubCopilotModels } from "../copilot-model-catalog.js";
 import {
   mergeIntoModelsCatalogOverlay,
   readModelsCatalogOverlay,
@@ -15,10 +16,9 @@ import {
   synthesizeCopilotOverlayEntry,
   writeModelsCatalogOverlay,
 } from "../copilot-overlay-writer.js";
-import { sanitizeGitHubCopilotModels, type CopilotModelRecord } from "../copilot-model-catalog.js";
 
 function completeRecord(id: string, name = id, overrides: Record<string, unknown> = {}): CopilotModelRecord {
-  return sanitizeGitHubCopilotModels({
+  const [record] = sanitizeGitHubCopilotModels({
     data: [
       {
         id,
@@ -31,11 +31,13 @@ function completeRecord(id: string, name = id, overrides: Record<string, unknown
         ...overrides,
       },
     ],
-  })[0]!;
+  });
+  if (!record) throw new Error("sanitizeGitHubCopilotModels returned no records for completeRecord fixture");
+  return record;
 }
 
 function incompleteRecord(id: string, name = id, overrides: Record<string, unknown> = {}): CopilotModelRecord {
-  return sanitizeGitHubCopilotModels({
+  const [record] = sanitizeGitHubCopilotModels({
     data: [
       {
         id,
@@ -44,7 +46,9 @@ function incompleteRecord(id: string, name = id, overrides: Record<string, unkno
         ...overrides,
       },
     ],
-  })[0]!;
+  });
+  if (!record) throw new Error("sanitizeGitHubCopilotModels returned no records for incompleteRecord fixture");
+  return record;
 }
 
 test("synthesizeCopilotOverlayEntry produces a schema-valid entry from a complete live/static record", () => {
@@ -85,7 +89,7 @@ test("mergeIntoModelsCatalogOverlay never touches unrelated providers", () => {
     source: "https://example.com/catalog.json",
     models: {
       anthropic: {
-        "claude-opus-4-6": synthesizeCopilotOverlayEntry(completeRecord("claude-opus-4-6")) as any,
+        "claude-opus-4-6": synthesizeCopilotOverlayEntry(completeRecord("claude-opus-4-6")),
       },
       "github-copilot": {
         "existing-model": synthesizeCopilotOverlayEntry(completeRecord("existing-model")),

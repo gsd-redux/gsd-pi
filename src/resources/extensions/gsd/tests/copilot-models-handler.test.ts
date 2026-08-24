@@ -4,19 +4,21 @@
 // notifications — as opposed to the pure-function fixtures in
 // copilot-model-catalog.test.ts.
 
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 
+import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
+
+import { getGsdArgumentCompletions } from "../commands/catalog.js";
 import {
   _resetCopilotModelsSessionStateForTests,
   handleCopilotModels,
 } from "../commands/handlers/copilot-models.js";
-import { readModelsCatalogOverlay } from "../copilot-overlay-writer.js";
-import { getGsdArgumentCompletions } from "../commands/catalog.js";
 import { showHelp } from "../commands/handlers/core.js";
+import { readModelsCatalogOverlay } from "../copilot-overlay-writer.js";
 
 interface FakeModel {
   id: string;
@@ -30,7 +32,7 @@ function createFakeCtx(options: {
   /** Simulate auth resolved outside authStorage (e.g. an env var or a models.json provider key). */
   credentialOutsideAuthStorage?: boolean;
   modelsJsonPath?: string;
-}): { ctx: any; notifications: Array<{ message: string; level: string }> } {
+}): { ctx: ExtensionCommandContext; notifications: Array<{ message: string; level: string }> } {
   const notifications: Array<{ message: string; level: string }> = [];
   const models = options.models ?? [];
   const ctx = {
@@ -54,7 +56,7 @@ function createFakeCtx(options: {
       },
     },
   };
-  return { ctx, notifications };
+  return { ctx: ctx as unknown as ExtensionCommandContext, notifications };
 }
 
 function jsonResponse(data: Array<Record<string, unknown>>) {
@@ -1043,7 +1045,7 @@ test("showHelp: full help lists the expanded copilot-models subcommands", () => 
     },
   };
 
-  showHelp(mockCtx as any, "full");
+  showHelp(mockCtx as unknown as ExtensionCommandContext, "full");
 
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models sync")));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models changes")));

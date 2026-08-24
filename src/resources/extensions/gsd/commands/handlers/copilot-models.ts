@@ -5,24 +5,25 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 
-import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import type { Api, Model } from "@gsd/pi-ai";
 import { getGitHubCopilotBaseUrl } from "@gsd/pi-ai/oauth";
+import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import {
   CopilotCatalogFetchError,
+  type CopilotModelRecord,
+  type CopilotModelSnapshot,
   dedupeShellNotifications,
   diffCatalogSnapshots,
   fetchGitHubCopilotModels,
   findStaticCopilotModel,
   isSuspiciousCatalogShrink,
-  type CopilotModelRecord,
-  type CopilotModelSnapshot,
 } from "../../copilot-model-catalog.js";
 import {
+  type CatalogRegistrationCandidate,
   computeCatalogRegistrationCandidates,
   registerCopilotModelsInOverlay,
   resolveGsdModelsCatalogPath,
-  type CatalogRegistrationCandidate,
 } from "../../copilot-overlay-writer.js";
 import { resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
 import { getModelProfileConfidence, MODEL_CAPABILITY_TIER } from "../../model-router.js";
@@ -137,7 +138,7 @@ function hashAccountKey(baseUrl: string, token: string): string {
  * per-provider placeholder) keeps different credentials from colliding onto
  * the same cached session state if the configured key changes mid-process.
  */
-async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotModel: any): Promise<string> {
+async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotModel: Model<Api>): Promise<string> {
   const cred = ctx.modelRegistry.authStorage.get(copilotModel.provider) as
     | { type: "oauth"; refresh: string; enterpriseUrl?: string }
     | { type: "api_key"; key: string }
@@ -185,21 +186,6 @@ function getNotificationState(accountKey: string): Set<string> {
   return created;
 }
 
-function activeSnapshot(): CopilotModelSnapshot | null {
-  if (!lastActiveAccountKey) return null;
-  return sessionStates.get(lastActiveAccountKey)?.lastKnownGoodSnapshot ?? null;
-}
-
-function activeDiff(): CopilotCatalogDiffState | null {
-  if (!lastActiveAccountKey) return null;
-  return sessionStates.get(lastActiveAccountKey)?.lastAcceptedDiff ?? null;
-}
-
-function activeRefresh(): CopilotRefreshState | null {
-  if (!lastActiveAccountKey) return null;
-  return sessionStates.get(lastActiveAccountKey)?.lastRefresh ?? null;
-}
-
 /**
  * Resolve the CURRENT account's cached session state without resolving or
  * refreshing the bearer token — `changes`, `pricing`, `promos`, `doctor`, and
@@ -227,8 +213,8 @@ async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<
   };
 }
 
-function localCopilotModels(ctx: ExtensionCommandContext): any[] {
-  const getAll = (ctx.modelRegistry as { getAll?: () => any[] }).getAll;
+function localCopilotModels(ctx: ExtensionCommandContext): Model<Api>[] {
+  const getAll = (ctx.modelRegistry as { getAll?: () => Model<Api>[] }).getAll;
   const all = typeof getAll === "function" ? getAll() : ctx.modelRegistry.getAvailable();
   return all.filter((model) => model.provider === "github-copilot");
 }
@@ -236,7 +222,7 @@ function localCopilotModels(ctx: ExtensionCommandContext): any[] {
 async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
   configured: boolean;
   tokenAvailable: boolean;
-  copilotModel?: any;
+  copilotModel?: Model<Api>;
   token?: string;
   baseUrl?: string;
   accountKey?: string;
@@ -332,7 +318,7 @@ function buildLiveEconomics(record: CopilotModelRecord): Partial<RuntimeModelEco
   };
 }
 
-function hasMeaningfulCost(cost: any): boolean {
+function hasMeaningfulCost(cost: Model<Api>["cost"] | undefined): boolean {
   return !!cost && (
     cost.input > 0
     || cost.output > 0
@@ -342,7 +328,7 @@ function hasMeaningfulCost(cost: any): boolean {
   );
 }
 
-function tokenPricesFromCost(cost: any): RuntimeModelEconomics["tokenPrices"] {
+function tokenPricesFromCost(cost: Model<Api>["cost"]): RuntimeModelEconomics["tokenPrices"] {
   return {
     default: {
       inputPer1k: cost.input / 1000,
@@ -352,13 +338,17 @@ function tokenPricesFromCost(cost: any): RuntimeModelEconomics["tokenPrices"] {
     },
     ...(cost.tiers?.length
       ? {
-          longContextTiers: cost.tiers.map((tier: any) => ({
-            inputTokensAbove: tier.inputTokensAbove,
-            ...(typeof tier.input === "number" ? { inputPer1k: tier.input / 1000 } : {}),
-            ...(typeof tier.output === "number" ? { outputPer1k: tier.output / 1000 } : {}),
-            ...(typeof tier.cacheRead === "number" ? { cachedInputPer1k: tier.cacheRead / 1000 } : {}),
-            ...(typeof tier.cacheWrite === "number" ? { cachedOutputPer1k: tier.cacheWrite / 1000 } : {}),
-          })),
+          longContextTiers: cost.tiers
+            .filter((tier): tier is typeof tier & { input: number; output: number } =>
+              typeof tier.input === "number" && typeof tier.output === "number",
+            )
+            .map((tier) => ({
+              inputTokensAbove: tier.inputTokensAbove,
+              inputPer1k: tier.input / 1000,
+              outputPer1k: tier.output / 1000,
+              ...(typeof tier.cacheRead === "number" ? { cachedInputPer1k: tier.cacheRead / 1000 } : {}),
+              ...(typeof tier.cacheWrite === "number" ? { cachedOutputPer1k: tier.cacheWrite / 1000 } : {}),
+            })),
         }
       : {}),
   };
@@ -373,9 +363,9 @@ function tokenPricesFromCost(cost: any): RuntimeModelEconomics["tokenPrices"] {
  * stays in the same (stale, provider-static) precedence tier as staticModel —
  * just preferred over it when present, rather than always losing to it.
  */
-function buildStaticEconomics(modelId: string, localModel?: any): Partial<RuntimeModelEconomics> | undefined {
+function buildStaticEconomics(modelId: string, localModel?: Model<Api>): Partial<RuntimeModelEconomics> | undefined {
   const staticModel = findStaticCopilotModel(modelId);
-  const cost = hasMeaningfulCost(localModel?.cost) ? localModel.cost : staticModel?.cost;
+  const cost = hasMeaningfulCost(localModel?.cost) ? localModel?.cost : staticModel?.cost;
   if (!cost) return undefined;
   return {
     billingUnit: "tokens",
@@ -411,7 +401,7 @@ function readGithubCopilotModelsJsonCost(
     if (!providerConfig || typeof providerConfig !== "object") return undefined;
 
     const modelDef = Array.isArray(providerConfig.models)
-      ? providerConfig.models.find((model: any) => model?.id === modelId)
+      ? providerConfig.models.find((model: { id?: unknown }) => model?.id === modelId)
       : undefined;
     const rawCost = modelDef?.cost ?? providerConfig.modelOverrides?.[modelId]?.cost;
     if (!rawCost || typeof rawCost.input !== "number" || typeof rawCost.output !== "number") return undefined;
@@ -429,7 +419,7 @@ function readGithubCopilotModelsJsonCost(
 
 function buildUserOverrideEconomics(ctx: ExtensionCommandContext, modelId: string): Partial<RuntimeModelEconomics> | undefined {
   const cost = readGithubCopilotModelsJsonCost(ctx, modelId);
-  if (!hasMeaningfulCost(cost)) return undefined;
+  if (!cost || !hasMeaningfulCost(cost)) return undefined;
   return {
     billingUnit: "tokens",
     stale: false,
@@ -441,7 +431,7 @@ function resolveEconomicsForModel(
   ctx: ExtensionCommandContext,
   bareId: string,
   liveRecord: CopilotModelRecord | undefined,
-  localModel: any | undefined,
+  localModel: Model<Api> | undefined,
 ): RuntimeModelEconomics {
   return resolveModelEconomics({
     provider: "github-copilot",
@@ -568,7 +558,7 @@ function findLiveRecord(snapshot: CopilotModelSnapshot | null, bareId: string): 
   return snapshot?.models.find((model) => normalizeBareModelId(model.id) === bareId);
 }
 
-function findLocalModel(ctx: ExtensionCommandContext, bareId: string): any | undefined {
+function findLocalModel(ctx: ExtensionCommandContext, bareId: string): Model<Api> | undefined {
   return localCopilotModels(ctx).find((model) => normalizeBareModelId(model.id) === bareId);
 }
 
@@ -636,7 +626,7 @@ function buildWhyExplanation(
     `- preview: ${liveRecord?.availability.preview === true ? "yes" : liveRecord?.availability.preview === false ? "no" : "unknown"}`,
     `- runtime API: ${liveRecord?.execution.api ?? localModel?.api ?? "unknown"}`,
     `- supported endpoints: ${(liveRecord?.execution.supportedEndpoints ?? []).join(", ") || "unknown"}`,
-    `- tool calls: ${(liveRecord?.execution.toolCalls ?? localModel?.toolCalls ?? true) ? "yes" : "no"}`,
+    `- tool calls: ${(liveRecord?.execution.toolCalls ?? true) ? "yes" : "no"}`,
     `- context/output: ${liveRecord?.execution.contextWindow ?? localModel?.contextWindow ?? "unknown"} / ${liveRecord?.execution.maxTokens ?? localModel?.maxTokens ?? "unknown"}`,
     `- economics: ${economicsSummary(economics)}`,
     `- source: ${economicsSourceSummary(economics)}`,
@@ -650,7 +640,7 @@ function buildWhyExplanation(
   ].join("\n");
 }
 
-function formatPricingRecord(ctx: ExtensionCommandContext, record: CopilotModelRecord | undefined, localModel: any | undefined, bareId: string): string[] {
+function formatPricingRecord(ctx: ExtensionCommandContext, record: CopilotModelRecord | undefined, localModel: Model<Api> | undefined, bareId: string): string[] {
   const economics = resolveEconomicsForModel(ctx, bareId, record, localModel);
   const lines = [
     `GitHub Copilot pricing: github-copilot/${bareId}`,
@@ -869,7 +859,7 @@ export async function handleCopilotModels(
 
   if (command === "why") {
     const parsed = parseProviderModelArgument("why", args, true);
-    if (!parsed.valid) {
+    if (!parsed.valid || !parsed.target) {
       ctx.ui.notify(parsed.error ?? "Usage: /gsd copilot-models why <model>", "warning");
       return;
     }
@@ -877,7 +867,7 @@ export async function handleCopilotModels(
     // completed a sync — otherwise `why` can report a different account's
     // availability/pricing/policy after switching accounts without re-syncing.
     const current = await resolveCurrentAccountView(ctx);
-    ctx.ui.notify(buildWhyExplanation(parsed.target!, ctx, current.state?.lastKnownGoodSnapshot ?? null), "info");
+    ctx.ui.notify(buildWhyExplanation(parsed.target, ctx, current.state?.lastKnownGoodSnapshot ?? null), "info");
     return;
   }
 

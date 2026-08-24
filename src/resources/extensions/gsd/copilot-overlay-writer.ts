@@ -22,7 +22,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { isModelsCatalogOverlay, type Api, type Model, type ModelsCatalogOverlay } from "@gsd/pi-ai";
+import { type Api, isModelsCatalogOverlay, type Model, type ModelsCatalogOverlay } from "@gsd/pi-ai";
+import { findStaticCopilotModel } from "./copilot-model-catalog.js";
+import type { CopilotModelRecord } from "./copilot-model-catalog.js";
 
 export {
   applyLastKnownGood,
@@ -34,9 +36,6 @@ export {
   sanitizeGitHubCopilotModels,
 } from "./copilot-model-catalog.js";
 export type { CopilotModelRecord, CopilotModelSnapshot } from "./copilot-model-catalog.js";
-
-import { findStaticCopilotModel } from "./copilot-model-catalog.js";
-import type { CopilotModelRecord } from "./copilot-model-catalog.js";
 
 // Inline agentDir computation (mirrors `src/app-paths.ts`'s `agentDir`) —
 // importing from `src/` pulls files outside `src/resources` and breaks the
@@ -79,8 +78,6 @@ function apiSpecificCompat(record: CopilotModelRecord): Model<Api>["compat"] | u
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,
       };
-    case "anthropic-messages":
-    case "openai-responses":
     default:
       return undefined;
   }
@@ -258,7 +255,7 @@ export function writeModelsCatalogOverlay(path: string, overlay: ModelsCatalogOv
   const tmpPath = `${path}.tmp-${process.pid}`;
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(tmpPath, JSON.stringify(overlay, null, 2) + "\n");
+    writeFileSync(tmpPath, `${JSON.stringify(overlay, null, 2)}\n`);
     renameSync(tmpPath, path);
   } catch (err) {
     rmSync(tmpPath, { force: true });

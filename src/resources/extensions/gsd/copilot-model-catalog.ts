@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { getModels, getSupportedThinkingLevels, type Api, type Model } from "@gsd/pi-ai";
+import { type Api, getModels, getSupportedThinkingLevels, type Model } from "@gsd/pi-ai";
 
 export type GitHubCopilotProvider = "github-copilot" | "openai" | "anthropic" | "google" | "unknown";
 export type CopilotFieldSource = "provider-live" | "provider-static" | "bundled-fallback" | "user" | "unknown";

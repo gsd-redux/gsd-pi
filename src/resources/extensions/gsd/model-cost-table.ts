@@ -460,7 +460,7 @@ export const BUNDLED_COST_TABLE: ModelCostEntry[] = [
  * Lookup cost for a model ID. Returns undefined if not found.
  */
 export function lookupModelCost(modelId: string): ModelCostEntry | undefined {
-  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  const bareId = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
   return BUNDLED_COST_TABLE.find(e => e.id === bareId)
     ?? BUNDLED_COST_TABLE.find(e =>
       bareId.startsWith(`${e.id}-`) ||
