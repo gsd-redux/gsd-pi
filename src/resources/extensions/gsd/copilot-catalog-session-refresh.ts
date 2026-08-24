@@ -171,6 +171,11 @@ export function classifyRemoteCopilotModel(
 			stale: false,
 			billingUnit: "tokens",
 		},
+		// BUNDLED_COST_TABLE entries are keyed by bare model ID and are not
+		// provider-qualified — without this, a same-named model priced by a
+		// different provider (e.g. OpenAI's "gpt-5.4") could silently be
+		// reported as this Copilot model's known price. See model-cost-table.ts.
+		disableImplicitFallback: true,
 	});
 	const fallbackPrices = economics.tokenPrices?.default;
 	const hasKnownPricing =
