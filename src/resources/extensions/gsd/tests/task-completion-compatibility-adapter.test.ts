@@ -727,7 +727,7 @@ test("#1983: a reopened Task SUMMARY with no Attempt lineage does not wedge", as
     INSERT INTO tasks (
       milestone_id, slice_id, id, title, status, completed_at, sequence
     ) VALUES (
-      'M001', 'S01', 'T02', 'Failed completion', 'completed',
+      'M001', 'S01', 'T02', 'Failed completion', 'complete',
       '2026-07-12T00:01:00.000Z', 2
     )
   `).run();
@@ -780,7 +780,8 @@ test("#1983: an unreopened pending Task SUMMARY with no Attempt lineage stays fa
 
   assert.deepEqual(
     await taskSummaryDivergence(basePath, "T02"),
-    { doctorDivergence: true, reconciliationDivergence: true },
+    { doctorDivergence: false, reconciliationDivergence: true },
+    "doctor ignores absent artifact files, while reconciliation keeps unproven rows fail-closed",
   );
 });
 
