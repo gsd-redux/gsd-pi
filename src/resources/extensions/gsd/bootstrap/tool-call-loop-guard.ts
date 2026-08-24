@@ -20,10 +20,10 @@
  * varied surfaces (bash → `node -e` → CLI), each with a different
  * signature, so the identical-args streak never trips, while allowing
  * tool-heavy turns that are making progress. Progress means a successful file
- * mutation (edit/write) or a successful shell/exec call (bg_shell,
- * gsd_uat_exec, …) — so a local model running a legitimate iterative
- * debugging loop (restart server, npm install, curl an endpoint) is not
- * blocked as a false loop (#1206). Whichever guard trips first blocks.
+ * mutation (edit/write), durable workflow mutation, or shell/exec call
+ * (bg_shell, gsd_uat_exec, …) — so legitimate persistence and iterative
+ * debugging loops are not blocked as false loops (#1206, #1985). Whichever
+ * guard trips first blocks.
  *
  * Thresholds, exempt tools, and enable flags are user-tunable (#1198) via the
  * `tool_call_loop_guard` key in `.gsd/PREFERENCES.md` and `GSD_TOOL_LOOP_*`
@@ -34,7 +34,8 @@
 import { createHash } from "node:crypto";
 import { INHERENTLY_REPEATABLE_TOOL_SET } from "./core-session-tools.js";
 import { hasBrowserContractPrefix } from "../../shared/browser-contract.js";
-import { canonicalToolName } from "../engine-hook-contract.js";
+import { canonicalToolName, canonicalWorkflowToolName } from "../engine-hook-contract.js";
+import { WORKFLOW_TOOL_CONTRACTS } from "../workflow-tool-surface.js";
 
 /** Built-in defaults. Preserved when preferences/env do not override them. */
 const DEFAULT_MAX_CONSECUTIVE_IDENTICAL_CALLS = 4;
@@ -47,6 +48,13 @@ const STRICT_LOOP_TOOLS = new Set(["ask_user_questions"]);
 const MAX_CONSECUTIVE_STRICT = 1;
 
 const STATE_MUTATING_TOOL_SET = new Set(["edit", "write", "multi_edit", "notebook_edit"]);
+
+/** Canonical DB-backed workflow tools whose successful results are durable progress. */
+const DURABLE_WORKFLOW_MUTATING_TOOL_SET = new Set<string>(
+  WORKFLOW_TOOL_CONTRACTS
+    .filter((tool) => tool.writePolicy === "write")
+    .map((tool) => tool.canonicalName),
+);
 
 /**
  * Successful shell/exec calls are state progression too (#1206), not just file
@@ -256,7 +264,7 @@ function hashToolCall(toolName: string, args: Record<string, unknown>): string {
  *  1. Identical-signature streak (config.maxConsecutiveIdentical, strict for
  *     ask_user_questions).
  *  2. Per-tool-name cap (config.perToolDefaultCap / config.perToolRepeatableCap),
- *     independent of args, reset after file-mutation progress — catches
+ *     independent of args, reset after successful state progress — catches
  *     improvisation loops (#783).
  *
  * Both guards, their thresholds, and the per-tool exempt set are user-tunable
@@ -346,10 +354,10 @@ export function checkToolCallLoop(
 
 /**
  * Record successful state progress so Guard 2 can decay on the next count.
- * File mutations (edit/write/…) and successful shell/exec calls (bash,
- * bg_shell, gsd_uat_exec, …) both count as progress (#1092, #1206). The caller
- * only invokes this for non-error results, so failing improvisation loops
- * (#783) never decay and still trip the per-tool cap.
+ * File mutations (edit/write/…), durable workflow mutations, and successful
+ * shell/exec calls (bash, bg_shell, gsd_uat_exec, …) count as progress (#1092,
+ * #1206, #1985). Failed results never decay, including workflow tools that
+ * report failure through `details.error` instead of the event error flag.
  */
 export function recordToolCallLoopMutation(toolName: string, details?: unknown): void {
   if (!enabled) return;
@@ -357,8 +365,19 @@ export function recordToolCallLoopMutation(toolName: string, details?: unknown):
     mutationEpoch++;
     return;
   }
-  if (!STATE_PROGRESSING_EXEC_TOOL_SET.has(toolName)) return;
-  if (toolName === "bg_shell" && details !== undefined && !isSuccessfulBgShellLoopProgress(details)) return;
+  if (STATE_PROGRESSING_EXEC_TOOL_SET.has(toolName)) {
+    if (toolName === "bg_shell" && details !== undefined && !isSuccessfulBgShellLoopProgress(details)) return;
+    mutationEpoch++;
+    return;
+  }
+  if (!DURABLE_WORKFLOW_MUTATING_TOOL_SET.has(canonicalWorkflowToolName(toolName))) return;
+  if (
+    details !== null
+    && typeof details === "object"
+    && Object.hasOwn(details, "error")
+    && (details as Record<string, unknown>).error !== null
+    && (details as Record<string, unknown>).error !== undefined
+  ) return;
   mutationEpoch++;
 }
 

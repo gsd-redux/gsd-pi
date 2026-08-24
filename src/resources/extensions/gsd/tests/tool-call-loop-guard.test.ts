@@ -253,6 +253,60 @@ console.log('\n── Loop guard: mutation progress decays per-tool counts (#109
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Durable workflow mutations count as progress (#1985)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n── Loop guard: durable workflow mutations count as progress (#1985) ──');
+
+{
+  resetToolCallLoopGuard();
+
+  for (let i = 1; i <= 20; i++) {
+    const result = checkToolCallLoop('gsd_requirement_save', {
+      description: `Requirement ${i}`,
+    });
+    assert.ok(result.block === false, `successful requirement save ${i} should be allowed`);
+    assert.deepStrictEqual(
+      getToolCallCountForTool('gsd_requirement_save'),
+      1,
+      `requirement-save count should decay before call ${i}`,
+    );
+    recordToolCallLoopMutation('gsd_requirement_save', { id: `R${String(i).padStart(3, '0')}` });
+  }
+}
+
+{
+  resetToolCallLoopGuard();
+
+  for (let i = 1; i <= 6; i++) {
+    const result = checkToolCallLoop('gsd_requirement_save', {
+      description: `Failed requirement ${i}`,
+    });
+    assert.ok(result.block === false, `failed requirement save ${i} should be allowed up to the cap`);
+    recordToolCallLoopMutation('gsd_requirement_save', { error: 'db_unavailable' });
+  }
+  const blocked = checkToolCallLoop('gsd_requirement_save', {
+    description: 'Failed requirement 7',
+  });
+  assert.ok(blocked.block === true, '7th failed requirement save should be blocked by the per-tool cap');
+  assert.ok(blocked.reason?.includes('repeated tool'), 'failed saves should be caught by Guard 2');
+}
+
+{
+  resetToolCallLoopGuard();
+  const input = { description: 'Same requirement' };
+
+  for (let i = 1; i <= 4; i++) {
+    const result = checkToolCallLoop('gsd_requirement_save', input);
+    assert.ok(result.block === false, `identical requirement save ${i} should be allowed`);
+    recordToolCallLoopMutation('gsd_requirement_save', { id: `R${String(i).padStart(3, '0')}` });
+  }
+  const blocked = checkToolCallLoop('gsd_requirement_save', input);
+  assert.ok(blocked.block === true, '5th identical requirement save should still be blocked by Guard 1');
+  assert.ok(blocked.reason?.includes('identical args'), 'identical saves should be caught by Guard 1');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Successful shell/exec progress decays per-tool counts (#1206)
 // ═══════════════════════════════════════════════════════════════════════════
 
