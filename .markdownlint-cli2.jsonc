@@ -1,0 +1,20 @@
+{
+	// Formalizes conventions the repo already follows ad hoc (several docs
+	// carry an inline `<!-- markdownlint-disable MD013 -->`) instead of
+	// leaving every contributor to rediscover and re-disable them per file.
+	"config": {
+		"default": true,
+		// Line length: never enforced consistently; docs regularly exceed 80
+		// chars intentionally (tables, long URLs, code samples).
+		"MD013": false,
+		// Table pipe spacing consistency ("compact" vs spaced): never
+		// enforced; both styles coexist throughout the existing docs.
+		"MD060": false
+	},
+	"ignores": [
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/dist-test/**",
+		"**/.git/**"
+	]
+}
