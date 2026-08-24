@@ -41,6 +41,11 @@ function createFakeCtx(options: {
       getAvailable: () => models,
       getApiKey: async (_model: FakeModel) => options.apiKey,
       hasConfiguredAuth: (_model: FakeModel) => options.apiKey !== undefined,
+      getProviderAuthStatus: (_provider: string) => ({
+        configured: options.apiKey !== undefined,
+        source: options.apiKey !== undefined ? ("environment" as const) : undefined,
+        label: options.apiKey !== undefined ? "FAKE_ENV_VAR" : undefined,
+      }),
       authStorage: {
         get: (_provider: string) =>
           options.apiKey !== undefined && !options.credentialOutsideAuthStorage
@@ -155,6 +160,44 @@ test("handleCopilotModels: reports added/removed/changed drift and dedupes repea
   });
   assert.equal(notifications.length, 3);
   assert.match(notifications[2].message, /no new changes/);
+});
+
+test("handleCopilotModels: a model added, removed, then re-added is reported again, not suppressed by the first add notice", async () => {
+  // Dedup is keyed on the (previous -> new) snapshot transition, not on
+  // permanently remembering every message string ever shown, so the second
+  // "added" occurrence for the same model must not be silently dropped.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+  });
+  assert.match(notifications[1].message, /- github-copilot\/claude-sonnet-5 removed/);
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+
+  assert.equal(notifications.length, 3);
+  assert.doesNotMatch(notifications[2].message, /no new changes/);
+  assert.match(
+    notifications[2].message,
+    /\+ github-copilot\/claude-sonnet-5 added/,
+    "re-adding a previously-removed model must be reported again, not suppressed by the earlier add notice",
+  );
 });
 
 test("handleCopilotModels: fetch failure preserves last-known-good snapshot", async () => {
@@ -551,6 +594,36 @@ test("handleCopilotModels: why finds the session state a prior sync recorded eve
 
   await handleCopilotModels("why gpt-5.4", ctx, {});
   assert.match(notifications[1].message, /^- last known live catalog: yes$/m, "why must find the snapshot sync just recorded, not report it as unknown");
+});
+
+test("handleCopilotModels: why finds the session state a prior sync recorded even when the resolved credential rotates on every call", async () => {
+  // A models.json command-backed apiKey can legitimately emit a different
+  // short-lived token on every getApiKey() call. The account-key fingerprint
+  // must be derived from the credential's stable source (env var name /
+  // models.json marker), never the resolved value itself, or state recorded
+  // under one fingerprint becomes unreachable under the next.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-rotates",
+    credentialOutsideAuthStorage: true,
+  });
+  let callCount = 0;
+  ctx.modelRegistry.getApiKey = async () => `rotating-token-${callCount++}`;
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+    ]) as unknown as typeof fetch,
+  });
+  assert.match(notifications[0].message, /1 model\(s\) available/);
+
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+  assert.match(
+    notifications[1].message,
+    /^- last known live catalog: yes$/m,
+    "a rotating resolved token must not fragment the account fingerprint across calls",
+  );
 });
 
 test("handleCopilotModels: why succeeds even when fetchImpl throws", async () => {
@@ -966,6 +1039,53 @@ test("handleCopilotModels: why reports preview and policy blockers as non-routab
   assert.match(notifications[1].message, /^- policy state: restricted$/m);
   assert.match(notifications[1].message, /^- preview: yes$/m);
   assert.match(notifications[1].message, /^- automatic routing eligible: no$/m);
+  assert.match(
+    notifications[1].message,
+    /^- routing caveats: .*provider policy is restricted.*preview models are intended to stay manual-only.*$/m,
+  );
+});
+
+test("handleCopilotModels: why reports a known-profile preview/policy-restricted model as routing-eligible with caveats, not a false ineligible verdict", async () => {
+  // resolveModelForComplexity() never receives live availability metadata and
+  // only gates automatic selection on capability-profile confidence, so a
+  // curated model that happens to be preview/policy-restricted CAN still be
+  // auto-selected by the real router — reporting "eligible: no" here would
+  // be a false routing result. See STEP 2/3's confidence-only gating.
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "claude-sonnet-4-6", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("", ctx, {
+    fetchImpl: jsonResponse([
+      {
+        id: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        tool_call: true,
+        preview: true,
+        policy_state: "restricted",
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        cost: { input: 3, output: 15, cache_read: 0, cache_write: 0 },
+      },
+    ]) as unknown as typeof fetch,
+  });
+
+  await handleCopilotModels("why claude-sonnet-4-6", ctx, {});
+
+  assert.match(notifications[1].message, /^- policy state: restricted$/m);
+  assert.match(notifications[1].message, /^- preview: yes$/m);
+  assert.match(
+    notifications[1].message,
+    /^- automatic routing eligible: yes$/m,
+    "a curated-profile model must not be reported ineligible just because of policy/preview state the router never checks",
+  );
+  assert.match(
+    notifications[1].message,
+    /^- routing caveats: .*provider policy is restricted.*preview models are intended to stay manual-only.*$/m,
+  );
 });
 
 test("handleCopilotModels: doctor reports cache and quarantine state without a network request", async () => {

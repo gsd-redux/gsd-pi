@@ -40,6 +40,22 @@ function normalizedRecord(id: string, overrides: Record<string, unknown> = {}) {
   })[0]!;
 }
 
+test("sanitizeGitHubCopilotModels parses the input_cost_per_token/output_cost_per_token per-token pricing shape", () => {
+  const record = normalizedRecord("gpt-5.4-per-token-pricing", {
+    cost: {
+      input_cost_per_token: 0.000006,
+      output_cost_per_token: 0.00003,
+    },
+  });
+
+  assert.equal(record.billing.inputPer1k, 0.006);
+  assert.ok(
+    record.billing.outputPer1k !== undefined && Math.abs(record.billing.outputPer1k - 0.03) < 1e-9,
+    `expected outputPer1k ~0.03, got ${record.billing.outputPer1k}`,
+  );
+  assert.equal(record.billing.billingUnit, "tokens");
+});
+
 test("fetchGitHubCopilotModels skips non-Copilot providers", async () => {
   let fetchCalled = false;
   const result = await fetchGitHubCopilotModels({

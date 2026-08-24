@@ -128,13 +128,12 @@ function hashAccountKey(baseUrl: string, token: string): string {
  * snapshot/diff/notification state each time the token rotates.
  * Always returns a key: auth configured via a runtime override, environment
  * variable, or models.json fallback resolver has no entry in authStorage at
- * all. For that case, resolving the actual key via getApiKey() is safe here
- * (not just network-free) — AuthStorage.getApiKeyWithOAuthState() only ever
- * does network I/O on its oauth-credential-needs-refresh branch, which is
- * unreachable when authStorage has neither an oauth nor an api_key credential
- * for this provider. Hashing the real resolved value (rather than a shared
- * per-provider placeholder) keeps different credentials from colliding onto
- * the same cached session state if the configured key changes mid-process.
+ * all. For that case, fingerprint the credential's stable *source* (env var
+ * name, or a fixed marker for a models.json key/command) rather than its
+ * resolved value — a models.json `apiKey` command can legitimately emit a
+ * new short-lived token on every invocation, and hashing that value would
+ * produce a different fingerprint each time and strand this account's
+ * already-cached snapshot/diff/notification state.
  */
 async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotModel: Model<Api>): Promise<string> {
   const cred = ctx.modelRegistry.authStorage.get(copilotModel.provider) as
@@ -147,14 +146,10 @@ async function resolveCopilotAccountKey(ctx: ExtensionCommandContext, copilotMod
   if (cred?.type === "api_key") {
     return hashAccountKey("github.com", cred.key);
   }
-  // getApiKey() can still throw for reasons unrelated to OAuth refresh (e.g. a
-  // misconfigured fallback resolver) — fall back to the provider-only
-  // placeholder rather than letting a local-only command fail on it.
-  const resolvedKey = await ctx.modelRegistry.getApiKey(copilotModel).catch(() => undefined);
-  return hashAccountKey(
-    "github.com",
-    resolvedKey ? `unstored-credential:${resolvedKey}` : `unstored-credential:${copilotModel.provider}`,
-  );
+  const status = ctx.modelRegistry.getProviderAuthStatus(copilotModel.provider);
+  const stableSource =
+    status.source === "environment" && status.label ? `env:${status.label}` : (status.source ?? "unknown");
+  return hashAccountKey("github.com", `unstored-credential:${stableSource}`);
 }
 
 function redactSensitive(message: string): string {
@@ -581,6 +576,19 @@ function buildWhyExplanation(
   let routingEligible = false;
   let routingReason = "no live/task routing context available";
   let guidance = "No active task classification context is available here — this is a local model-state explanation only.";
+  // Policy/preview state is reported as an advisory caveat, not folded into
+  // eligibility: resolveModelForComplexity() never receives live availability
+  // metadata and only gates on capability-profile confidence, so a policy-
+  // restricted or preview model with a known profile CAN still be
+  // auto-selected — showing "eligible: no" here for either would be a false
+  // routing result the actual router doesn't agree with.
+  const routingCaveats: string[] = [];
+  if (liveRecord?.availability.policyState === "disabled" || liveRecord?.availability.policyState === "restricted") {
+    routingCaveats.push(`provider policy is ${liveRecord.availability.policyState} — automatic routing does not enforce this today`);
+  }
+  if (liveRecord?.availability.preview === true) {
+    routingCaveats.push("preview models are intended to stay manual-only, but automatic routing does not enforce this today");
+  }
 
   if (!effectiveLocal) {
     if (candidate?.complete) {
@@ -596,12 +604,6 @@ function buildWhyExplanation(
   } else if (!sessionAvailable) {
     routingReason = "unavailable in this session";
     guidance = "The model exists in the effective local catalog but is not available from the configured Copilot session/provider right now.";
-  } else if (liveRecord?.availability.policyState === "disabled" || liveRecord?.availability.policyState === "restricted") {
-    routingReason = `provider policy is ${liveRecord.availability.policyState}`;
-    guidance = "Provider policy currently restricts this model. Automatic routing does not enforce this signal directly today — it only gates on capability-profile confidence — so treat this as a policy warning, not a routing guarantee.";
-  } else if (liveRecord?.availability.preview === true) {
-    routingReason = "preview models are intended to stay manual-only";
-    guidance = "Preview models are intended to remain manually selectable only, but automatic routing does not enforce this directly today — it only gates on capability-profile confidence.";
   } else if (confidence === "unknown") {
     routingReason = "capability profile unknown";
     guidance = "Manual selection is allowed, but automatic routing stays fail-closed until a curated, inherited, or complete provisional capability profile exists.";
@@ -632,8 +634,7 @@ function buildWhyExplanation(
     `- request billing: ${economics.requestMultiplier !== undefined ? `${economics.requestMultiplier}x (${economics.provenance.requestMultiplier?.source ?? economics.source}/${economics.provenance.requestMultiplier?.freshness ?? "unknown"})` : "unknown"}`,
     `- promotion: ${formatPromotion(liveRecord?.billing.promotion ?? economics.promotion)}`,
     `- automatic routing eligible: ${routingEligible ? "yes" : "no"}`,
-    `- reason: ${routingReason}`,
-    `- task routing context: unavailable (no active classification context)` ,
+    `- reason: ${routingReason}`,    ...(routingCaveats.length > 0 ? [`- routing caveats: ${routingCaveats.join("; ")}`] : []),    `- task routing context: unavailable (no active classification context)` ,
     `- guidance: ${guidance}`,
   ].join("\n");
 }
@@ -745,9 +746,6 @@ async function runSync(
     }
 
     const previousSnapshot = state.lastKnownGoodSnapshot;
-    state.lastKnownGoodSnapshot = previousSnapshot
-      ? previousSnapshot && result.snapshot ? result.snapshot : previousSnapshot
-      : result.snapshot;
 
     const effectiveLocalModels = localCopilotModels(ctx);
     const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
@@ -771,6 +769,14 @@ async function runSync(
       ctx.modelRegistry.refresh();
     }
 
+    // Only commit the new snapshot once registration and the registry refresh
+    // above have both succeeded — committing earlier would let a mid-sync
+    // failure (permission denied, disk full) land in the catch block below
+    // while state.lastKnownGoodSnapshot already holds the very snapshot that
+    // failed, so "keeping the last known good snapshot" would be a lie and
+    // the next sync's diff would silently absorb the change instead of
+    // surfacing it again.
+    state.lastKnownGoodSnapshot = result.snapshot;
     state.lastAcceptedDiff = buildDiffState(
       previousSnapshot,
       result.snapshot,
@@ -811,16 +817,22 @@ async function runSync(
     }
 
     const deduped = dedupeShellNotifications(messages);
-    const notifications = getNotificationState(auth.accountKey);
-    const unseen = deduped.filter((message) => !notifications.has(message));
-    for (const message of deduped) notifications.add(message);
+    // Dedupe by this specific (previous → new) snapshot transition, not by
+    // permanently remembering every message string ever shown: a model that
+    // is added, removed, and later re-added produces the identical "added"
+    // message twice, but each occurrence belongs to a different transition
+    // and must not be suppressed forever by the first one.
+    const transitionKey = `${previousSnapshot?.hash ?? "none"}:${result.snapshot.hash}`;
+    const notifiedTransitions = getNotificationState(auth.accountKey);
+    const alreadyNotifiedThisTransition = notifiedTransitions.has(transitionKey);
+    notifiedTransitions.add(transitionKey);
 
-    if (previousSnapshot && unseen.length === 0) {
+    if (previousSnapshot && (deduped.length === 0 || alreadyNotifiedThisTransition)) {
       ctx.ui.notify("GitHub Copilot model catalog: no new changes since the last accepted check.", "info");
       return;
     }
 
-    ctx.ui.notify(unseen.join("\n"), "info");
+    ctx.ui.notify(deduped.join("\n"), "info");
   } catch (error) {
     const fetchError = error instanceof CopilotCatalogFetchError
       ? error

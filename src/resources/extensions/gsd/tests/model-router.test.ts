@@ -1759,6 +1759,39 @@ describe("Phase J routing safety", () => {
     assert.equal(result.selectionMethod, "tier-only");
   });
 
+  test("resolveModelForComplexity: STEP 3 skips a cheaper unknown-confidence model to find a known-confidence alternative", () => {
+    // capability_routing: false skips STEP 2 entirely, landing on STEP 3's
+    // automatic multi-candidate path. The unknown-confidence model is
+    // deliberately cheaper (via runtime cost) so it sorts first in
+    // getEligibleModels() — it must be skipped, not treated as a dead end
+    // that masks the known-confidence "claude-sonnet-4-6" further down the
+    // same eligible list.
+    const config = { ...defaultRoutingConfig(), enabled: true, capability_routing: false };
+    const result = resolveModelForComplexity(
+      { tier: "standard", reason: "test", downgraded: false },
+      { primary: "claude-opus-4-6", fallbacks: [] },
+      config,
+      ["brand-new-unreleased-cheap-model", "claude-sonnet-4-6"],
+      "execute-task",
+      undefined,
+      undefined,
+      undefined,
+      [
+        {
+          id: "brand-new-unreleased-cheap-model",
+          cost: { input: 0.0001, output: 0.0001, cacheRead: 0, cacheWrite: 0 },
+        },
+      ] as unknown as Array<Model<Api>>,
+    );
+
+    assert.equal(
+      result.modelId,
+      "claude-sonnet-4-6",
+      "must skip the cheaper unknown-confidence model and select the known-confidence alternative",
+    );
+    assert.equal(result.selectionMethod, "tier-only");
+  });
+
   test("resolveModelForComplexity: STEP 3 honors an explicit tier_models pin even without a capability profile", () => {
     const config: DynamicRoutingConfig = {
       ...defaultRoutingConfig(),

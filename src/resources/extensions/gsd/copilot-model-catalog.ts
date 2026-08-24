@@ -11,6 +11,14 @@ import { createHash } from "node:crypto";
 
 import { type Api, getModels, getSupportedThinkingLevels, type Model } from "@gsd/pi-ai";
 
+/** Copilot client-identity headers the /models endpoint's policy enforcement expects — mirrors COPILOT_HEADERS in packages/pi-ai/src/utils/oauth/github-copilot.ts. */
+const COPILOT_MODELS_REQUEST_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "User-Agent": "GitHubCopilotChat/0.35.0",
+  "Editor-Version": "vscode/1.107.0",
+  "Editor-Plugin-Version": "copilot-chat/0.35.0",
+  "Copilot-Integration-Id": "vscode-chat",
+});
+
 export type GitHubCopilotProvider = "github-copilot" | "openai" | "anthropic" | "google" | "unknown";
 export type CopilotFieldSource = "provider-live" | "provider-static" | "bundled-fallback" | "user" | "unknown";
 export type CopilotFieldFreshness = "fresh" | "stale" | "unknown";
@@ -331,11 +339,22 @@ function extractLivePricing(record: Record<string, unknown>) {
 
   const legacyInputPerMillion = toFiniteNonNegativeNumber(pricingRoot?.input ?? pricingRoot?.input_price ?? pricingRoot?.prompt);
   const legacyOutputPerMillion = toFiniteNonNegativeNumber(pricingRoot?.output ?? pricingRoot?.output_price ?? pricingRoot?.completion);
+  // Some Copilot-fronted models report cost as a per-single-token rate (the same
+  // LiteLLM-style shape used by input_cost_per_token/output_cost_per_token elsewhere)
+  // rather than per-1K or per-million — convert to per-1K.
+  const perTokenInputPer1k = (() => {
+    const value = toFiniteNonNegativeNumber(pricingRoot?.input_cost_per_token);
+    return value !== undefined ? value * 1000 : undefined;
+  })();
+  const perTokenOutputPer1k = (() => {
+    const value = toFiniteNonNegativeNumber(pricingRoot?.output_cost_per_token);
+    return value !== undefined ? value * 1000 : undefined;
+  })();
   const legacyCacheReadPerMillion = toFiniteNonNegativeNumber(pricingRoot?.cache_read ?? pricingRoot?.input_cache_read);
   const legacyCacheWritePerMillion = toFiniteNonNegativeNumber(pricingRoot?.cache_write ?? pricingRoot?.input_cache_write);
 
-  const inputPer1k = explicitInputPer1k ?? (legacyInputPerMillion !== undefined ? legacyInputPerMillion / 1000 : undefined);
-  const outputPer1k = explicitOutputPer1k ?? (legacyOutputPerMillion !== undefined ? legacyOutputPerMillion / 1000 : undefined);
+  const inputPer1k = explicitInputPer1k ?? perTokenInputPer1k ?? (legacyInputPerMillion !== undefined ? legacyInputPerMillion / 1000 : undefined);
+  const outputPer1k = explicitOutputPer1k ?? perTokenOutputPer1k ?? (legacyOutputPerMillion !== undefined ? legacyOutputPerMillion / 1000 : undefined);
   const cacheReadPer1k = explicitCacheReadPer1k ?? (legacyCacheReadPerMillion !== undefined ? legacyCacheReadPerMillion / 1000 : undefined);
   const cacheWritePer1k = explicitCacheWritePer1k ?? (legacyCacheWritePerMillion !== undefined ? legacyCacheWritePerMillion / 1000 : undefined);
 
@@ -702,6 +721,7 @@ export async function fetchGitHubCopilotModels(options: FetchCopilotModelsOption
       method: "GET",
       headers: {
         Accept: "application/json",
+        ...COPILOT_MODELS_REQUEST_HEADERS,
         ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       ...(combinedSignal ? { signal: combinedSignal } : {}),

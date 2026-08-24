@@ -669,6 +669,7 @@ export function resolveModelForComplexity(
       availableModelIds,
       routingConfig.cross_provider !== false,
       preferredModelId,
+      availableModels,
     );
 
     return {
@@ -750,17 +751,24 @@ export function resolveModelForComplexity(
             };
           }
 
+          // Mirror scoreEligibleModels's own comparator precedence exactly: a
+          // score gap only decides the ordering once it exceeds the 2-point
+          // tolerance band; within that band, confidence decides, then cost.
+          // Checking confidence before the score-band gate (as this used to)
+          // could report "lower profile confidence" or "lower capability
+          // match" for a candidate the comparator actually ranked below
+          // winner on cost alone.
+          if (winner.score - candidate.score > 2) {
+            return {
+              modelId: candidate.modelId,
+              reason: `lower capability match (${candidate.score.toFixed(1)} vs ${winner.score.toFixed(1)})`,
+            };
+          }
+
           if (PROFILE_CONFIDENCE_ORDINAL[candidate.confidence] < PROFILE_CONFIDENCE_ORDINAL[winner.confidence]) {
             return {
               modelId: candidate.modelId,
               reason: `lower profile confidence (${candidate.confidence} vs ${winner.confidence}) within the capability score band`,
-            };
-          }
-
-          if (candidate.score < winner.score) {
-            return {
-              modelId: candidate.modelId,
-              reason: `lower capability match (${candidate.score.toFixed(1)} vs ${winner.score.toFixed(1)})`,
             };
           }
 
@@ -794,23 +802,26 @@ export function resolveModelForComplexity(
     }
   }
 
-  // STEP 3: Fallback — use first eligible model (cheapest in tier, or single eligible)
-  const targetModelId = eligibleModels[0];
+  // STEP 3: Fallback — use the cheapest eligible model with a known capability
+  // profile. An unknown-confidence candidate is skipped, not treated as a
+  // dead end: it must never itself be auto-selected, but it also must not
+  // mask a safe, known-confidence alternative further down the same
+  // (cost-sorted) eligible list.
+  const explicitTierPin = routingConfig.tier_models?.[requestedTier];
+  const isExplicitTierPin = (modelId: string): boolean =>
+    !!explicitTierPin && (modelId === explicitTierPin || bareModelId(modelId) === bareModelId(explicitTierPin));
 
   // getEligibleModels() honors an explicit tier_models pin unconditionally (its
-  // own step 1), so targetModelId can be that pin even without a capability
+  // own step 1, which always returns a single-element list for a pin), so a
+  // pinned model bypasses this confidence gate even without a capability
   // profile — same "honor the user's explicit choice" precedent already used
-  // above for an unknown configuredPrimary. Only gate the automatic-detection
-  // path (STEP 2's own scoring skipped or reduced to one candidate) below.
-  const explicitTierPin = routingConfig.tier_models?.[requestedTier];
-  const isExplicitTierPin = !!explicitTierPin
-    && (targetModelId === explicitTierPin || bareModelId(targetModelId) === bareModelId(explicitTierPin));
+  // above for an unknown configuredPrimary. Only the automatic-detection path
+  // (STEP 2's own scoring skipped or reduced to one candidate) is gated here.
+  const targetModelId = eligibleModels.find(
+    (modelId) => isExplicitTierPin(modelId) || getModelProfileConfidence(modelId, capabilityOverrides) !== "unknown",
+  );
 
-  // This automatic path bypasses STEP 2's capability-confidence gate whenever
-  // scoring is disabled, only one model is eligible, or unitType is missing.
-  // Apply the same fail-closed gate here so an unknown-confidence model can't
-  // slip through as an automatic pick — explicit/manual selection is unaffected.
-  if (!isExplicitTierPin && getModelProfileConfidence(targetModelId, capabilityOverrides) === "unknown") {
+  if (!targetModelId) {
     return {
       modelId: configuredPrimary,
       fallbacks: phaseConfig.fallbacks,
@@ -900,8 +911,9 @@ function findModelForTier(
   availableModelIds: string[],
   crossProvider: boolean,
   preferredModelId?: string,
+  availableModels?: Array<Model<Api>>,
 ): string | undefined {
-  const eligible = getEligibleModels(tier, availableModelIds, routingConfig, preferredModelId);
+  const eligible = getEligibleModels(tier, availableModelIds, routingConfig, preferredModelId, availableModels);
   if (eligible.length === 0) return undefined;
 
   if (crossProvider) {
