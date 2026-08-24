@@ -59,13 +59,11 @@ export interface HandleCopilotModelsOptions {
 
 let sessionStates = new Map<string, CopilotSessionState>();
 let notifiedMessagesByAccount = new Map<string, Set<string>>();
-let lastActiveAccountKey: string | null = null;
 
 /** Test-only hook to reset module-level session state between test cases. */
 export function _resetCopilotModelsSessionStateForTests(): void {
   sessionStates = new Map();
   notifiedMessagesByAccount = new Map();
-  lastActiveAccountKey = null;
 }
 
 function normalizeBareModelId(modelId: string): string {
@@ -750,7 +748,6 @@ async function runSync(
     state.lastKnownGoodSnapshot = previousSnapshot
       ? previousSnapshot && result.snapshot ? result.snapshot : previousSnapshot
       : result.snapshot;
-    lastActiveAccountKey = auth.accountKey;
 
     const effectiveLocalModels = localCopilotModels(ctx);
     const overlayPath = options.overlayPath ?? resolveGsdModelsCatalogPath();
