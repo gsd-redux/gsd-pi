@@ -156,6 +156,10 @@ export interface DefaultResourceLoaderOptions {
 	};
 	systemPromptOverride?: (base: string | undefined) => string | undefined;
 	appendSystemPromptOverride?: (base: string[]) => string[];
+	extensionPathsTransform?: (paths: string[]) => {
+		paths: string[];
+		diagnostics?: string[];
+	};
 }
 
 export class DefaultResourceLoader implements ResourceLoader {
@@ -194,6 +198,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	};
 	private systemPromptOverride?: (base: string | undefined) => string | undefined;
 	private appendSystemPromptOverride?: (base: string[]) => string[];
+	private extensionPathsTransform?: DefaultResourceLoaderOptions["extensionPathsTransform"];
 
 	private extensionsResult: LoadExtensionsResult;
 	private skills: Skill[];
@@ -242,6 +247,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFilesOverride = options.agentsFilesOverride;
 		this.systemPromptOverride = options.systemPromptOverride;
 		this.appendSystemPromptOverride = options.appendSystemPromptOverride;
+		this.extensionPathsTransform = options.extensionPathsTransform;
 
 		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
 		this.skills = [];
@@ -405,11 +411,23 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const cliEnabledPrompts = getEnabledPaths(cliExtensionPaths.prompts);
 		const cliEnabledThemes = getEnabledPaths(cliExtensionPaths.themes);
 
-		const extensionPaths = this.noExtensions
+		const baseExtensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
+		// `noExtensions` permits only explicit CLI paths. A transform may discover
+		// additional paths, so do not run it when extension discovery is disabled.
+		const transformedExtensionPaths = this.noExtensions
+			? undefined
+			: this.extensionPathsTransform?.(baseExtensionPaths);
+		const extensionPaths = transformedExtensionPaths?.paths ?? baseExtensionPaths;
 
 		const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+		if (transformedExtensionPaths?.diagnostics?.length) {
+			extensionsResult.warnings = [
+				...(extensionsResult.warnings ?? []),
+				...transformedExtensionPaths.diagnostics.map((message) => ({ path: "<extension-order>", message })),
+			];
+		}
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
 		extensionsResult.errors.push(...inlineExtensions.errors);

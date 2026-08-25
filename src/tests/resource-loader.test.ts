@@ -251,6 +251,46 @@ test("buildResourceLoader loads user-installed extensions and lets them shadow b
   );
 });
 
+test("buildResourceLoader loads extensions installed by the slash command", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-installed-extension-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const installedExtensionDir = join(tmp, ".gsd", "extensions", "example-installed");
+  const installedEntryPath = join(installedExtensionDir, "index.js");
+
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  mkdirSync(fakeAgentDir, { recursive: true });
+  mkdirSync(installedExtensionDir, { recursive: true });
+  writeFileSync(
+    join(installedExtensionDir, "extension-manifest.json"),
+    JSON.stringify({
+      id: "example.installed",
+      name: "Installed Extension",
+      version: "1.0.0",
+      description: "test extension",
+      tier: "community",
+      requires: { platform: "node" },
+    }),
+  );
+  writeFileSync(
+    join(installedExtensionDir, "package.json"),
+    JSON.stringify({ type: "module", pi: { extensions: ["index.js"] } }),
+  );
+  writeFileSync(installedEntryPath, "export default function () {}\n");
+
+  const { buildResourceLoader } = await import("../resource-loader.ts");
+  const loader = await buildResourceLoader(fakeAgentDir);
+  await loader.reload();
+
+  assert.equal(
+    loader.getExtensions().extensions.some((extension) => extension.path === installedEntryPath),
+    true,
+    "slash-command-installed extension should be part of the runtime extension set",
+  );
+});
+
 test("initResources manifest tracks all bundled extension subdirectories including remote-questions (#2367)", async () => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-manifest-"));

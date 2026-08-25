@@ -6,7 +6,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
-import { discoverExtensionEntryPaths } from './extension-discovery.js'
+import { discoverExtensionEntryPaths, mergeExtensionEntryPaths } from './extension-discovery.js'
 import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegistryEntries } from './extension-registry.js'
 import { resolveBundledResourcesDirFromPackageRoot } from './bundled-resource-path.js'
 
@@ -910,14 +910,18 @@ export async function buildResourceLoader(
     bundledExtensionKeys: bundledKeys,
     ...bareResourceLoaderOptions(options.bare),
     extensionPathsTransform: (paths: string[]) => {
-      // 1. Filter community extensions through the GSD registry
-      const filteredPaths = paths.filter((entryPath) => {
+      // 1. Add slash-command-installed extensions, with installed versions
+      // taking precedence over bundled extensions that declare the same ID.
+      const mergedPaths = mergeExtensionEntryPaths(paths, join(dirname(agentDir), 'extensions'))
+
+      // 2. Filter community extensions through the GSD registry
+      const filteredPaths = mergedPaths.filter((entryPath) => {
         const manifest = readManifestFromEntryPath(entryPath)
         if (!manifest) return true // no manifest = always load
         return isExtensionEnabled(registry, manifest.id)
       })
 
-      // 2. Sort in topological dependency order
+      // 3. Sort in topological dependency order
       const { sortedPaths, warnings } = sortExtensionPaths(filteredPaths)
 
       return {
