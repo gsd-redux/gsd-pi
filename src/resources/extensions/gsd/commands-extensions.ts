@@ -709,7 +709,7 @@ function installFromNpm(specifier: string, installedExtDir: string, ctx: Extensi
     extractDir = null; // Successfully moved; skip cleanup
 
     // Step 6: Commit the registry entry only after the rename succeeds.
-    writeInstalledRegistryEntry(validated.id, validated.manifest, specifier, "npm");
+    writeInstalledRegistryEntry(validated.id, validated.manifest, specifier.replace(/^npm:/, ""), "npm");
     ctx.ui.notify(`Installed "${validated.id}" v${validated.manifest.version ?? "unknown"}. Restart GSD to activate.`, "info");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
