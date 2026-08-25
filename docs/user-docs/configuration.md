@@ -651,7 +651,7 @@ Default: `0` (disabled)
 Tunes the tool-call loop guard, which stops a model from repeating tool calls within a single turn. The two guards are configured independently:
 
 - **Identical-args guard** — blocks a streak of calls to the same tool with identical arguments. Catches real infinite loops; usually keep enabled.
-- **Repeated-tool-name cap** — caps how many times a tool name may be called per turn regardless of arguments. Catches improvisation loops, but is more likely to false-positive during legitimate automation (e.g. GSD-heavy or context-mode workflows). Tunable and disableable on its own.
+- **Repeated-tool-name cap** — caps repeated calls to a tool name regardless of arguments. Successful file mutations, shell calls, and `gsd_requirement_save` calls count as progress and decay the per-tool count; failed calls do not. Catches improvisation loops while allowing productive automation, and is tunable or disableable on its own.
 
 ```yaml
 tool_call_loop_guard:
