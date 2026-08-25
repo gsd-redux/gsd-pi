@@ -12,11 +12,15 @@ import {
   closeDatabase,
   getMilestoneSlices,
   getPlanMilestoneRecoveryBlock,
+  getSlice,
+  getSliceTasks,
   insertMilestone,
   insertSlice,
   openDatabase,
 } from "../../gsd-db.ts";
 import { deriveState, invalidateStateCache } from "../../state.ts";
+import { recoverTimedOutUnit } from "../../auto-timeout-recovery.ts";
+import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "../../unit-runtime.ts";
 import { drainLogs, setStderrLoggingEnabled, _resetLogs } from "../../workflow-logger.ts";
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -153,6 +157,67 @@ test('writeBlockerPlaceholder: writes file for research-milestone', () => {
   } finally {
     cleanup(base);
   }
+});
+
+test('writeBlockerPlaceholder: plan-slice diagnostics preserve the canonical PLAN', (t) => {
+  const base = createFixtureBase();
+  t.after(() => cleanup(base));
+  const planPath = resolveExpectedArtifactPath("plan-slice", "M001/S01", base)!;
+  const blockerPath = planPath.replace(/-PLAN\.md$/u, "-RECOVERY-BLOCKER.md");
+  const partialPlan = "# S01: Partial plan\n\nPlanning was interrupted before tasks were persisted.\n";
+  writeFileSync(planPath, partialPlan, "utf-8");
+
+  const result = writeBlockerPlaceholder(
+    "plan-slice",
+    "M001/S01",
+    base,
+    "idle recovery exhausted 2 attempts",
+  );
+
+  assert.equal(result, join(".gsd", "milestones", "M001", "slices", "S01", "S01-RECOVERY-BLOCKER.md"));
+  assert.equal(readFileSync(planPath, "utf-8"), partialPlan, "the canonical PLAN must remain untouched");
+  assert.equal(existsSync(blockerPath), true, "the recovery diagnostic should use a sidecar");
+  assert.match(readFileSync(blockerPath, "utf-8"), /idle recovery exhausted 2 attempts/u);
+});
+
+test('exhausted plan-slice timeout recovery pauses without fabricating completion', async (t) => {
+  const base = createFixtureBase();
+  t.after(() => cleanup(base));
+  const planPath = resolveExpectedArtifactPath("plan-slice", "M001/S01", base)!;
+  const blockerPath = planPath.replace(/-PLAN\.md$/u, "-RECOVERY-BLOCKER.md");
+  const partialPlan = "# S01: Partial plan\n\nPlanning was interrupted before tasks were persisted.\n";
+  const startedAt = Date.now();
+  const notifications: string[] = [];
+  const messages: unknown[] = [];
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Test Slice", status: "pending" });
+  writeFileSync(planPath, partialPlan, "utf-8");
+  writeUnitRuntimeRecord(base, "plan-slice", "M001/S01", startedAt, { recoveryAttempts: 2 });
+
+  const result = await recoverTimedOutUnit(
+    { ui: { notify: (message: string) => notifications.push(message) } } as any,
+    { sendMessage: (message: unknown) => messages.push(message) } as any,
+    "plan-slice",
+    "M001/S01",
+    "idle",
+    {
+      basePath: base,
+      verbose: false,
+      currentUnitStartedAt: startedAt,
+      unitRecoveryCount: new Map(),
+    },
+  );
+
+  assert.equal(result, "paused", "exhausted planning recovery must stop fail-closed");
+  assert.equal(readUnitRuntimeRecord(base, "plan-slice", "M001/S01")?.phase, "paused");
+  assert.equal(readFileSync(planPath, "utf-8"), partialPlan, "the partial canonical PLAN must be preserved");
+  assert.equal(existsSync(blockerPath), false, "timeout pause does not need to fabricate an artifact");
+  assert.equal(getSlice("M001", "S01")?.status, "pending", "recovery must leave the slice pending");
+  assert.equal(getSliceTasks("M001", "S01").length, 0, "recovery must not fabricate task rows");
+  assert.equal(messages.length, 0, "exhaustion must not schedule another model turn");
+  assert.equal(notifications.filter((message) => message.includes("recovery exhausted")).length, 1);
+  assert.equal(notifications.some((message) => message.includes("Advancing pipeline")), false);
 });
 
 test('writeBlockerPlaceholder: unknown type → null', () => {

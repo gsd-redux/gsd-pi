@@ -51,7 +51,7 @@ import {
 import { execFileSync } from "node:child_process";
 
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
@@ -449,7 +449,26 @@ export function writeReactiveExecuteBlocker(
 }
 
 /**
+ * Whether a milestone already has canonical Domain-Operation lifecycle
+ * history. Adopted milestones must not have a fabricated blocker slice
+ * inserted to paper over a stuck plan-milestone unit (fail-closed).
+ */
+function hasAdoptedMilestoneHistory(milestoneId: string): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1 AS adopted
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone'
+      AND milestone_id = :milestone_id
+      AND slice_id IS NULL
+      AND task_id IS NULL
+  `).get({ ":milestone_id": milestoneId }));
+}
+
+/**
  * Write a placeholder artifact so recovery can surface a stuck unit.
+ * Task and slice-plan completion projections use diagnostic sidecars
+ * instead of canonical artifact paths.
+
  * Returns the relative path written, or null if the path couldn't be resolved.
  */
 export function writeBlockerPlaceholder(
@@ -463,15 +482,24 @@ export function writeBlockerPlaceholder(
   if (!canonicalArtifactPath) return null;
   const blockerArtifactPath = unitType === "execute-task"
     ? canonicalArtifactPath.replace(/-SUMMARY\.md$/u, "-RECOVERY-BLOCKER.md")
-    : canonicalArtifactPath;
-  // A Task blocker must never occupy its canonical completion projection.
-  if (unitType === "execute-task" && blockerArtifactPath === canonicalArtifactPath) return null;
+    : unitType === "plan-slice"
+      ? canonicalArtifactPath.replace(/-PLAN\.md$/u, "-RECOVERY-BLOCKER.md")
+      : canonicalArtifactPath;
+  // DB-backed Task and slice-plan blockers must never occupy their canonical
+  // completion projections.
+  if (
+    (unitType === "execute-task" || unitType === "plan-slice") &&
+    blockerArtifactPath === canonicalArtifactPath
+  ) return null;
   const dir = dirname(blockerArtifactPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const recoveryLine = unitType === "research-project"
     ? "This placeholder was written by auto-mode so the project research gate can stop fail-closed."
     : unitType === "plan-milestone"
       ? "This diagnostic records a fail-closed planning gate; it is not a roadmap or completed milestone work."
+      : unitType === "plan-slice"
+        ? "This diagnostic does not complete slice planning; auto-mode must remain paused until a valid plan is persisted."
+
       : "This placeholder was written by auto-mode so the pipeline can advance.";
   const content = [
     `# BLOCKER — auto-mode recovery failed`,
@@ -525,7 +553,9 @@ export function writeBlockerPlaceholder(
     }
   }
 
-  return diagnoseExpectedArtifact(unitType, unitId, base);
+  return unitType === "plan-slice"
+    ? relative(base, blockerArtifactPath)
+    : diagnoseExpectedArtifact(unitType, unitId, base);
 }
 
 // ─── Merge State Reconciliation ───────────────────────────────────────────────

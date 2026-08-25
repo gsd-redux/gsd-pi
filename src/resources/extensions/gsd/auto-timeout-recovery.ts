@@ -290,18 +290,20 @@ export async function recoverTimedOutUnit(
     return "recovered";
   }
 
-  // #4175: For complete-milestone, never write a blocker placeholder — a stub
-  // SUMMARY has no recovery value (milestone is terminal), it does not update
-  // DB status, and downstream merge paths can treat the stub as a legitimate
-  // completion signal. Pause instead so the worktree branch is preserved.
-  if (unitType === "complete-milestone") {
+  // #4175/#1995: Never replace canonical lifecycle projections with blocker
+  // placeholders. They cannot update the required DB state, so finalization
+  // rejects them and retries unchanged input indefinitely. Pause fail-closed.
+  if (unitType === "complete-milestone" || unitType === "plan-slice") {
     writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
       phase: "paused",
       recoveryAttempts: recoveryAttempts + 1,
       lastRecoveryReason: reason,
     });
+    const message = unitType === "complete-milestone"
+      ? `Milestone ${unitId} ${reason}-recovery exhausted ${maxRecoveryAttempts} attempt(s) — worktree branch preserved. Re-run /gsd auto once blockers are resolved.`
+      : `Slice plan ${unitId} ${reason}-recovery exhausted ${maxRecoveryAttempts} attempt(s) — canonical PLAN preserved. Re-run /gsd auto once blockers are resolved.`;
     ctx.ui.notify(
-      `Milestone ${unitId} ${reason}-recovery exhausted ${maxRecoveryAttempts} attempt(s) — worktree branch preserved. Re-run /gsd auto once blockers are resolved.`,
+      message,
       "error",
     );
     return "paused";
