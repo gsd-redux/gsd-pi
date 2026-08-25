@@ -64,6 +64,7 @@ import { parseUnitId } from "../unit-id.js";
 import { logWarning } from "../workflow-logger.js";
 import { normalizeRealPath } from "../paths.js";
 import { preserveProjectionChanges } from "../projection-worker.js";
+import { throwIfTransientProjectionLockError } from "../projection-root-errors.js";
 import { buildDispatchKey } from "./dispatch-key.js";
 import {
   COMPLETED_NO_ADVANCE_GUARD_ID,
@@ -133,6 +134,7 @@ function now(): number {
  * @internal
  */
 let _projectionRebuildFn: ((projectRoot: string) => Promise<void>) | null = null;
+let _preserveProjectionChangesFn: typeof preserveProjectionChanges | null = null;
 
 function noRemainingUnitsOutcome(stateSnapshot: GSDState): AutoTerminalOutcome {
   if (stateSnapshot.phase === "complete") {
@@ -663,8 +665,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   > {
     const activeBasePath = this.getLiveDispatchBasePath();
     try {
-      await preserveProjectionChanges(activeBasePath);
+      await (_preserveProjectionChangesFn ?? preserveProjectionChanges)(activeBasePath);
     } catch (error) {
+      // Keep transient Windows projection-lock failures on the typed recovery
+      // path so autoLoop receives their classification and bounded backoff.
+      throwIfTransientProjectionLockError(error);
       const reason = `Projection observation failed: ${getErrorMessage(error)}`;
       logWarning("reconcile", reason);
       return {
@@ -1908,4 +1913,12 @@ export function _setProjectionRebuildFnForTests(
 ): () => void {
   _projectionRebuildFn = fn;
   return () => { _projectionRebuildFn = null; };
+}
+
+/** @internal Test-only override for projection observation failures. */
+export function _setPreserveProjectionChangesFnForTests(
+  fn: typeof preserveProjectionChanges | null,
+): () => void {
+  _preserveProjectionChangesFn = fn;
+  return () => { _preserveProjectionChangesFn = null; };
 }

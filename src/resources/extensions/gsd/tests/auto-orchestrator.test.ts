@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  _setPreserveProjectionChangesFnForTests,
   classifyAutoAdvanceFailure,
   createAutoOrchestrator,
   decideOrchestratorDispatch,
@@ -1218,6 +1219,29 @@ test("projection lock classification survives the paused result boundary", () =>
   assert.equal(result.failureKind, "projection-lock-transient");
   assert.ok(result.backoffMs && result.backoffMs.length > 0);
   assert.equal(result.reason, "Projection root busy: native projection root identity locking failed");
+});
+
+test("advance() propagates projection observation lock failures as typed pauses (#2001)", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  const nativeError = new Error("native projection root identity locking failed", {
+    cause: new Error("projection root operation failed: The process cannot access the file (os error 32)"),
+  });
+  const restoreProjectionObservation = _setPreserveProjectionChangesFnForTests(async () => {
+    throw nativeError;
+  });
+  t.after(restoreProjectionObservation);
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "paused");
+  if (result.kind !== "paused") throw new Error("expected paused projection-lock recovery");
+  assert.equal(result.failureKind, "projection-lock-transient");
+  assert.ok(result.backoffMs && result.backoffMs.length > 0);
+  assert.equal(result.reason, "Projection root busy: native projection root identity locking failed");
+  assert.equal(f.orchestrator.getStatus().phase, "paused");
+  assert.ok(f.journalNames().includes("advance-paused"));
+  assert.ok(!f.journalNames().includes("advance-blocked"));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
