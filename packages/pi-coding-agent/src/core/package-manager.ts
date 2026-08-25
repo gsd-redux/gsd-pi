@@ -33,6 +33,7 @@ import { type GitSource, parseGitUrl } from "../utils/git.js";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.js";
 import { getSkillDirectories } from "./skill-directories.js";
 import { isStdoutTakenOver } from "./output-guard.js";
+import { mergeExtensionEntryPaths } from "./extension-discovery.js";
 import type { PackageSource, SettingsManager } from "./settings-manager.js";
 
 const NETWORK_TIMEOUT_MS = 10000;
@@ -2253,6 +2254,7 @@ export class DefaultPackageManager implements PackageManager {
 			prompts: join(globalBaseDir, "prompts"),
 			themes: join(globalBaseDir, "themes"),
 		};
+		const installedExtensionsDir = join(dirname(globalBaseDir), "extensions");
 		const projectDirs = {
 			extensions: join(projectBaseDir, "extensions"),
 			skills: join(projectBaseDir, "skills"),
@@ -2362,10 +2364,15 @@ export class DefaultPackageManager implements PackageManager {
 			projectBaseDir,
 		);
 
-		// User extensions from ~/.pi/agent/
+		// User extensions from the managed agent directory plus extensions
+		// installed by `/gsd extensions install` in the parent GSD directory.
 		addResources(
 			"extensions",
-			collectAutoExtensionEntries(userDirs.extensions),
+			mergeExtensionEntryPaths(
+				collectAutoExtensionEntries(userDirs.extensions),
+				installedExtensionsDir,
+				userDirs.extensions,
+			),
 			userMetadata,
 			userOverrides.extensions,
 			globalBaseDir,
