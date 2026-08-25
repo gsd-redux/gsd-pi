@@ -132,7 +132,14 @@ export type {
 	ResolvedResource,
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
-export type { PackageCommand, PackageCommandOptions, PackageCommandRunnerOptions, PackageCommandRunnerResult } from "./core/package-commands.js";
+export type {
+	PackageCommand,
+	PackageCommandExtension,
+	PackageCommandExtensionRegistry,
+	PackageCommandOptions,
+	PackageCommandRunnerOptions,
+	PackageCommandRunnerResult,
+} from "./core/package-commands.js";
 export { getPackageCommandUsage, parsePackageCommand, runPackageCommand } from "./core/package-commands.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.js";

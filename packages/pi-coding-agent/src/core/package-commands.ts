@@ -21,6 +21,30 @@ export interface PackageCommandRunnerOptions {
 	stdout?: NodeJS.WriteStream;
 	stderr?: NodeJS.WriteStream;
 	allowedCommands?: ReadonlySet<PackageCommand>;
+	extensionRegistry?: PackageCommandExtensionRegistry;
+}
+
+export interface PackageCommandExtension {
+	id: string;
+	enabled: boolean;
+	scope: "user" | "project";
+	version?: string;
+	installedFrom?: string;
+}
+
+export interface PackageCommandExtensionRegistry {
+	list(): PackageCommandExtension[];
+	register(input: {
+		source: string;
+		scope: "user" | "project";
+		cwd: string;
+		extensions: Array<{ path: string; packageRoot?: string }>;
+	}): void;
+	unregister(input: {
+		source: string;
+		scope: "user" | "project";
+		cwd: string;
+	}): void;
 }
 
 export interface PackageCommandRunnerResult {
@@ -214,6 +238,21 @@ export async function runPackageCommand(
 				});
 				const afterInstallResult = await runLifecycleHooks(afterInstallHooks, "afterInstall");
 
+				if (options.extensionRegistry) {
+					const resolved = await packageManager.resolveExtensionSources([source!], { local: parsed.local });
+					options.extensionRegistry.register({
+						source: source!,
+						scope: parsed.local ? "project" : "user",
+						cwd: options.cwd,
+						extensions: resolved.extensions
+							.filter((extension) => extension.enabled)
+							.map((extension) => ({
+								path: extension.path,
+								packageRoot: extension.metadata.baseDir,
+							})),
+					});
+				}
+
 				const hookErrors = beforeInstallResult.hookErrors + afterInstallResult.hookErrors;
 				if (hookErrors > 0) {
 					stderr.write(chalk.yellow(`Lifecycle hooks completed with ${hookErrors} hook error(s).`) + "\n");
@@ -249,6 +288,11 @@ export async function runPackageCommand(
 					stderr.write(chalk.red(`No matching package found for ${source}`) + "\n");
 					return { handled: true, exitCode: 1 };
 				}
+				options.extensionRegistry?.unregister({
+					source: source!,
+					scope: parsed.local ? "project" : "user",
+					cwd: options.cwd,
+				});
 				stdout.write(chalk.green(`Removed ${source}`) + "\n");
 				return { handled: true, exitCode: 0 };
 			}
@@ -258,8 +302,16 @@ export async function runPackageCommand(
 				const projectSettings = settingsManager.getProjectSettings();
 				const globalPackages = globalSettings.packages ?? [];
 				const projectPackages = projectSettings.packages ?? [];
+				const extensions = options.extensionRegistry?.list() ?? [];
+				const userExtensions = extensions.filter((extension) => extension.scope === "user");
+				const projectExtensions = extensions.filter((extension) => extension.scope === "project");
 
-				if (globalPackages.length === 0 && projectPackages.length === 0) {
+				if (
+					globalPackages.length === 0 &&
+					projectPackages.length === 0 &&
+					userExtensions.length === 0 &&
+					projectExtensions.length === 0
+				) {
 					stdout.write(chalk.dim("No packages installed.") + "\n");
 					return { handled: true, exitCode: 0 };
 				}
@@ -287,6 +339,31 @@ export async function runPackageCommand(
 					stdout.write(chalk.bold("Project packages:") + "\n");
 					for (const pkg of projectPackages) {
 						formatPackage(pkg, "project");
+					}
+				}
+
+				const formatExtension = (extension: PackageCommandExtension) => {
+					const version = extension.version ? `@${extension.version}` : "";
+					const status = extension.enabled ? "" : " (disabled)";
+					stdout.write(`  ${extension.id}${version}${status}\n`);
+					if (extension.installedFrom) {
+						stdout.write(chalk.dim(`    ${extension.installedFrom}`) + "\n");
+					}
+				};
+
+				if (userExtensions.length > 0) {
+					if (globalPackages.length > 0 || projectPackages.length > 0) stdout.write("\n");
+					stdout.write(chalk.bold("User extensions:") + "\n");
+					for (const extension of userExtensions) {
+						formatExtension(extension);
+					}
+				}
+
+				if (projectExtensions.length > 0) {
+					if (globalPackages.length > 0 || projectPackages.length > 0 || userExtensions.length > 0) stdout.write("\n");
+					stdout.write(chalk.bold("Project extensions:") + "\n");
+					for (const extension of projectExtensions) {
+						formatExtension(extension);
 					}
 				}
 

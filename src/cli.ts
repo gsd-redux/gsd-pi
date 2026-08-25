@@ -32,6 +32,11 @@ import { stopWebMode } from './web-mode.js'
 import { getProjectSessionsDir } from './project-sessions.js'
 import { markStartup, printStartupTimings } from './startup-timings.js'
 import { applyRtkProcessEnv, GSD_RTK_DISABLED_ENV, isTruthy } from './rtk-shared.js'
+import {
+  listInstalledExtensions,
+  registerPackageExtensions,
+  unregisterPackageExtensions,
+} from './extension-registry.js'
 import type { EnsureRtkResult } from './rtk.js'
 
 type PiCodingAgentModule = typeof import('@gsd/pi-coding-agent')
@@ -409,6 +414,21 @@ if (packageCommandNames.has(cliFlags.messages[0] as PackageCommand)) {
     stdout: process.stdout,
     stderr: process.stderr,
     allowedCommands: packageCommandNames,
+    extensionRegistry: {
+      list: () => listInstalledExtensions(process.cwd()).map((entry) => ({
+        id: entry.id,
+        enabled: entry.enabled,
+        scope: entry.source,
+        version: entry.version,
+        installedFrom: entry.installedFrom,
+      })),
+      register: ({ source, scope, cwd, extensions }) => {
+        registerPackageExtensions(source, scope, cwd, extensions)
+      },
+      unregister: ({ source, scope, cwd }) => {
+        unregisterPackageExtensions(source, scope, cwd)
+      },
+    },
   })
   if (packageCommand.handled) {
     process.exit(packageCommand.exitCode)
