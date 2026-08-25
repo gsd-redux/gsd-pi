@@ -8,7 +8,7 @@
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { gsdHome } from "./gsd-home.js";
@@ -278,12 +278,22 @@ function discoverManifests(): Map<string, ExtensionManifest> {
     if (manifest && (entry.source === "project" || !manifests.has(manifest.id))) {
       manifests.set(manifest.id, manifest);
     }
+
   }
   return manifests;
 }
 
 function getInstalledExtDir(): string {
   return join(gsdHome(), "extensions");
+}
+
+function npmPackageName(specifier: string): string {
+  if (specifier.startsWith("@")) {
+    const versionSeparator = specifier.indexOf("@", specifier.indexOf("/") + 1);
+    return versionSeparator === -1 ? specifier : specifier.slice(0, versionSeparator);
+  }
+  const versionSeparator = specifier.indexOf("@");
+  return versionSeparator === -1 ? specifier : specifier.slice(0, versionSeparator);
 }
 
 // Source: derived from npm/git URL conventions (from RESEARCH.md)
@@ -1007,7 +1017,9 @@ function handleList(ctx: ExtensionCommandContext): void {
       lines[lines.length - 1] = lastLine + `      [${regEntry.source}]`;
       if (regEntry.installedFrom) {
         const typePrefix = regEntry.installType ? `${regEntry.installType}:` : "";
-        const versionSuffix = regEntry.version ? `@${regEntry.version}` : "";
+        const versionSuffix = regEntry.version && !regEntry.installedFrom.endsWith(`@${regEntry.version}`)
+          ? `@${regEntry.version}`
+          : "";
         lines.push(`  installed from: ${typePrefix}${regEntry.installedFrom}${versionSuffix}`);
       }
     }

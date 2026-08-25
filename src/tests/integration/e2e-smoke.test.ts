@@ -16,7 +16,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   assertNoCrashMarkers,
@@ -80,6 +80,67 @@ test("gsd --help outputs usage information and exits 0", async () => {
     output.includes("--list-models"),
     "help output should mention --list-models flag",
   );
+});
+
+test("gsd install npm: registers extension packages with management metadata", async (t) => {
+  const gsdHome = createTempDir("gsd-install-extension-home-");
+  const projectDir = createTempDir("gsd-install-extension-project-");
+  const packageDir = join(projectDir, "demo-extension");
+  const fakeNpmPath = join(projectDir, "fake-npm.cjs");
+  t.after(() => {
+    rmSync(gsdHome, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "demo-extension",
+      gsd: { extension: true },
+      pi: { extensions: ["index.js"] },
+    }),
+  );
+  writeFileSync(join(packageDir, "index.js"), "export default function () {}\n");
+  writeFileSync(
+    join(packageDir, "extension-manifest.json"),
+    JSON.stringify({
+      id: "example.cli-install",
+      name: "CLI Install Extension",
+      version: "1.2.3",
+      description: "test extension",
+      tier: "community",
+      requires: { platform: "node" },
+    }),
+  );
+  writeFileSync(
+    fakeNpmPath,
+    `const fs = require("node:fs"), path = require("node:path");
+const args = process.argv.slice(2), prefix = args[args.indexOf("--prefix") + 1];
+if (!prefix) process.exit(2);
+const dest = path.join(prefix, "node_modules", "demo-extension");
+fs.mkdirSync(path.dirname(dest), { recursive: true });
+fs.cpSync(${JSON.stringify(packageDir)}, dest, { recursive: true });
+`,
+  );
+  mkdirSync(join(gsdHome, "agent"), { recursive: true });
+  writeFileSync(
+    join(gsdHome, "agent", "settings.json"),
+    JSON.stringify({ npmCommand: [process.execPath, fakeNpmPath] }),
+  );
+
+  const result = await runGsd(["install", "npm:demo-extension@1.2.3"], 30_000, { GSD_HOME: gsdHome }, projectDir);
+  assert.equal(result.code, 0, result.stderr);
+
+  const registry = JSON.parse(readFileSync(join(gsdHome, "extensions", "registry.json"), "utf-8"));
+  assert.deepEqual(registry.entries["example.cli-install"], {
+    id: "example.cli-install",
+    enabled: true,
+    source: "user",
+    version: "1.2.3",
+    installedFrom: "demo-extension@1.2.3",
+    installType: "npm",
+  });
 });
 
 // ---------------------------------------------------------------------------

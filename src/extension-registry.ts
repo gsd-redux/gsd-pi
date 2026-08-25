@@ -355,3 +355,38 @@ export function ensureRegistryEntries(extensionsDir: string): void {
     saveRegistry(registry);
   }
 }
+
+/**
+ * Register an extension installed through the shell package command.
+ * Generic packages are ignored; only packages with a valid extension manifest
+ * participate in the GSD extension registry.
+ */
+export function registerInstalledExtensionPackage(
+  packageDir: string,
+  source: string,
+  scope: "user" | "project",
+): string | null {
+  const manifest = readManifest(packageDir);
+  if (!manifest) return null;
+
+  let installType: "npm" | "git" | "local" = "local";
+  let installedFrom = source;
+  if (source.startsWith("npm:")) {
+    installType = "npm";
+    installedFrom = source.slice("npm:".length);
+  } else if (/^(?:git:|git\+|git:\/\/|https?:\/\/|ssh:\/\/|github:|gitlab:|bitbucket:|git@)/.test(source)) {
+    installType = "git";
+  }
+
+  const registry = loadRegistry();
+  registry.entries[manifest.id] = {
+    id: manifest.id,
+    enabled: true,
+    source: scope,
+    version: manifest.version,
+    installedFrom,
+    installType,
+  };
+  saveRegistry(registry);
+  return manifest.id;
+}

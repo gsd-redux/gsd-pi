@@ -38,6 +38,7 @@ import {
   unregisterPackageExtensions,
 } from './extension-registry.js'
 import type { EnsureRtkResult } from './rtk.js'
+import { registerInstalledExtensionPackage } from './extension-registry.js'
 
 type PiCodingAgentModule = typeof import('@gsd/pi-coding-agent')
 type AgentCoreModule = typeof import('@gsd/agent-core')
@@ -405,7 +406,9 @@ if (!process.stdin.isTTY && !isPrintMode && !isSubcommandExemptFromEarlyTtyCheck
 
 const packageCommandNames: ReadonlySet<PackageCommand> = new Set(['install', 'remove', 'list'])
 if (packageCommandNames.has(cliFlags.messages[0] as PackageCommand)) {
-  const { runPackageCommand } = await loadPiCodingAgentModule()
+  const piCodingAgent = await loadPiCodingAgentModule()
+  const parsedPackageCommand = piCodingAgent.parsePackageCommand(process.argv.slice(2), packageCommandNames)
+  const { runPackageCommand } = piCodingAgent
   const packageCommand = await runPackageCommand({
     appName: 'gsd',
     args: process.argv.slice(2),
@@ -430,6 +433,15 @@ if (packageCommandNames.has(cliFlags.messages[0] as PackageCommand)) {
       },
     },
   })
+  if (packageCommand.exitCode === 0 && parsedPackageCommand?.command === 'install' && parsedPackageCommand.source) {
+    const settingsManager = piCodingAgent.SettingsManager.create(process.cwd(), agentDir)
+    const packageManager = new piCodingAgent.DefaultPackageManager({ cwd: process.cwd(), agentDir, settingsManager })
+    const scope = parsedPackageCommand.local ? 'project' : 'user'
+    const installedPath = packageManager.getInstalledPath(parsedPackageCommand.source, scope)
+    if (installedPath) {
+      registerInstalledExtensionPackage(installedPath, parsedPackageCommand.source, scope)
+    }
+  }
   if (packageCommand.handled) {
     process.exit(packageCommand.exitCode)
   }
