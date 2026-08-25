@@ -86,6 +86,8 @@ interface ExtensionRegistryEntry {
   version?: string;
   installedFrom?: string;
   installType?: "npm" | "git" | "local";
+  extensionDir?: string;
+  projectDir?: string;
 }
 
 interface ExtensionRegistry {
@@ -153,8 +155,27 @@ function withRegistryLock<T>(mutate: (registry: ExtensionRegistry) => T): T {
   });
 }
 
+function findRegistryRecord(
+  registry: ExtensionRegistry,
+  id: string,
+): { key: string; entry: ExtensionRegistryEntry } | undefined {
+  const currentProject = resolve(process.cwd());
+  const projectRecord = Object.entries(registry.entries).find(([, entry]) =>
+    entry.id === id && entry.source === "project" && entry.projectDir === currentProject
+  );
+  if (projectRecord) return { key: projectRecord[0], entry: projectRecord[1] };
+
+  const directEntry = registry.entries[id];
+  if (directEntry) return { key: id, entry: directEntry };
+
+  const userRecord = Object.entries(registry.entries).find(([, entry]) =>
+    entry.id === id && entry.source === "user"
+  );
+  return userRecord ? { key: userRecord[0], entry: userRecord[1] } : undefined;
+}
+
 function isEnabled(registry: ExtensionRegistry, id: string): boolean {
-  const entry = registry.entries[id];
+  const entry = findRegistryRecord(registry, id)?.entry;
   if (!entry) return true;
   return entry.enabled;
 }
@@ -244,6 +265,18 @@ function discoverManifests(): Map<string, ExtensionManifest> {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       const m = readManifest(join(extDir, entry.name));
       if (m) manifests.set(m.id, m);
+    }
+  }
+
+  // Shell-installed packages remain in the package manager's install tree.
+  // Their registry entry records the manifest directory so this command sees
+  // the same extensions that the runtime package loader already resolves.
+  for (const entry of Object.values(loadRegistry().entries)) {
+    if (!entry.extensionDir) continue;
+    if (entry.source === "project" && entry.projectDir !== resolve(process.cwd())) continue;
+    const manifest = readManifest(entry.extensionDir);
+    if (manifest && (entry.source === "project" || !manifests.has(manifest.id))) {
+      manifests.set(manifest.id, manifest);
     }
   }
   return manifests;
@@ -437,16 +470,23 @@ function findDependents(targetId: string, installedExtDir: string): string[] {
   return dependents;
 }
 
-function handleUninstall(id: string | undefined, ctx: ExtensionCommandContext): void {
+async function handleUninstall(id: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
   if (!id) {
     ctx.ui.notify("Usage: /gsd extensions uninstall <id>", "warning");
+    return;
+  }
+
+  const registeredEntry = findRegistryRecord(loadRegistry(), id)?.entry;
+  if (registeredEntry?.extensionDir) {
+    await uninstallPackageManagedExtension(registeredEntry, ctx);
     return;
   }
 
   // Hold the registry lock for the entire uninstall transaction so a concurrent
   // install can't add or re-enable `id` while we're in the middle of removing it.
   const result = withRegistryLock((registry) => {
-    const entry = registry.entries[id];
+    const record = findRegistryRecord(registry, id);
+    const entry = record?.entry;
 
     // Check if extension exists and is user-installed
     if (!entry || entry.source !== "user") {
@@ -471,7 +511,7 @@ function handleUninstall(id: string | undefined, ctx: ExtensionCommandContext): 
     }
 
     // Remove registry entry (D-07)
-    delete registry.entries[id];
+    delete registry.entries[record!.key];
     return { ok: true as const, dependents };
   });
 
@@ -494,6 +534,43 @@ function handleUninstall(id: string | undefined, ctx: ExtensionCommandContext): 
     );
   }
   ctx.ui.notify(`Uninstalled "${id}". Restart GSD to deactivate.`, "info");
+}
+
+async function uninstallPackageManagedExtension(
+  entry: ExtensionRegistryEntry,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
+  if (!entry.installedFrom || !entry.installType) {
+    ctx.ui.notify(`Extension "${entry.id}" has no recorded package source.`, "warning");
+    return;
+  }
+
+  const cwd = entry.projectDir ?? process.cwd();
+  const source = entry.installType === "npm"
+    ? `npm:${entry.installedFrom}`
+    : entry.installedFrom;
+  const projectLocal = entry.source === "project";
+
+  try {
+    runShellPackageCommand(["remove", source, ...(projectLocal ? ["--local"] : [])], cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`Failed to uninstall package for "${entry.id}": ${message}`, "error");
+    return;
+  }
+  ctx.ui.notify(`Uninstalled package for "${entry.id}". Restart GSD to deactivate.`, "info");
+}
+
+function runShellPackageCommand(args: string[], cwd: string): void {
+  const cliPath = process.env.GSD_BIN_PATH;
+  if (!cliPath || !existsSync(cliPath)) {
+    throw new Error("Cannot manage shell-installed extension: GSD_BIN_PATH is unavailable.");
+  }
+  execFileSync(process.execPath, [cliPath, ...args], {
+    cwd,
+    env: process.env,
+    stdio: "pipe",
+  });
 }
 
 // ─── Update subcommand ───────────────────────────────────────────────────────
@@ -528,9 +605,11 @@ async function updateSingleExtension(
   registry: ExtensionRegistry,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  const entry = registry.entries[id];
+  const entry = findRegistryRecord(registry, id)?.entry;
+  const isCurrentProjectEntry =
+    entry?.source === "project" && entry.projectDir === resolve(process.cwd());
 
-  if (!entry || entry.source !== "user") {
+  if (!entry || (entry.source !== "user" && !isCurrentProjectEntry)) {
     ctx.ui.notify(
       `Extension "${id}" not found in registry. Run /gsd extensions list to see installed extensions.`,
       "warning",
@@ -541,7 +620,8 @@ async function updateSingleExtension(
   // Git and local installs: "reinstall to update" hint (D-10, D-12)
   if (entry.installType !== "npm") {
     const source = entry.installType ?? "unknown";
-    const hint = entry.installedFrom ? `gsd extensions install ${entry.installedFrom}` : `gsd extensions install <specifier>`;
+    const installCommand = entry.extensionDir ? "gsd install" : "gsd extensions install";
+    const hint = entry.installedFrom ? `${installCommand} ${entry.installedFrom}` : `${installCommand} <specifier>`;
     ctx.ui.notify(
       `"${id}" was installed from ${source}. Reinstall to update: ${hint}`,
       "warning",
@@ -564,8 +644,9 @@ async function updateSingleExtension(
   // Pinned installs: the user explicitly requested a specific version. Don't
   // silently upgrade past the pin — tell them to re-install with a new pin.
   if (pin) {
+    const installCommand = entry.extensionDir ? "gsd install npm:" : "gsd extensions install ";
     ctx.ui.notify(
-      `"${id}" was installed with a pinned version (${pin}). To update, run: gsd extensions install ${packageName}@<new-version>`,
+      `"${id}" was installed with a pinned version (${pin}). To update, run: ${installCommand}${packageName}@<new-version>`,
       "info",
     );
     return;
@@ -579,7 +660,11 @@ async function updateSingleExtension(
 
   if (isVersionGreater(latest, current)) {
     ctx.ui.notify(`Updating "${id}": v${current} → v${latest}...`, "info");
-    await handleInstall(packageName, ctx);
+    if (entry.extensionDir) {
+      await updatePackageManagedNpmExtension(entry, packageName, latest, ctx);
+    } else {
+      await handleInstall(packageName, ctx);
+    }
   } else {
     ctx.ui.notify(`"${id}" is already at the latest version (v${current}).`, "info");
   }
@@ -601,20 +686,23 @@ async function updateAllExtensions(
   registry: ExtensionRegistry,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  // Find all user-installed extensions
-  const userEntries = Object.values(registry.entries).filter(e => e.source === "user");
+  // Find global and current-project installed extensions.
+  const installedEntries = Object.values(registry.entries).filter(
+    e => e.source === "user" ||
+      (e.source === "project" && e.projectDir === resolve(process.cwd())),
+  );
 
-  if (userEntries.length === 0) {
+  if (installedEntries.length === 0) {
     ctx.ui.notify("No user-installed extensions found. Use: gsd extensions install <package> to add one.", "warning");
     return;
   }
 
-  ctx.ui.notify(`Checking ${userEntries.length} installed extension(s) for updates...`, "info");
+  ctx.ui.notify(`Checking ${installedEntries.length} installed extension(s) for updates...`, "info");
 
   let updated = 0;
   let skipped = 0;
 
-  for (const entry of userEntries) {
+  for (const entry of installedEntries) {
     // Skip non-npm installs (D-11)
     if (entry.installType !== "npm") {
       const source = entry.installType ?? "unknown";
@@ -640,14 +728,47 @@ async function updateAllExtensions(
 
     if (isVersionGreater(latest, current)) {
       ctx.ui.notify(`  ${entry.id}: v${current} → v${latest} (updating)`, "info");
-      await handleInstall(packageName, ctx);
-      updated++;
+      if (entry.extensionDir) {
+        if (await updatePackageManagedNpmExtension(entry, packageName, latest, ctx)) updated++;
+        else skipped++;
+      } else {
+        await handleInstall(packageName, ctx);
+        updated++;
+      }
     } else {
       ctx.ui.notify(`  ${entry.id}: v${current} (already up to date)`, "info");
     }
   }
 
   ctx.ui.notify(`Updated ${updated} extension(s). ${skipped} skipped (git/local — reinstall to update).`, "info");
+}
+
+async function updatePackageManagedNpmExtension(
+  entry: ExtensionRegistryEntry,
+  packageName: string,
+  latestVersion: string,
+  ctx: ExtensionCommandContext,
+): Promise<boolean> {
+  const cwd = entry.projectDir ?? process.cwd();
+  const packageSource = `npm:${packageName}`;
+  const projectLocal = entry.source === "project";
+
+  try {
+    runShellPackageCommand(["install", packageSource, ...(projectLocal ? ["--local"] : [])], cwd);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`Failed to update "${entry.id}": ${message}`, "error");
+    return false;
+  }
+  const updatedEntry = Object.values(loadRegistry().entries).find((candidate) =>
+    candidate.id === entry.id &&
+    candidate.source === entry.source &&
+    candidate.projectDir === entry.projectDir &&
+    candidate.installedFrom === entry.installedFrom
+  );
+  const version = updatedEntry?.version ?? latestVersion;
+  ctx.ui.notify(`Updated "${entry.id}" to v${version}. Restart GSD to activate.`, "info");
+  return true;
 }
 
 // ─── Install subcommand ──────────────────────────────────────────────────────
@@ -822,7 +943,7 @@ export async function handleExtensions(args: string, ctx: ExtensionCommandContex
   }
 
   if (subCmd === "uninstall") {
-    handleUninstall(parts[1], ctx);
+    await handleUninstall(parts[1], ctx);
     return;
   }
 
@@ -879,11 +1000,11 @@ function handleList(ctx: ExtensionCommandContext): void {
     );
 
     // Show source indicator and install info for user-installed extensions
-    const regEntry = registry.entries[m.id];
-    if (regEntry?.source === "user") {
+    const regEntry = findRegistryRecord(registry, m.id)?.entry;
+    if (regEntry?.source === "user" || regEntry?.source === "project") {
       // Append [user] tag to the last line
       const lastLine = lines[lines.length - 1];
-      lines[lines.length - 1] = lastLine + "      [user]";
+      lines[lines.length - 1] = lastLine + `      [${regEntry.source}]`;
       if (regEntry.installedFrom) {
         const typePrefix = regEntry.installType ? `${regEntry.installType}:` : "";
         const versionSuffix = regEntry.version ? `@${regEntry.version}` : "";
@@ -913,7 +1034,7 @@ function handleEnable(id: string | undefined, ctx: ExtensionCommandContext): voi
 
   const alreadyEnabled = withRegistryLock((registry) => {
     if (isEnabled(registry, id)) return true;
-    const entry = registry.entries[id];
+    const entry = findRegistryRecord(registry, id)?.entry;
     if (entry) {
       entry.enabled = true;
       delete entry.disabledAt;
@@ -951,7 +1072,7 @@ function handleDisable(id: string | undefined, reason: string, ctx: ExtensionCom
 
   const alreadyDisabled = withRegistryLock((registry) => {
     if (!isEnabled(registry, id)) return true;
-    const entry = registry.entries[id];
+    const entry = findRegistryRecord(registry, id)?.entry;
     if (entry) {
       entry.enabled = false;
       entry.disabledAt = new Date().toISOString();
@@ -989,7 +1110,7 @@ function handleInfo(id: string | undefined, ctx: ExtensionCommandContext): void 
 
   const registry = loadRegistry();
   const enabled = isEnabled(registry, id);
-  const entry = registry.entries[id];
+  const entry = findRegistryRecord(registry, id)?.entry;
 
   const lines: string[] = [
     `${manifest.name} (${manifest.id})`,

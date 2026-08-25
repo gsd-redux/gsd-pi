@@ -8,7 +8,9 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { appRoot } from "./app-paths.js";
-import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { withFileLockSync } from "./resources/extensions/gsd/file-lock.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -40,12 +42,18 @@ export interface ExtensionRegistryEntry {
   version?: string;           // From manifest, used for semver comparison
   installedFrom?: string;     // Original specifier: npm package name, git URL, or local path
   installType?: "npm" | "git" | "local";  // Explicit source type
+  extensionDir?: string;      // Manifest directory for package-managed extensions
+  projectDir?: string;        // Owning project for project-local package installs
 }
 
 export interface ExtensionRegistry {
   version: 1;
   entries: Record<string, ExtensionRegistryEntry>;
 }
+
+export type InstalledExtensionRegistryEntry = ExtensionRegistryEntry & {
+  source: "user" | "project";
+};
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
@@ -78,8 +86,7 @@ function defaultRegistry(): ExtensionRegistry {
   return { version: 1, entries: {} };
 }
 
-export function loadRegistry(): ExtensionRegistry {
-  const filePath = getRegistryPath();
+export function loadRegistry(filePath = getRegistryPath()): ExtensionRegistry {
   try {
     if (!existsSync(filePath)) return defaultRegistry();
     const raw = readFileSync(filePath, "utf-8");
@@ -90,8 +97,7 @@ export function loadRegistry(): ExtensionRegistry {
   }
 }
 
-function saveRegistry(registry: ExtensionRegistry): void {
-  const filePath = getRegistryPath();
+function saveRegistry(registry: ExtensionRegistry, filePath = getRegistryPath()): void {
   try {
     mkdirSync(dirname(filePath), { recursive: true });
     const tmp = filePath + ".tmp";
@@ -102,11 +108,134 @@ function saveRegistry(registry: ExtensionRegistry): void {
   }
 }
 
+function mutateRegistry(filePath: string, mutate: (registry: ExtensionRegistry) => void): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  if (!existsSync(filePath)) {
+    try {
+      writeFileSync(filePath, JSON.stringify(defaultRegistry(), null, 2), {
+        encoding: "utf-8",
+        flag: "wx",
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  withFileLockSync(filePath, () => {
+    const registry = loadRegistry(filePath);
+    mutate(registry);
+    saveRegistry(registry, filePath);
+  });
+}
+
+function getInstallMetadata(source: string, cwd: string): {
+  installedFrom: string;
+  installType: "npm" | "git" | "local";
+} {
+  if (source.startsWith("npm:")) {
+    return { installedFrom: source.slice("npm:".length).trim(), installType: "npm" };
+  }
+  if (
+    source.startsWith("git:") ||
+    source.startsWith("github:") ||
+    source.startsWith("http:") ||
+    source.startsWith("https:") ||
+    source.startsWith("ssh:")
+  ) {
+    return { installedFrom: source, installType: "git" };
+  }
+  const expanded = source === "~"
+    ? homedir()
+    : source.startsWith("~/")
+      ? join(homedir(), source.slice(2))
+      : source;
+  return { installedFrom: resolve(cwd, expanded), installType: "local" };
+}
+
+/** Return user/project extensions that should appear in the shell package listing. */
+export function listInstalledExtensions(
+  cwd: string,
+  registry = loadRegistry(),
+): InstalledExtensionRegistryEntry[] {
+  const resolvedCwd = resolve(cwd);
+  return Object.values(registry.entries).filter(
+    (entry): entry is InstalledExtensionRegistryEntry =>
+      entry.source === "user" ||
+      (entry.source === "project" && entry.projectDir === resolvedCwd),
+  );
+}
+
+/** Register extension manifests resolved from a successful shell package install. */
+export function registerPackageExtensions(
+  source: string,
+  scope: "user" | "project",
+  cwd: string,
+  extensions: Array<{ path: string; packageRoot?: string }>,
+  registryPath = getRegistryPath(),
+): void {
+  const install = getInstallMetadata(source, cwd);
+  const installedEntries: Array<[string, ExtensionRegistryEntry]> = [];
+
+  for (const extension of extensions) {
+    const entryDir = dirname(extension.path);
+    const entryManifest = readManifest(entryDir);
+    const packageManifest = extension.packageRoot ? readManifest(extension.packageRoot) : null;
+    const manifest = entryManifest ?? packageManifest;
+    if (!manifest) continue;
+
+    const registryKey = scope === "project"
+      ? `${manifest.id}::project::${resolve(cwd)}`
+      : manifest.id;
+    installedEntries.push([registryKey, {
+      id: manifest.id,
+      enabled: true,
+      source: scope,
+      version: manifest.version,
+      installedFrom: install.installedFrom,
+      installType: install.installType,
+      extensionDir: entryManifest ? entryDir : extension.packageRoot,
+      projectDir: scope === "project" ? resolve(cwd) : undefined,
+    }]);
+  }
+
+  if (installedEntries.length === 0) return;
+  mutateRegistry(registryPath, (registry) => {
+    for (const [key, entry] of installedEntries) registry.entries[key] = entry;
+  });
+}
+
+/** Remove package-managed registry entries after a successful shell package removal. */
+export function unregisterPackageExtensions(
+  source: string,
+  scope: "user" | "project",
+  cwd: string,
+  registryPath = getRegistryPath(),
+): void {
+  if (!existsSync(registryPath)) return;
+  const install = getInstallMetadata(source, cwd);
+  const projectDir = scope === "project" ? resolve(cwd) : undefined;
+  mutateRegistry(registryPath, (registry) => {
+    for (const [id, entry] of Object.entries(registry.entries)) {
+      if (
+        entry.extensionDir &&
+        entry.source === scope &&
+        entry.installedFrom === install.installedFrom &&
+        entry.projectDir === projectDir
+      ) {
+        delete registry.entries[id];
+      }
+    }
+  });
+}
+
 // ─── Query ──────────────────────────────────────────────────────────────────
 
 /** Returns true if the extension is enabled (missing entries default to enabled). */
 export function isExtensionEnabled(registry: ExtensionRegistry, id: string): boolean {
-  const entry = registry.entries[id];
+  const currentProject = resolve(process.cwd());
+  const projectEntry = Object.values(registry.entries).find(
+    (entry) => entry.id === id && entry.source === "project" && entry.projectDir === currentProject,
+  );
+  const entry = projectEntry ?? registry.entries[id];
   if (!entry) return true;
   return entry.enabled;
 }
