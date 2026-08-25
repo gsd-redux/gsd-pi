@@ -35,6 +35,7 @@ import {
 } from "./unit-phase.js";
 import { debugLog } from "../debug-logger.js";
 import { markBlockedStopReason } from "../stop-notice.js";
+import { isTransientProjectionLockError } from "../projection-root-errors.js";
 import {
   formatWedgeTripNotice,
   recordNonAdvancingOutcome,
@@ -1475,8 +1476,10 @@ export async function autoLoop(
             s.pendingOrchestrationDispatch = null;
             const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
             const backoffMs = orchestrationResult.backoffMs;
-            const projectionLockTransient =
-              orchestrationResult.failureKind === "projection-lock-transient";
+            const projectionLockTransient = (
+              orchestrationResult.failureKind === "projection-lock-transient" ||
+              isTransientProjectionLockError(pausedMsg)
+            ) && Array.isArray(backoffMs) && backoffMs.length > 0;
             const projectionLockBackoffMs = projectionLockTransient ? backoffMs ?? [] : [];
             let pauseAttempt: number;
             if (projectionLockTransient) {

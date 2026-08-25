@@ -5368,7 +5368,7 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
   }
 });
 
-test("#1852: projection-lock transient pauses exhaust their backoff and never wedge", async () => {
+test("#1852/#2001: projection-lock transient pauses exhaust their backoff and never wedge", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -5383,10 +5383,15 @@ test("#1852: projection-lock transient pauses exhaust their backoff and never we
     start: async () => ({ kind: "stopped" as const, reason: "unused" }),
     advance: async () => {
       advanceCalls++;
+      const legacyFallback = advanceCalls > 4;
       return {
         kind: "paused" as const,
-        reason: "Projection root busy: native projection root identity locking failed",
-        failureKind: "projection-lock-transient" as const,
+        reason: legacyFallback
+          ? "projection root operation failed: file in use (os error 32)"
+          : "Projection root busy: native projection root identity locking failed",
+        failureKind: legacyFallback
+          ? "runtime-unknown" as const
+          : "projection-lock-transient" as const,
         backoffMs: [1, 1, 1],
       };
     },
@@ -5423,8 +5428,8 @@ test("#1852: projection-lock transient pauses exhaust their backoff and never we
     assert.equal(deps.callLog.includes("stopAuto"), true, "the class budget still stops a never-healing transient");
     assert.match(stopReason, /^Blocked: /);
 
-    // A later manual restart can exhaust the same naturally-identical lock
-    // failure again without that recurrence becoming an ADR-047 wedge.
+    // A later manual restart from a legacy adapter without the typed
+    // classification still uses the message fallback without creating a wedge.
     s.active = true;
     stopReason = "";
     await autoLoop(ctx, pi, s, deps);
