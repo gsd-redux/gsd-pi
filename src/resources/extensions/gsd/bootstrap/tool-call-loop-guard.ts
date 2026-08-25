@@ -35,7 +35,6 @@ import { createHash } from "node:crypto";
 import { INHERENTLY_REPEATABLE_TOOL_SET } from "./core-session-tools.js";
 import { hasBrowserContractPrefix } from "../../shared/browser-contract.js";
 import { canonicalToolName, canonicalWorkflowToolName } from "../engine-hook-contract.js";
-import { WORKFLOW_TOOL_CONTRACTS } from "../workflow-tool-surface.js";
 
 /** Built-in defaults. Preserved when preferences/env do not override them. */
 const DEFAULT_MAX_CONSECUTIVE_IDENTICAL_CALLS = 4;
@@ -48,13 +47,6 @@ const STRICT_LOOP_TOOLS = new Set(["ask_user_questions"]);
 const MAX_CONSECUTIVE_STRICT = 1;
 
 const STATE_MUTATING_TOOL_SET = new Set(["edit", "write", "multi_edit", "notebook_edit"]);
-
-/** Canonical DB-backed workflow tools whose successful results are durable progress. */
-const DURABLE_WORKFLOW_MUTATING_TOOL_SET = new Set<string>(
-  WORKFLOW_TOOL_CONTRACTS
-    .filter((tool) => tool.writePolicy === "write")
-    .map((tool) => tool.canonicalName),
-);
 
 /**
  * Successful shell/exec calls are state progression too (#1206), not just file
@@ -370,14 +362,12 @@ export function recordToolCallLoopMutation(toolName: string, details?: unknown):
     mutationEpoch++;
     return;
   }
-  if (!DURABLE_WORKFLOW_MUTATING_TOOL_SET.has(canonicalWorkflowToolName(toolName))) return;
-  if (
-    details !== null
-    && typeof details === "object"
-    && Object.hasOwn(details, "error")
-    && (details as Record<string, unknown>).error !== null
-    && (details as Record<string, unknown>).error !== undefined
-  ) return;
+  if (canonicalWorkflowToolName(toolName) !== "gsd_requirement_save") return;
+  if (!details || typeof details !== "object") return;
+  const result = details as Record<string, unknown>;
+  if (result.operation !== "save_requirement") return;
+  const id = result.id;
+  if (typeof id !== "string" || id.length === 0) return;
   mutationEpoch++;
 }
 

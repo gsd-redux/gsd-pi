@@ -271,7 +271,10 @@ console.log('\n── Loop guard: durable workflow mutations count as progress (
       1,
       `requirement-save count should decay before call ${i}`,
     );
-    recordToolCallLoopMutation('gsd_requirement_save', { id: `R${String(i).padStart(3, '0')}` });
+    recordToolCallLoopMutation('gsd_requirement_save', {
+      operation: 'save_requirement',
+      id: `R${String(i).padStart(3, '0')}`,
+    });
   }
 }
 
@@ -294,12 +297,28 @@ console.log('\n── Loop guard: durable workflow mutations count as progress (
 
 {
   resetToolCallLoopGuard();
+
+  for (let i = 1; i <= 6; i++) {
+    const result = checkToolCallLoop('gsd_task_settle', { taskId: `T${i}` });
+    assert.ok(result.block === false, `task-settle dry run ${i} should be allowed up to the cap`);
+    recordToolCallLoopMutation('gsd_task_settle', { dryRun: true, rows: [], lifecycleRows: [] });
+  }
+  const blocked = checkToolCallLoop('gsd_task_settle', { taskId: 'T7' });
+  assert.ok(blocked.block === true, '7th task-settle dry run should be blocked by the per-tool cap');
+  assert.ok(blocked.reason?.includes('repeated tool'), 'dry-run writes should be caught by Guard 2');
+}
+
+{
+  resetToolCallLoopGuard();
   const input = { description: 'Same requirement' };
 
   for (let i = 1; i <= 4; i++) {
     const result = checkToolCallLoop('gsd_requirement_save', input);
     assert.ok(result.block === false, `identical requirement save ${i} should be allowed`);
-    recordToolCallLoopMutation('gsd_requirement_save', { id: `R${String(i).padStart(3, '0')}` });
+    recordToolCallLoopMutation('gsd_requirement_save', {
+      operation: 'save_requirement',
+      id: `R${String(i).padStart(3, '0')}`,
+    });
   }
   const blocked = checkToolCallLoop('gsd_requirement_save', input);
   assert.ok(blocked.block === true, '5th identical requirement save should still be blocked by Guard 1');
