@@ -96,7 +96,7 @@ function executeAtFence(
   });
 }
 
-function makeBase(plannedUat = "", adopted = true): string {
+function makeBase(plannedUat = "", adopted = true, adoptDescendants = adopted): string {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-milestone-validation-domain-"));
   tempDirs.add(basePath);
   const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
@@ -124,19 +124,21 @@ function makeBase(plannedUat = "", adopted = true): string {
       milestoneId: "M001",
       lifecycleStatus: "ready",
     });
-    adoptOrTransitionLifecycle(context, {
-      itemKind: "slice",
-      milestoneId: "M001",
-      sliceId: "S01",
-      lifecycleStatus: "completed",
-    });
-    adoptOrTransitionLifecycle(context, {
-      itemKind: "task",
-      milestoneId: "M001",
-      sliceId: "S01",
-      taskId: "T01",
-      lifecycleStatus: "completed",
-    });
+    if (adoptDescendants) {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S01",
+        lifecycleStatus: "completed",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: "completed",
+      });
+    }
   });
   return basePath;
 }
@@ -460,6 +462,78 @@ test("Milestone validation rejects changed facts under the same execution identi
     }),
     /idempotency conflict/i,
   );
+});
+
+test("Milestone validation repairs evidence-backed legacy descendant authority before closeout", async () => {
+  const basePath = makeBase("", true, false);
+  executeAtFence("test.task.fixture", "fixture/task/adopt-ready", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+    });
+  });
+  const completedAt = "2026-01-02T03:04:05.000Z";
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  adapter.prepare(`
+    UPDATE slices
+    SET completed_at = :completed_at, full_summary_md = :summary
+    WHERE milestone_id = 'M001' AND id = 'S01'
+  `).run({
+    ":completed_at": completedAt,
+    ":summary": "# S01 Summary\n\nVerified legacy Slice completion.\n",
+  });
+  adapter.prepare(`
+    UPDATE tasks
+    SET completed_at = :completed_at,
+        verification_result = 'passed',
+        full_summary_md = :summary
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run({
+    ":completed_at": completedAt,
+    ":summary": "# T01 Summary\n\nVerified legacy Task completion.\n",
+  });
+
+  const validated = await validate(basePath, "milestone-validate/public/shadow-repair");
+  assert.ok(!("error" in validated), "validation should repair durable legacy authority");
+  assert.deepEqual(adapter.prepare(`
+    SELECT item_kind, lifecycle_status
+    FROM workflow_item_lifecycles
+    WHERE milestone_id = 'M001' AND item_kind IN ('task', 'slice')
+    ORDER BY item_kind
+  `).all(), [
+    { item_kind: "slice", lifecycle_status: "completed" },
+    { item_kind: "task", lifecycle_status: "completed" },
+  ]);
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count
+    FROM workflow_operations
+    WHERE operation_type = 'lifecycle.shadow.repair'
+  `).count), 3);
+
+  const completed = await complete(basePath);
+  assert.ok(!("error" in completed), "the post-repair validation receipt should authorize closeout");
+  assert.equal(completed.milestoneId, "M001");
+  assert.equal(row("SELECT status FROM milestones WHERE id = 'M001'").status, "complete");
+});
+
+test("Milestone validation refuses legacy descendant repair without durable evidence", async () => {
+  const basePath = makeBase("", true, false);
+
+  const result = await validate(basePath, "milestone-validate/public/shadow-unresolved");
+
+  assert.ok("error" in result, "unsupported legacy authority must block validation");
+  assert.match(result.error, /unresolved canonical lifecycle shadows/i);
+  assert.match(result.error, /M001\/S01\/T01/);
+  assert.match(result.error, /M001\/S01/);
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count
+    FROM workflow_operations
+    WHERE operation_type IN ('lifecycle.shadow.repair', 'milestone.validate')
+  `).count), 0);
 });
 
 test("Milestone completion rejects a file-only passing validation", async () => {

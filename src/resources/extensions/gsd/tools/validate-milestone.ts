@@ -36,6 +36,7 @@ import {
   browserEvidenceGateRequiresAttention,
 } from "../milestone-validation-evidence.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
+import { repairMilestoneLifecycleShadowsForward } from "../lifecycle-shadow-repair-domain-operation.js";
 import {
   isCurrentMilestoneValidationOperation,
   readMilestoneValidationAggregateTimestamp,
@@ -390,6 +391,26 @@ export async function handleValidateMilestone(
     return {
       error: "browser-required acceptance needs passed UAT browser/runtime evidence bound to every browser-required Slice",
     };
+  }
+  if (
+    canonicalInvocation &&
+    !readMilestoneValidationReplaySource(canonicalInvocation.idempotencyKey)
+  ) {
+    const shadowRepair = repairMilestoneLifecycleShadowsForward({
+      invocation: canonicalInvocation,
+      milestoneId: params.milestoneId,
+    });
+    if (shadowRepair.unresolved.length > 0) {
+      return {
+        error: `Milestone ${params.milestoneId} has unresolved canonical lifecycle shadows: ${shadowRepair.unresolved.join(", ")}`,
+      };
+    }
+    if (shadowRepair.repaired.length > 0) {
+      logWarning(
+        "db",
+        `Repaired ${shadowRepair.repaired.length} evidence-backed lifecycle shadow(s) before validating Milestone ${params.milestoneId}`,
+      );
+    }
   }
   const effectiveParams = shouldApplyBrowserEvidenceGate
     ? applyBrowserEvidenceGate(params)

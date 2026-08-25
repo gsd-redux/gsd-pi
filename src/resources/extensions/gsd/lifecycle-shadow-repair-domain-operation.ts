@@ -58,6 +58,11 @@ export interface LifecycleShadowRepairReceipt {
   reason: string | null;
 }
 
+export interface MilestoneLifecycleShadowRepairResult {
+  repaired: string[];
+  unresolved: string[];
+}
+
 function requireText(value: string | undefined, field: string): string {
   const normalized = value?.trim() ?? "";
   if (!normalized) throw new Error(`${field} must not be blank`);
@@ -288,6 +293,105 @@ function isMatchingTaskAdvanceReceipt(
     ":operation_id": operationId,
     ":entity_id": entityId(item),
   }));
+}
+
+function milestoneRepairItems(milestoneId: string): LifecycleShadowRepairIdentity[] {
+  const taskItems = getDb().prepare(`
+    SELECT slice_id, id AS task_id
+    FROM tasks
+    WHERE milestone_id = :milestone_id
+    ORDER BY slice_id, sequence, id
+  `).all({ ":milestone_id": milestoneId }).map((row) => ({
+    itemKind: "task" as const,
+    milestoneId,
+    sliceId: String(row["slice_id"]),
+    taskId: String(row["task_id"]),
+  }));
+  const sliceItems = getDb().prepare(`
+    SELECT id AS slice_id
+    FROM slices
+    WHERE milestone_id = :milestone_id
+    ORDER BY sequence, id
+  `).all({ ":milestone_id": milestoneId }).map((row) => ({
+    itemKind: "slice" as const,
+    milestoneId,
+    sliceId: String(row["slice_id"]),
+  }));
+  return [...taskItems, ...sliceItems];
+}
+
+function childRepairInvocation(
+  invocation: ExecutionInvocation,
+  item: LifecycleShadowRepairIdentity,
+  phase: "adopt" | "advance" | "complete",
+): ExecutionInvocation {
+  return {
+    ...invocation,
+    idempotencyKey: `${invocation.idempotencyKey}:lifecycle-shadow-repair:${entityId(item)}:${phase}`,
+  };
+}
+
+/**
+ * Converges legacy-complete descendants before Milestone validation.
+ *
+ * This is deliberately narrow: only a candidate with durable legacy completion
+ * evidence and a canonical target of `completed` may advance. Tasks are
+ * processed before Slices so the hierarchy is canonical from the leaves up.
+ */
+export function repairMilestoneLifecycleShadowsForward(input: {
+  invocation: ExecutionInvocation;
+  milestoneId: string;
+}): MilestoneLifecycleShadowRepairResult {
+  const milestoneId = requireText(input.milestoneId, "milestoneId");
+  const repaired: string[] = [];
+  const unresolved: string[] = [];
+
+  for (const item of milestoneRepairItems(milestoneId)) {
+    const candidate = getLifecycleShadowRepairCandidate(item);
+    if (!candidate || candidate.canonicalStatus === "completed") continue;
+    const legacyComplete = candidate.comparison.normalizedLegacyStatus === "completed";
+    if (!legacyComplete) continue;
+
+    const identity = entityId(item);
+    if (candidate.targetStatus !== "completed" || !candidate.evidence) {
+      unresolved.push(identity);
+      continue;
+    }
+    const canRepair =
+      candidate.canonicalStatus === null ||
+      candidate.canonicalStatus === "ready" ||
+      (
+        candidate.canonicalStatus === "in_progress" &&
+        item.itemKind === "task" &&
+        isMatchingTaskAdvanceReceipt(candidate.canonicalLastOperationId, item)
+      );
+    if (!canRepair) {
+      unresolved.push(identity);
+      continue;
+    }
+
+    let phase: "adopt" | "advance" | "complete" = "complete";
+    if (candidate.canonicalStatus === null) phase = "adopt";
+    if (candidate.canonicalStatus === "ready" && item.itemKind === "task") phase = "advance";
+    let receipt = repairLifecycleShadowForward({
+      invocation: childRepairInvocation(input.invocation, item, phase),
+      item,
+    });
+    if (receipt.disposition === "advanced") {
+      receipt = repairLifecycleShadowForward({
+        invocation: childRepairInvocation(input.invocation, item, "complete"),
+        item,
+      });
+    }
+
+    if (receipt.disposition === "repaired" && receipt.afterStatus === "completed") {
+      repaired.push(identity);
+    } else {
+      unresolved.push(identity);
+    }
+  }
+
+  return { repaired, unresolved };
 }
 
 export function repairLifecycleShadowForward(input: {
