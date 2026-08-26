@@ -522,15 +522,7 @@ test("keeps a ready Milestone unresolved even when historical completion evidenc
   assert.equal(receipt.targetStatus, "completed");
 });
 
-// KNOWN GAP (documented, not fixed here: requires architecture approval per
-// docs/dev/architecture.md before a transactional multi-item repair can be
-// implemented). repairMilestoneLifecycleShadowsForward() commits each
-// repairable descendant as its own separate Domain Operation as it iterates.
-// When a later descendant in the same milestone is unresolved, the earlier
-// descendants' repairs have ALREADY been durably committed - there is no
-// rollback. This reproduces that partial-write behavior directly so the gap
-// is provable, not just theorized.
-test("KNOWN GAP: a milestone with one repairable and one unresolved descendant commits partial writes instead of zero writes", (t) => {
+test("FIXED: a milestone with one repairable and one unresolved descendant writes nothing and reports both as unresolved", (t) => {
   openFixture(t);
   db().exec(`
     INSERT INTO milestones (id, title, status, created_at)
@@ -558,16 +550,53 @@ test("KNOWN GAP: a milestone with one repairable and one unresolved descendant c
     milestoneId: "M003",
   });
 
-  // EXPECTED (per the required contract, once fixed): repaired = [], unresolved
-  // includes both descendants, zero lifecycle rows written.
-  // OBSERVED (current buggy behavior, asserted here to prove the gap):
-  assert.deepEqual(result.repaired, ["M003/S01/T01"]);
-  assert.deepEqual(result.unresolved, ["M003/S02/T02"]);
+  assert.deepEqual(result.repaired, []);
+  assert.deepEqual([...result.unresolved].sort(), ["M003/S02/T02", "M003/S01/T01"].sort());
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M003'
+  `).get()?.["count"], 0, "no descendant may be repaired while any sibling in the milestone is unresolved");
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'lifecycle.shadow.repair'
+  `).get()?.["count"], 0, "an unresolved sibling must block every write, not just its own");
+});
+
+test("FIXED: a milestone with multiple repairable single-step descendants commits them all in one shared Domain Operation", (t) => {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M004', 'Fully repairable milestone', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES
+      ('M004', 'S01', 'Repairable slice one', 'active', '2026-07-01T00:00:00.000Z'),
+      ('M004', 'S02', 'Repairable slice two', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES
+      (
+        'M004', 'S01', 'T01', 'Repairable task one', 'complete',
+        '2026-07-02T00:00:00.000Z', 'Finished', 'Historical completion', 'passed', '# T01 summary'
+      ),
+      (
+        'M004', 'S02', 'T02', 'Repairable task two', 'complete',
+        '2026-07-03T00:00:00.000Z', 'Finished', 'Historical completion', 'passed', '# T02 summary'
+      );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/all-repairable/M004"),
+    milestoneId: "M004",
+  });
+
+  assert.deepEqual([...result.repaired].sort(), ["M004/S01/T01", "M004/S02/T02"].sort());
+  assert.deepEqual(result.unresolved, []);
   assert.equal(db().prepare(`
     SELECT COUNT(*) AS count FROM workflow_item_lifecycles
-    WHERE milestone_id = 'M003' AND item_kind = 'task' AND task_id = 'T01'
-      AND lifecycle_status = 'completed'
-  `).get()?.["count"], 1, "T01's repair was durably committed despite T02 being unresolved");
+    WHERE milestone_id = 'M004' AND lifecycle_status = 'completed'
+  `).get()?.["count"], 2);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'lifecycle.shadow.repair'
+  `).get()?.["count"], 1, "every single-step descendant must commit inside one shared Domain Operation");
 });
 
 test("a changed evidence digest is rejected inside the repair transaction", (t) => {

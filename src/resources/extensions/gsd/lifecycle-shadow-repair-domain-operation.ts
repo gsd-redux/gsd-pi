@@ -4,6 +4,8 @@
 import {
   executeDomainOperation,
   type DomainJsonValue,
+  type DomainOperationEventInput,
+  type DomainOperationProjectionInput,
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
@@ -331,19 +333,112 @@ function childRepairInvocation(
   };
 }
 
+interface MilestoneRepairEntry {
+  item: LifecycleShadowRepairIdentity;
+  candidate: LifecycleShadowRepairCandidate;
+  kind: "single-step" | "two-phase-task";
+}
+
+/**
+ * Commits every single-step descendant (missing-shadow adoption, or a ready
+ * Slice's direct completion) in one shared lifecycle.shadow.repair Domain
+ * Operation. This is the atomic core of the milestone repair: either every
+ * listed descendant is durably repaired together, or the whole batch fails
+ * closed and none of them are.
+ *
+ * A ready Task's advance-then-complete sequence cannot join this batch: the
+ * schema requires those two edges to be separately committed operations
+ * (see repairLifecycleShadowStep), so two-phase Tasks are repaired outside
+ * this batch, only after every descendant in the milestone has already been
+ * confirmed repairable (see repairMilestoneLifecycleShadowsForward).
+ */
+function executeMilestoneSingleStepRepairBatch(
+  invocation: ExecutionInvocation,
+  milestoneId: string,
+  entries: MilestoneRepairEntry[],
+): string[] {
+  const idempotencyKey = `${invocation.idempotencyKey}:lifecycle-shadow-repair:milestone/${milestoneId}/batch`;
+  const fence = readDomainOperationFence(idempotencyKey);
+  beforeCommitHook?.();
+  executeDomainOperation({
+    operationType: "lifecycle.shadow.repair",
+    idempotencyKey,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: invocation.actorType,
+    ...(invocation.actorId ? { actorId: invocation.actorId } : {}),
+    sourceTransport: invocation.sourceTransport,
+    ...(invocation.traceId ? { traceId: invocation.traceId } : {}),
+    ...(invocation.turnId ? { turnId: invocation.turnId } : {}),
+    payload: {
+      milestoneId,
+      items: entries.map((entry) => entityId(entry.item)),
+    },
+  }, (context) => {
+    const events: DomainOperationEventInput[] = [];
+    const projections: DomainOperationProjectionInput[] = [];
+    for (const entry of entries) {
+      const freshCandidate = getLifecycleShadowRepairCandidate(entry.item);
+      if (!freshCandidate) throw new Error(`lifecycle shadow repair item not found: ${entityId(entry.item)}`);
+      requireStableCandidate(entry.candidate, freshCandidate);
+      const afterStatus = repairLifecycleShadowStep(context, {
+        ...entry.item,
+        expectedBeforeStatus: freshCandidate.canonicalStatus,
+        targetStatus: "completed",
+        ...(freshCandidate.canonicalStatus === "in_progress" && freshCandidate.canonicalLastOperationId
+          ? { priorRepairOperationId: freshCandidate.canonicalLastOperationId }
+          : {}),
+      }).lifecycleStatus;
+      const payload: StoredRepairPayload = {
+        item: entry.item,
+        beforeStatus: freshCandidate.canonicalStatus,
+        afterStatus,
+        targetStatus: freshCandidate.targetStatus,
+        disposition: "repaired",
+        evidence: freshCandidate.evidence,
+        comparison: freshCandidate.comparison,
+        reason: freshCandidate.reason,
+      };
+      events.push({
+        eventType: "lifecycle.shadow.repaired",
+        entityType: entry.item.itemKind,
+        entityId: entityId(entry.item),
+        payload: payload as unknown as DomainJsonValue,
+        destinations: ["projection"],
+      });
+      projections.push({
+        projectionKey: projectionKey(entry.item),
+        projectionKind: "lifecycle-shadow-repair",
+        rendererVersion: "1",
+      });
+    }
+    return { events, projections };
+  });
+  return entries.map((entry) => entityId(entry.item));
+}
+
 /**
  * Converges legacy-complete descendants before Milestone validation.
  *
  * This is deliberately narrow: only a candidate with durable legacy completion
  * evidence and a canonical target of `completed` may advance. Tasks are
  * processed before Slices so the hierarchy is canonical from the leaves up.
+ *
+ * Atomicity: this is an all-or-nothing pass over the milestone's descendants.
+ * A read-only planning pass first classifies every in-scope descendant as
+ * repairable or unresolved. If even one descendant is unresolved, the whole
+ * pass writes nothing and reports every in-scope descendant as unresolved.
+ * Only when every in-scope descendant is independently repairable does any
+ * write happen; single-step repairs then commit together in one shared
+ * Domain Operation (see executeMilestoneSingleStepRepairBatch).
  */
 export function repairMilestoneLifecycleShadowsForward(input: {
   invocation: ExecutionInvocation;
   milestoneId: string;
 }): MilestoneLifecycleShadowRepairResult {
   const milestoneId = requireText(input.milestoneId, "milestoneId");
-  const repaired: string[] = [];
+
+  const inScope: MilestoneRepairEntry[] = [];
   const unresolved: string[] = [];
 
   for (const item of milestoneRepairItems(milestoneId)) {
@@ -370,28 +465,47 @@ export function repairMilestoneLifecycleShadowsForward(input: {
       continue;
     }
 
-    let phase: "adopt" | "advance" | "complete" = "complete";
-    if (candidate.canonicalStatus === null) phase = "adopt";
-    if (candidate.canonicalStatus === "ready" && item.itemKind === "task") phase = "advance";
+    const kind: MilestoneRepairEntry["kind"] =
+      candidate.canonicalStatus === "ready" && item.itemKind === "task" ? "two-phase-task" : "single-step";
+    inScope.push({ item, candidate, kind });
+  }
+
+  if (unresolved.length > 0) {
+    for (const entry of inScope) unresolved.push(entityId(entry.item));
+    return { repaired: [], unresolved };
+  }
+  if (inScope.length === 0) return { repaired: [], unresolved: [] };
+
+  const repaired: string[] = [];
+  const singleStepEntries = inScope.filter((entry) => entry.kind === "single-step");
+  const twoPhaseEntries = inScope.filter((entry) => entry.kind === "two-phase-task");
+
+  if (singleStepEntries.length > 0) {
+    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, singleStepEntries));
+  }
+
+  for (const entry of twoPhaseEntries) {
     let receipt = repairLifecycleShadowForward({
-      invocation: childRepairInvocation(input.invocation, item, phase),
-      item,
+      invocation: childRepairInvocation(input.invocation, entry.item, "advance"),
+      item: entry.item,
     });
     if (receipt.disposition === "advanced") {
       receipt = repairLifecycleShadowForward({
-        invocation: childRepairInvocation(input.invocation, item, "complete"),
-        item,
+        invocation: childRepairInvocation(input.invocation, entry.item, "complete"),
+        item: entry.item,
       });
     }
-
     if (receipt.disposition === "repaired" && receipt.afterStatus === "completed") {
-      repaired.push(identity);
+      repaired.push(entityId(entry.item));
     } else {
-      unresolved.push(identity);
+      throw new Error(
+        `lifecycle shadow repair: descendant ${entityId(entry.item)} was verified repairable during ` +
+        "planning but failed during execution",
+      );
     }
   }
 
-  return { repaired, unresolved };
+  return { repaired, unresolved: [] };
 }
 
 export function repairLifecycleShadowForward(input: {
