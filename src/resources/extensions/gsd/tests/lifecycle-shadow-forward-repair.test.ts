@@ -683,12 +683,12 @@ test("repairMilestoneLifecycleShadowsForward skips completed or cancelled milest
     INSERT INTO milestones (id, title, status, created_at)
     VALUES ('M010', 'Completed milestone', 'completed', '2026-07-01T00:00:00.000Z');
     INSERT INTO workflow_item_lifecycles (
-      project_id, item_kind, milestone_id, slice_id, task_id, lifecycle_status,
-      created_at, updated_at, created_operation_id, last_operation_id,
-      created_project_revision, last_project_revision, authority_epoch
+      lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id, lifecycle_status,
+      created_at, updated_at, last_operation_id,
+      last_project_revision, authority_epoch
     ) VALUES (
-      'p-test', 'milestone', 'M010', NULL, NULL, 'completed',
-      '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'op-m10', 'op-m10', 1, 1, 1
+      'lc-m10', 'p-test', 'milestone', 'M010', NULL, NULL, 'completed',
+      '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'op-m10', 1, 1
     );
   `);
 
@@ -705,8 +705,8 @@ test("repairMilestoneLifecycleShadowsForward runs task repairs before slice repa
   db().exec(`
     INSERT INTO milestones (id, title, status, created_at)
     VALUES ('M011', 'Ordering milestone', 'active', '2026-07-01T00:00:00.000Z');
-    INSERT INTO slices (milestone_id, id, title, status, created_at)
-    VALUES ('M011', 'S01', 'Slice 1', 'complete', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at, completed_at, full_summary_md)
+    VALUES ('M011', 'S01', 'Slice 1', 'complete', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', '# S01 summary');
     INSERT INTO tasks (
       milestone_id, slice_id, id, title, status, completed_at,
       one_liner, narrative, verification_result, full_summary_md
