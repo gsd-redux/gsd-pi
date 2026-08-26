@@ -685,7 +685,7 @@ test("repairMilestoneLifecycleShadowsForward skips completed or cancelled milest
     INSERT INTO workflow_item_lifecycles (
       lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id, lifecycle_status,
       created_at, updated_at, last_operation_id,
-      last_project_revision, authority_epoch
+      last_project_revision, last_authority_epoch
     ) VALUES (
       'lc-m10', 'p-test', 'milestone', 'M010', NULL, NULL, 'completed',
       '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'op-m10', 1, 1
