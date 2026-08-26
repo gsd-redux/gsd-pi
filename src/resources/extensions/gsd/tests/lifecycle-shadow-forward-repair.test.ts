@@ -28,6 +28,7 @@ import {
 import {
   _setLifecycleShadowRepairBeforeCommitForTest,
   repairLifecycleShadowForward,
+  repairMilestoneLifecycleShadowsForward,
 } from "../lifecycle-shadow-repair-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 
@@ -519,6 +520,54 @@ test("keeps a ready Milestone unresolved even when historical completion evidenc
   assert.equal(receipt.beforeStatus, "ready");
   assert.equal(receipt.afterStatus, "ready");
   assert.equal(receipt.targetStatus, "completed");
+});
+
+// KNOWN GAP (documented, not fixed here: requires architecture approval per
+// docs/dev/architecture.md before a transactional multi-item repair can be
+// implemented). repairMilestoneLifecycleShadowsForward() commits each
+// repairable descendant as its own separate Domain Operation as it iterates.
+// When a later descendant in the same milestone is unresolved, the earlier
+// descendants' repairs have ALREADY been durably committed - there is no
+// rollback. This reproduces that partial-write behavior directly so the gap
+// is provable, not just theorized.
+test("KNOWN GAP: a milestone with one repairable and one unresolved descendant commits partial writes instead of zero writes", (t) => {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M003', 'Mixed repairable milestone', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES
+      ('M003', 'S01', 'Repairable slice', 'active', '2026-07-01T00:00:00.000Z'),
+      ('M003', 'S02', 'Unresolved slice', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES
+      (
+        'M003', 'S01', 'T01', 'Repairable task', 'complete',
+        '2026-07-02T00:00:00.000Z', 'Finished', 'Historical completion', 'passed', '# T01 summary'
+      ),
+      (
+        'M003', 'S02', 'T02', 'Unresolved task', 'complete',
+        '2026-07-03T00:00:00.000Z', 'Finished', 'Historical completion', 'failed', '# T02 summary'
+      );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/mixed-order/M003"),
+    milestoneId: "M003",
+  });
+
+  // EXPECTED (per the required contract, once fixed): repaired = [], unresolved
+  // includes both descendants, zero lifecycle rows written.
+  // OBSERVED (current buggy behavior, asserted here to prove the gap):
+  assert.deepEqual(result.repaired, ["M003/S01/T01"]);
+  assert.deepEqual(result.unresolved, ["M003/S02/T02"]);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles
+    WHERE milestone_id = 'M003' AND item_kind = 'task' AND task_id = 'T01'
+      AND lifecycle_status = 'completed'
+  `).get()?.["count"], 1, "T01's repair was durably committed despite T02 being unresolved");
 });
 
 test("a changed evidence digest is rejected inside the repair transaction", (t) => {
