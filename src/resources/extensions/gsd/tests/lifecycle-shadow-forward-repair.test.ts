@@ -676,3 +676,50 @@ for (const edge of ["adopt", "advance", "complete"] as const) {
     assert.deepEqual(authoritySnapshot(), afterCommit);
   });
 }
+
+test("repairMilestoneLifecycleShadowsForward skips completed or cancelled milestones", (t) => {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M010', 'Completed milestone', 'completed', '2026-07-01T00:00:00.000Z');
+    INSERT INTO workflow_item_lifecycles (
+      project_id, item_kind, milestone_id, slice_id, task_id, lifecycle_status,
+      created_at, updated_at, created_operation_id, last_operation_id,
+      created_project_revision, last_project_revision, authority_epoch
+    ) VALUES (
+      'p-test', 'milestone', 'M010', NULL, NULL, 'completed',
+      '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'op-m10', 'op-m10', 1, 1, 1
+    );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/completed-milestone/M010"),
+    milestoneId: "M010",
+  });
+
+  assert.deepEqual(result, { repaired: [], unresolved: [] });
+});
+
+test("repairMilestoneLifecycleShadowsForward runs task repairs before slice repairs", (t) => {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M011', 'Ordering milestone', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('M011', 'S01', 'Slice 1', 'complete', '2026-07-01T00:00:00.000Z');
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      'M011', 'S01', 'T01', 'Task 1', 'complete',
+      '2026-07-02T00:00:00.000Z', 'Finished', 'Historical', 'passed', '# T01 summary'
+    );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/task-before-slice/M011"),
+    milestoneId: "M011",
+  });
+
+  assert.deepEqual(result.repaired, ["M011/S01/T01", "M011/S01"]);
+});

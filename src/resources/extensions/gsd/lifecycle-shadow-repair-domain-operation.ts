@@ -1,6 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Replay-safe, evidence-gated forward lifecycle-shadow repair.
 
+import { createHash } from "node:crypto";
 import {
   executeDomainOperation,
   type DomainJsonValue,
@@ -355,9 +356,14 @@ interface MilestoneRepairEntry {
 function executeMilestoneSingleStepRepairBatch(
   invocation: ExecutionInvocation,
   milestoneId: string,
+  category: "tasks" | "slices",
   entries: MilestoneRepairEntry[],
 ): string[] {
-  const idempotencyKey = `${invocation.idempotencyKey}:lifecycle-shadow-repair:milestone/${milestoneId}/batch`;
+  const batchDigest = createHash("sha256")
+    .update(entries.map((entry) => entityId(entry.item)).sort().join(","))
+    .digest("hex")
+    .slice(0, 12);
+  const idempotencyKey = `${invocation.idempotencyKey}:lifecycle-shadow-repair:milestone/${milestoneId}/batch/${category}/${batchDigest}`;
   const fence = readDomainOperationFence(idempotencyKey);
   beforeCommitHook?.();
   executeDomainOperation({
@@ -438,6 +444,16 @@ export function repairMilestoneLifecycleShadowsForward(input: {
 }): MilestoneLifecycleShadowRepairResult {
   const milestoneId = requireText(input.milestoneId, "milestoneId");
 
+  const milestoneCandidate = getLifecycleShadowRepairCandidate({ itemKind: "milestone", milestoneId });
+  if (
+    milestoneCandidate &&
+    (milestoneCandidate.canonicalStatus === "pending" ||
+     milestoneCandidate.canonicalStatus === "completed" ||
+     milestoneCandidate.canonicalStatus === "cancelled")
+  ) {
+    return { repaired: [], unresolved: [] };
+  }
+
   const inScope: MilestoneRepairEntry[] = [];
   const unresolved: string[] = [];
 
@@ -477,14 +493,19 @@ export function repairMilestoneLifecycleShadowsForward(input: {
   if (inScope.length === 0) return { repaired: [], unresolved: [] };
 
   const repaired: string[] = [];
-  const singleStepEntries = inScope.filter((entry) => entry.kind === "single-step");
-  const twoPhaseEntries = inScope.filter((entry) => entry.kind === "two-phase-task");
 
-  if (singleStepEntries.length > 0) {
-    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, singleStepEntries));
+  const taskEntries = inScope.filter((entry) => entry.item.itemKind === "task");
+  const sliceEntries = inScope.filter((entry) => entry.item.itemKind === "slice");
+
+  const singleStepTaskEntries = taskEntries.filter((entry) => entry.kind === "single-step");
+  const twoPhaseTaskEntries = taskEntries.filter((entry) => entry.kind === "two-phase-task");
+  const singleStepSliceEntries = sliceEntries.filter((entry) => entry.kind === "single-step");
+
+  if (singleStepTaskEntries.length > 0) {
+    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, "tasks", singleStepTaskEntries));
   }
 
-  for (const entry of twoPhaseEntries) {
+  for (const entry of twoPhaseTaskEntries) {
     let receipt = repairLifecycleShadowForward({
       invocation: childRepairInvocation(input.invocation, entry.item, "advance"),
       item: entry.item,
@@ -503,6 +524,10 @@ export function repairMilestoneLifecycleShadowsForward(input: {
         "planning but failed during execution",
       );
     }
+  }
+
+  if (singleStepSliceEntries.length > 0) {
+    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, "slices", singleStepSliceEntries));
   }
 
   return { repaired, unresolved: [] };
