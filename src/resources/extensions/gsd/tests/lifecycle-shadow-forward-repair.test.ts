@@ -76,6 +76,34 @@ function openFixture(t: TestContext): void {
   t.after(closeDatabase);
 }
 
+function insertNonPassingVerificationTask(t: TestContext, verificationResult: string): void {
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M002', 'Isolated milestone', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('M002', 'S01', 'Isolated slice', 'active', '2026-07-01T00:00:00.000Z');
+  `);
+  db().prepare(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      'M002', 'S01', 'T04', 'Non-passing verification result', 'complete',
+      '2026-07-04T00:00:00.000Z', 'Finished', 'Historical completion', ?, '# T04 summary'
+    )
+  `).run(verificationResult);
+  t.after(closeDatabase);
+}
+
+function isolatedTask(taskId: string) {
+  return {
+    itemKind: "task" as const,
+    milestoneId: "M002",
+    sliceId: "S01",
+    taskId,
+  };
+}
+
 function invocation(idempotencyKey: string): ExecutionInvocation {
   return {
     idempotencyKey,
@@ -305,6 +333,52 @@ test("unsupported historical evidence commits an actionable unresolved receipt w
   assert.equal(rows("workflow_execution_attempts").length, 0);
   assert.equal(rows("workflow_attempt_results").length, 0);
 });
+
+test("a non-passing verification_result must not be treated as durable completion evidence", (t) => {
+  openFixture(t);
+  insertNonPassingVerificationTask(t, "failed");
+  const receipt = repairLifecycleShadowForward({
+    invocation: invocation("shadow-repair/non-passing/T04"),
+    item: isolatedTask("T04"),
+  });
+
+  assert.equal(receipt.disposition, "unresolved");
+  assert.equal(receipt.targetStatus, null);
+  assert.equal(receipt.afterStatus, null);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE task_id = 'T04'
+  `).get()?.["count"], 0);
+});
+
+for (const variant of ["PASSED", "  passed  ", "Passed"]) {
+  test(`a "${variant}" verification_result is still normalized as passing evidence`, (t) => {
+    openFixture(t);
+    insertNonPassingVerificationTask(t, variant);
+
+    const receipt = repairLifecycleShadowForward({
+      invocation: invocation(`shadow-repair/normalized-passing/T04/${variant}`),
+      item: isolatedTask("T04"),
+    });
+
+    assert.equal(receipt.disposition, "repaired");
+    assert.equal(receipt.afterStatus, "completed");
+  });
+}
+
+for (const variant of ["failed", "inconclusive", "needs-attention", "true", "banana", "NULL"]) {
+  test(`a "${variant}" verification_result is rejected as non-passing evidence`, (t) => {
+    openFixture(t);
+    insertNonPassingVerificationTask(t, variant);
+
+    const receipt = repairLifecycleShadowForward({
+      invocation: invocation(`shadow-repair/non-passing/T04/${variant}`),
+      item: isolatedTask("T04"),
+    });
+
+    assert.equal(receipt.disposition, "unresolved");
+    assert.equal(receipt.afterStatus, null);
+  });
+}
 
 test("records an extra canonical shadow as unresolved when its legacy row is missing", (t) => {
   openFixture(t);

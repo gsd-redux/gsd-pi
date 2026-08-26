@@ -253,6 +253,10 @@ interface RepairEvidenceFacts {
   digestFacts: unknown;
 }
 
+function isPassingVerificationResult(verificationResult: string): boolean {
+  return verificationResult.trim().toLowerCase() === "passed";
+}
+
 function taskCompletionFacts(row: Record<string, unknown>): RepairEvidenceFacts {
   const completedAt = validCompletedAt(row["completed_at"]);
   const verificationResult = typeof row["verification_result"] === "string"
@@ -263,7 +267,7 @@ function taskCompletionFacts(row: Record<string, unknown>): RepairEvidenceFacts 
     supported:
       normalizeLegacyLifecycleStatus(typeof row["status"] === "string" ? row["status"] : null) === "completed" &&
       completedAt !== null &&
-      verificationResult.length > 0 &&
+      isPassingVerificationResult(verificationResult) &&
       summary.length > 0,
     digestFacts: {
       status: row["status"] ?? null,
