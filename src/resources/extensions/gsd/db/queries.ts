@@ -254,7 +254,25 @@ interface RepairEvidenceFacts {
 }
 
 function isPassingVerificationResult(verificationResult: string): boolean {
-  return verificationResult.trim().toLowerCase() === "passed";
+  const normalized = verificationResult.trim().toLowerCase();
+  if (normalized.length === 0) return false;
+  if (
+    normalized === "passed" ||
+    normalized === "pass" ||
+    normalized === "success" ||
+    normalized === "succeeded" ||
+    normalized === "true"
+  ) {
+    return true;
+  }
+  if (
+    normalized.startsWith("failed") ||
+    normalized.startsWith("fail") ||
+    normalized.startsWith("error")
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function taskCompletionFacts(row: Record<string, unknown>): RepairEvidenceFacts {
