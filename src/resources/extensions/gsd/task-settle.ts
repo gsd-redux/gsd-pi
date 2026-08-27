@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Operator Task settle — human-gated, dry-run-first reconciliation
 // of a running Task Attempt whose executor is gone, plus optional lifecycle
-// adopt after an interrupted Attempt (#1749).
+// adopt after an interrupted Attempt or succeeded completion (#1749, #2018).
 
 import { executeDomainOperation } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
@@ -263,7 +263,7 @@ function targetCanonicalStatus(legacyStatus: string): "ready" | "completed" {
   if (normalized === "completed") return "completed";
   throw new Error(
     `gsd_task_settle: reconcileLifecycle only repairs a pending/complete mismatch ` +
-    `after an interrupted Attempt; tasks.status is ${legacyStatus}`,
+    `after an interrupted Attempt or succeeded completion; tasks.status is ${legacyStatus}`,
   );
 }
 
@@ -279,7 +279,8 @@ function lifecycleTransitionSteps(
     return ["completed"];
   }
   throw new Error(
-    `gsd_task_settle: cannot reconcile lifecycle ${from} → ${to} after an interrupted Attempt`,
+    `gsd_task_settle: cannot reconcile lifecycle ${from} → ${to} after an interrupted ` +
+    `Attempt or succeeded completion`,
   );
 }
 
@@ -289,13 +290,15 @@ function planLifecycleReconcile(
   hasRunningAttempt: boolean,
 ): TaskLifecycleReconcileRow[] {
   const latest = readLatestTaskAttempt(task);
-  if (!hasRunningAttempt && latest?.outcome !== "interrupted") {
+  const state = readTaskLifecycleState(task);
+  const succeededCompletion = latest?.outcome === "succeeded" &&
+    normalizeLegacyLifecycleStatus(state.legacyStatus) === "completed";
+  if (!hasRunningAttempt && latest?.outcome !== "interrupted" && !succeededCompletion) {
     throw new Error(
-      "gsd_task_settle: reconcileLifecycle requires an interrupted Attempt " +
-      "(settle the running Attempt first)",
+      "gsd_task_settle: reconcileLifecycle requires an interrupted Attempt or a succeeded " +
+      "Attempt with tasks.status complete (settle the running Attempt first)",
     );
   }
-  const state = readTaskLifecycleState(task);
   const target = targetCanonicalStatus(state.legacyStatus);
   const fromStatus = state.lifecycleStatus;
   if (fromStatus === null) {
@@ -421,8 +424,8 @@ export function planTaskSettle(
  * owner or replacement lease remains fail-closed.
  *
  * Optional `reconcileLifecycle` then adopts ready/completed to match
- * tasks.status after that interrupted Attempt, without reopening or deleting
- * SUMMARY projections (#1749).
+ * tasks.status after an interrupted Attempt or succeeded completion, without
+ * reopening or deleting SUMMARY projections (#1749).
  */
 export function applyTaskSettle(input: {
   invocation: ExecutionInvocation;

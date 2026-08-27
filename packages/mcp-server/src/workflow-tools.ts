@@ -2482,7 +2482,7 @@ const taskSettleParams = {
   reason: nonEmptyString("reason").describe("Operator rationale recorded on the settled Attempt Result"),
   apply: z.boolean().optional().describe("Actually settle; omit or false for a dry run that changes nothing"),
   reconcileLifecycle: z.boolean().optional().describe(
-    "After settling (or if already interrupted), adopt ready/completed to match tasks.status without deleting SUMMARYs",
+    "After settling or an interrupted Attempt, adopt ready/completed; after a succeeded Attempt, adopt completed. Preserve SUMMARYs",
   ),
 };
 const taskSettleSchema = z.object(taskSettleParams);

@@ -14,7 +14,11 @@ import {
   adoptOrTransitionLifecycle,
   readDomainOperationFence,
 } from "../db/writers/lifecycle-commands.ts";
-import { claimTaskAttempt, readTaskAttempt } from "../task-execution-domain-operation.ts";
+import {
+  claimTaskAttempt,
+  readTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
 import { applyTaskSettle, planTaskSettle } from "../task-settle.ts";
 import { resolveTaskCompletionAuthority } from "../task-completion-compatibility-adapter.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
@@ -447,6 +451,46 @@ test("reconcileLifecycle adopts completed for complete after interrupt without d
     applied.proof?.note ?? "",
     /no current passing Technical Verdict/,
   );
+});
+
+test("reconcileLifecycle adopts completed after an out-of-band succeeded Attempt (#2018)", () => {
+  const { attemptId, dir } = seedRunningAttempt();
+  settleTaskAttempt({
+    invocation: invocation("fixture/succeed"),
+    attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "executor completed out of band",
+    output: { completed: true },
+  });
+  assert.equal(readTaskAttempt(attemptId)?.outcome, "succeeded");
+  assert.equal(taskLifecycleStatus(), "in_progress");
+
+  assert.throws(
+    () => planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true }),
+    /succeeded Attempt with tasks.status complete/,
+    "a succeeded Attempt must not reconcile a legacy pending task back to ready",
+  );
+
+  const summaryPath = restoreSummary(dir, "# Out-of-band completion SUMMARY", "complete");
+  const planned = planTaskSettle(TASK, "operator repair", { reconcileLifecycle: true });
+  assert.equal(planned.rows.length, 0);
+  assert.deepEqual(
+    planned.lifecycleRows.map((row) => `${row.currentStatus}->${row.targetStatus}`),
+    ["in_progress->completed"],
+  );
+
+  const applied = applyTaskSettle({
+    invocation: invocation("settle/reconcile/succeeded"),
+    task: TASK,
+    reason: "operator repair",
+    reconcileLifecycle: true,
+  });
+  assert.equal(applied.settled, false);
+  assert.equal(applied.reconciled, true);
+  assert.equal(taskLifecycleStatus(), "completed");
+  assert.equal(existsSync(summaryPath), true);
+  assert.equal(readFileSync(summaryPath, "utf8"), "# Out-of-band completion SUMMARY");
 });
 
 test("reconcileLifecycle reports when completed repair still lacks passing proof (#1749)", () => {

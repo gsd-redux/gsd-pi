@@ -2625,7 +2625,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			"Run without apply first and read the planned rows before mutating.",
 			"Settles under the Attempt's held lease, or safely reclaims an expired/released lease when its worker is no longer live; never steals a live peer's lease.",
 			"A second apply is a no-op — the tool is idempotent.",
-			"reconcileLifecycle adopts ready/completed to match tasks.status after the interrupted Attempt without deleting SUMMARYs.",
+			"reconcileLifecycle adopts ready/completed after an interrupted Attempt, or completed after a succeeded Attempt, without deleting SUMMARYs.",
 		],
 		parameters: Type.Object(
 			{
@@ -2644,7 +2644,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				reconcileLifecycle: Type.Optional(
 					Type.Boolean({
 						description:
-							"After settling (or if already interrupted), adopt ready/completed to match tasks.status without deleting SUMMARYs.",
+							"After settling or an interrupted Attempt, adopt ready/completed; after a succeeded Attempt, adopt completed. Preserve SUMMARYs.",
 					}),
 				),
 			},
