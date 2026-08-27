@@ -141,6 +141,8 @@ const CONTEXT_MODE_GUIDANCE_BY_LANE: Record<Exclude<ContextModePolicy, "none">, 
 // with narrower tool contracts than their shared Context Mode lane, so their
 // guidance must name only tools the unit can actually call.
 export const CONTEXT_MODE_GUIDANCE_BY_UNIT: Readonly<Record<string, string>> = {
+  "plan-milestone":
+    "Use preloaded context and `gsd_milestone_status` for milestone state. Persist planning with `gsd_plan_milestone`, `gsd_plan_slice`, or `gsd_plan_task`; use `gsd_decision_save` and `gsd_requirement_update` when needed. These are the only GSD lifecycle tools available in this unit.",
   "discuss-milestone":
     "Use `ask_user_questions` to continue the milestone interview, then persist outcomes with `gsd_summary_save`, `gsd_decision_save`, `gsd_requirement_save`, `gsd_requirement_update`, `gsd_plan_milestone`, or `gsd_milestone_generate_id` as appropriate.",
   "discuss-slice":

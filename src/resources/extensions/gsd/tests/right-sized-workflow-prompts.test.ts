@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 
 import { buildCompleteMilestonePrompt, buildPlanMilestonePrompt } from "../auto-prompts.ts";
 import { createWorkspace, scopeMilestone } from "../workspace.ts";
+import { getUnitToolSurfaceContract } from "../unit-tool-contracts.ts";
 import {
   closeDatabase,
   insertMilestone,
@@ -86,6 +87,28 @@ test("plan-milestone prompt includes tiny untyped project classification and one
   } finally {
     cleanupRepo(base);
   }
+});
+
+test("plan-milestone prompt references only lifecycle tools allowed by its unit contract", async (t) => {
+  const base = makeRepo({ "hello.py": "print('hello')\n" });
+  t.after(() => cleanupRepo(base));
+  const prompt = await buildPlanMilestonePrompt(
+    "M001",
+    "Add hello command",
+    base,
+    scopeMilestone(createWorkspace(base), "M001"),
+    "minimal",
+  );
+  const allowed = new Set<string>(getUnitToolSurfaceContract("plan-milestone")?.allowedGsdTools ?? []);
+  const referenced = new Set(
+    Array.from(prompt.matchAll(/\b(gsd_[a-z0-9_]+)\b/gu), (match) => match[1]!),
+  );
+
+  assert.ok(referenced.size > 0, "rendered prompt should name its persistence tools");
+  for (const toolName of referenced) {
+    assert.ok(allowed.has(toolName), `rendered plan-milestone prompt must allow ${toolName}`);
+  }
+  assert.doesNotMatch(prompt, /\bgsd_(?:resume|exec|exec_search)\b/);
 });
 
 test("plan-milestone prompt includes small untyped project 1-2 slice guidance", async () => {

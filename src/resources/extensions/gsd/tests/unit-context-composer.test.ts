@@ -187,6 +187,14 @@ const laneLabelByMode: Record<string, string> = {
 };
 
 const contextModeGuidanceOverrideExpectedTools: Record<string, readonly string[]> = {
+  "plan-milestone": [
+    "gsd_milestone_status",
+    "gsd_plan_milestone",
+    "gsd_plan_slice",
+    "gsd_plan_task",
+    "gsd_decision_save",
+    "gsd_requirement_update",
+  ],
   "discuss-milestone": [
     "ask_user_questions",
     "gsd_summary_save",
@@ -343,6 +351,17 @@ test("Context Mode composer: research-project guidance steers to reconnaissance 
 
 test("Context Mode composer: narrow planning guidance steers only to contracted tools", () => {
   const cases = [
+    {
+      unitType: "plan-milestone",
+      expectedTools: [
+        "gsd_milestone_status",
+        "gsd_plan_milestone",
+        "gsd_plan_slice",
+        "gsd_plan_task",
+        "gsd_decision_save",
+        "gsd_requirement_update",
+      ],
+    },
     {
       unitType: "replan-slice",
       expectedTools: ["gsd_replan_slice", "gsd_decision_save"],
