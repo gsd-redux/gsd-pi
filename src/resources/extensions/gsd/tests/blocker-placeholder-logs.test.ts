@@ -1,9 +1,8 @@
 // gsd-pi — Blocker-placeholder recovery log coverage.
 //
-// writeBlockerPlaceholder (auto-recovery.ts:782) writes a placeholder artifact
-// so the pipeline can surface a stuck unit. Diagnostic placeholders never
-// fabricate Task or Slice lifecycle authority. The remaining plan-milestone
-// compatibility writes are best-effort and log recovery warnings on failure.
+// writeBlockerPlaceholder writes a placeholder artifact so the pipeline can
+// surface a stuck unit. Diagnostic placeholders never fabricate Task or Slice
+// lifecycle authority. Plan-milestone records a durable recovery gate instead.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -87,22 +86,20 @@ test("writeBlockerPlaceholder never reads or changes Slice authority", () => {
   }
 });
 
-test("writeBlockerPlaceholder logs a recovery warning when the plan-milestone insertSlice throws (auto-recovery.ts:853)", () => {
+test("writeBlockerPlaceholder logs a recovery warning when the plan-milestone blocker gate cannot persist", () => {
   const base = makeBase();
   try {
     openDatabase(join(base, ".gsd", "gsd.db"));
-    // Drop slices so the S00-blocker insertSlice throws inside the
-    // plan-milestone placeholder branch.
-    _getAdapter()!.exec("DROP TABLE slices");
+    _getAdapter()!.exec("DROP TABLE gate_runs");
 
     const { logs } = captureLogs(() =>
       writeBlockerPlaceholder("plan-milestone", "M001", base, "exhausted retries"),
     );
 
     const warn = recoveryWarnings(logs).find((w) =>
-      /insertSlice placeholder failed for plan-milestone recovery/u.test(w.message),
+      /planning blocker persistence failed for plan-milestone recovery/u.test(w.message),
     );
-    assert.ok(warn, "a recovery warning must be logged when the blocker slice insert throws");
+    assert.ok(warn, "a recovery warning must be logged when the durable blocker write throws");
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
@@ -148,21 +145,24 @@ test("writeBlockerPlaceholder never appends Slice lifecycle events", () => {
   }
 });
 
-test("writeBlockerPlaceholder logs a recovery warning when the plan-milestone appendEvent throws (auto-recovery.ts:908)", () => {
+test("writeBlockerPlaceholder never appends plan-milestone lifecycle events", () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-blocker-logs-pm-"));
   mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
   try {
     openDatabase(join(base, ".gsd", "gsd.db"));
-    // Slices table intact so the S00-blocker insertSlice (:907) succeeds;
-    // block the workflow-event append so the plan-milestone appendEvent (:908) throws.
+    insertMilestone({ id: "M001", title: "M", status: "active" });
+    // If recovery still appends a lifecycle event, this path forces it to fail
+    // and emit a warning. Durable planning blockers belong in gate_runs.
     mkdirSync(join(base, ".gsd", "event-log.jsonl"), { recursive: true });
 
     const { logs } = captureLogs(() =>
       writeBlockerPlaceholder("plan-milestone", "M001", base, "exhausted retries"),
     );
 
-    const warn = recoveryWarnings(logs).find((w) => /appendEvent failed for plan-milestone recovery/u.test(w.message));
-    assert.ok(warn, "a recovery warning must be logged when the plan-milestone appendEvent throws");
+    assert.equal(
+      recoveryWarnings(logs).some((warning) => /appendEvent failed for plan-milestone recovery/u.test(warning.message)),
+      false,
+    );
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

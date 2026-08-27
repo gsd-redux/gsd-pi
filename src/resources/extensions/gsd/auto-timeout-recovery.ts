@@ -307,26 +307,35 @@ export async function recoverTimedOutUnit(
     return "paused";
   }
 
-  // Retries exhausted — write a blocker placeholder and advance the pipeline
-  // instead of silently stalling.
+  // Retries exhausted — surface a blocker instead of silently stalling.
+  // Milestone planning pauses fail-closed; legacy units retain their existing
+  // placeholder-and-advance behavior.
   const placeholder = writeBlockerPlaceholder(
     unitType, unitId, basePath,
     `${reason} recovery exhausted ${maxRecoveryAttempts} attempts without producing the artifact.`,
   );
 
   if (placeholder) {
+    const planningBlocked = unitType === "plan-milestone";
     writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
-      phase: "skipped",
+      phase: planningBlocked ? "paused" : "skipped",
       recoveryAttempts: recoveryAttempts + 1,
       lastRecoveryReason: reason,
     });
-    ctx.ui.notify(
-      `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts. Blocker placeholder written to ${placeholder}. Advancing pipeline. (attempt ${attemptNumber})`,
-      "warning",
-    );
+    if (planningBlocked) {
+      ctx.ui.notify(
+        `${unitType} ${unitId} blocked after ${maxRecoveryAttempts} recovery attempts. Diagnostic written to ${placeholder}; no milestone work was marked complete. Pausing for repair. (attempt ${attemptNumber})`,
+        "error",
+      );
+    } else {
+      ctx.ui.notify(
+        `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts. Blocker placeholder written to ${placeholder}. Advancing pipeline. (attempt ${attemptNumber})`,
+        "warning",
+      );
+    }
     unitRecoveryCount.delete(recoveryKey);
     bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
-    return "recovered";
+    return planningBlocked ? "paused" : "recovered";
   }
 
   // Fallback: couldn't resolve artifact path — pause as before.

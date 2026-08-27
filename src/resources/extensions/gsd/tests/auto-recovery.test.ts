@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 
 import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, diagnoseWorktreeIntegrityFailure, buildLoopRemediationSteps, writeBlockerPlaceholder, refreshRecoveryDbForArtifact, writeReactiveExecuteBlocker } from "../auto-recovery.ts";
 import { resolveMilestoneFile } from "../paths.ts";
-import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult, updateMilestoneStatus } from "../gsd-db.ts";
+import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getPlanMilestoneRecoveryBlock, getTask, getSlice, saveGateResult, updateMilestoneStatus } from "../gsd-db.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
 import { internalExecutionInvocation } from "../execution-invocation.ts";
@@ -2664,6 +2664,11 @@ test("writeBlockerPlaceholder fails closed instead of inserting an S00-blocker s
       getSlice("M001", "S00-blocker"),
       null,
       "adopted milestone must not get a fabricated S00-blocker slice",
+    );
+    assert.match(
+      getPlanMilestoneRecoveryBlock("M001")?.reason ?? "",
+      /verification retries exhausted/,
+      "adopted milestone planning failures still need a durable blocker",
     );
     const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
     assert.equal(

@@ -8,7 +8,15 @@ import {
   verifyExpectedArtifact,
   buildLoopRemediationSteps,
 } from "../../auto-recovery.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice } from "../../gsd-db.ts";
+import {
+  closeDatabase,
+  getMilestoneSlices,
+  getPlanMilestoneRecoveryBlock,
+  insertMilestone,
+  insertSlice,
+  openDatabase,
+} from "../../gsd-db.ts";
+import { deriveState, invalidateStateCache } from "../../state.ts";
 import { drainLogs, setStderrLoggingEnabled, _resetLogs } from "../../workflow-logger.ts";
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -465,32 +473,37 @@ test('writeBlockerPlaceholder: complete-slice diagnostics never fabricate Slice 
   }
 });
 
-test('writeBlockerPlaceholder: inserts placeholder slice for plan-milestone so deriveState exits pre-planning (#4378)', async () => {
+test('writeBlockerPlaceholder: plan-milestone failure records a durable blocker without completed slices', async (t) => {
   const base = createFixtureBase();
-  try {
-    const { openDatabase, closeDatabase, insertMilestone, getMilestoneSlices, isDbAvailable } =
-      await import("../../gsd-db.ts");
+  t.after(() => cleanup(base));
+  const dbPath = join(base, ".gsd", "gsd.db");
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
 
-    const dbPath = join(base, ".gsd", "gsd.db");
-    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  openDatabase(dbPath);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
 
-    openDatabase(dbPath);
-    try {
-      insertMilestone({ id: "M001", title: "Test", status: "active" });
+  writeBlockerPlaceholder("plan-milestone", "M001", base, "idle recovery exhausted");
 
-      // Before fix: writeBlockerPlaceholder wrote the placeholder ROADMAP.md but
-      // never updated the DB, so activeMilestoneSlices.length === 0 on next deriveState
-      // call → state.phase stays 'pre-planning' → plan-milestone dispatches again → infinite loop
-      writeBlockerPlaceholder("plan-milestone", "M001", base, "idle recovery exhausted");
+  const slices = getMilestoneSlices("M001");
+  assert.deepEqual(slices, [], "planning recovery must not fabricate completed milestone work");
+  assert.match(
+    getPlanMilestoneRecoveryBlock("M001")?.reason ?? "",
+    /idle recovery exhausted/,
+    "planning failure should be durably queryable",
+  );
 
-      const slices = getMilestoneSlices("M001");
-      assert.ok(slices.length > 0,
-        "writeBlockerPlaceholder must insert a placeholder slice for plan-milestone so " +
-        "deriveState sees activeMilestoneSlices.length > 0 and exits pre-planning phase (#4378)");
-    } finally {
-      if (isDbAvailable()) closeDatabase();
-    }
-  } finally {
-    cleanup(base);
-  }
+  invalidateStateCache();
+  const state = await deriveState(base);
+  assert.equal(state.phase, "blocked", "planning failure must stop dispatch before validation");
+  assert.equal(state.activeMilestone?.id, "M001");
+  assert.match(state.blockers.join("\n"), /idle recovery exhausted/);
+
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Real work", status: "pending" });
+  invalidateStateCache();
+  const recoveredState = await deriveState(base);
+  assert.notEqual(
+    recoveredState.phase,
+    "blocked",
+    "a successfully persisted real slice should supersede the recovery gate",
+  );
 });

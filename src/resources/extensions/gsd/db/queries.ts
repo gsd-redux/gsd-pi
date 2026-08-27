@@ -638,6 +638,31 @@ export function getMilestone(id: string): MilestoneRow | null {
   return rowToMilestone(row);
 }
 
+export interface PlanMilestoneRecoveryBlock {
+  reason: string;
+}
+
+/** Latest unresolved fail-closed recovery gate for a milestone with no executable plan. */
+export function getPlanMilestoneRecoveryBlock(milestoneId: string): PlanMilestoneRecoveryBlock | null {
+  const db = getDbOrNull();
+  if (!db) return null;
+  const row = db.prepare(`
+    SELECT outcome, rationale, findings
+    FROM gate_runs
+    WHERE gate_id = 'plan-milestone-recovery'
+      AND unit_type = 'plan-milestone'
+      AND milestone_id = :milestone_id
+    ORDER BY id DESC
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId });
+  if (!row || row["outcome"] !== "manual-attention") return null;
+  const rationale = typeof row["rationale"] === "string" ? row["rationale"].trim() : "";
+  const findings = typeof row["findings"] === "string" ? row["findings"].trim() : "";
+  return {
+    reason: rationale || findings || `Milestone ${milestoneId} planning failed.`,
+  };
+}
+
 export function getActiveMilestoneFromDb(): MilestoneRow | null {
   if (!getDbOrNull()!) return null;
   const row = getDbOrNull()!.prepare(

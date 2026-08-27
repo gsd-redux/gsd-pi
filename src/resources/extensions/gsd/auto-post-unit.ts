@@ -2289,7 +2289,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // - User-input waits in deep setup: pause instead of retrying or writing
       //   placeholders while the agent is waiting for approval.
       // - Deterministic policy rejection (#4973): structural write-gate failure
-      //   that will recur on every retry, so write a blocker placeholder.
+      //   that will recur on every retry, so surface a blocker without retrying.
       // - DB infra failure (#2517): completion tool returned db_unavailable, so
       //   the artifact was never written. Retrying can never succeed.
       // - Tool invocation error (#2883/#3595): malformed JSON args or queued
@@ -2356,17 +2356,24 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         return "dispatched";
       } else if (!triggerArtifactVerified && s.lastToolInvocationError && isDeterministicPolicyError(s.lastToolInvocationError)) {
         const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
+        const planningBlocked = s.currentUnit.type === "plan-milestone";
         debugLog("postUnit", { phase: "deterministic-policy-error-placeholder", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError });
-        const reason = `Deterministic policy rejection for ${s.currentUnit.type} "${s.currentUnit.id}": ${s.lastToolInvocationError}. Retrying cannot resolve this gate — writing blocker placeholder to advance pipeline.`;
+        const reason = `Deterministic policy rejection for ${s.currentUnit.type} "${s.currentUnit.id}": ${s.lastToolInvocationError}. Retrying cannot resolve this gate — ${planningBlocked ? "recording a fail-closed planning blocker" : "writing blocker placeholder to advance pipeline"}.`;
         s.lastToolInvocationError = null;
         s.pendingVerificationRetry = null;
         s.verificationRetryCount.delete(retryKey);
         s.verificationRetryFailureHashes.delete(retryKey);
         writeBlockerPlaceholder(s.currentUnit.type, s.currentUnit.id, s.basePath, reason);
         ctx.ui.notify(
-          `${s.currentUnit.type} ${s.currentUnit.id} — deterministic policy rejection, wrote blocker placeholder (no retries)`,
-          "warning",
+          planningBlocked
+            ? `${s.currentUnit.type} ${s.currentUnit.id} — deterministic policy rejection, recorded planning blocker and paused (no work marked complete)`
+            : `${s.currentUnit.type} ${s.currentUnit.id} — deterministic policy rejection, wrote blocker placeholder (no retries)`,
+          planningBlocked ? "error" : "warning",
         );
+        if (planningBlocked) {
+          await pauseAuto(ctx, pi);
+          return "dispatched";
+        }
         // Fall through to "continue" — do NOT enter the retry or db-unavailable paths.
       } else if (!triggerArtifactVerified && diagnoseWorktreeIntegrityFailure(verificationBasePath)) {
         const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;

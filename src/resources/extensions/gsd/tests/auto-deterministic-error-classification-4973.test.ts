@@ -2,7 +2,8 @@
 //
 // When gsd_summary_save returns context_write_blocked (a deterministic write-gate
 // rejection), the retry controller must NOT re-dispatch with escalating model tiers.
-// Instead it must write a blocker placeholder and advance the pipeline immediately.
+// Instead it must surface a blocker without retrying. Milestone planning pauses
+// fail-closed; legacy units may retain placeholder-and-advance recovery.
 //
 // Test 5 — deterministic error short-circuits retry:
 //   - isDeterministicPolicyError correctly classifies context_write_blocked errors
@@ -31,6 +32,13 @@ import {
 import { AutoSession } from "../auto/session.ts";
 import { _setAutoActiveForTest } from "../auto.ts";
 import { escalateTier } from "../model-router.ts";
+import {
+  closeDatabase,
+  getMilestoneSlices,
+  getPlanMilestoneRecoveryBlock,
+  insertMilestone,
+  openDatabase,
+} from "../gsd-db.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -255,6 +263,43 @@ describe("Test 5 — postUnitPreVerification short-circuits on deterministic err
       existsSync(placeholderPath),
       `blocker placeholder must be written at ${placeholderPath}`,
     );
+  });
+
+  test("plan-milestone deterministic rejection records a blocker and pauses without fake work", async (t) => {
+    const { postUnitPreVerification } = await import("../auto-post-unit.ts");
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    t.after(() => closeDatabase());
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+
+    const s = new AutoSession();
+    s.active = true;
+    s.basePath = base;
+    s.currentUnit = { type: "plan-milestone", id: "M001", startedAt: Date.now() };
+    s.lastToolInvocationError = "This is a mechanical gate: gsd_resume is not allowed";
+
+    const notifications: string[] = [];
+    let pauseCalled = false;
+    const pctx = {
+      s,
+      ctx: { ui: { notify: (message: string) => notifications.push(message) } },
+      pi: {},
+      buildSnapshotOpts: () => ({}) as any,
+      lockBase: () => base,
+      stopAuto: async () => {},
+      pauseAuto: async () => { pauseCalled = true; },
+      updateProgressWidget: () => {},
+    } as any;
+
+    const result = await postUnitPreVerification(pctx, {
+      skipSettleDelay: true,
+      skipWorktreeSync: true,
+    });
+
+    assert.strictEqual(result, "dispatched", "failed milestone planning must pause auto-mode");
+    assert.strictEqual(pauseCalled, true);
+    assert.deepEqual(getMilestoneSlices("M001"), [], "recovery must not create S00-blocker");
+    assert.match(getPlanMilestoneRecoveryBlock("M001")?.reason ?? "", /gsd_resume is not allowed/);
+    assert.ok(notifications.some((message) => message.includes("no work marked complete")));
   });
 });
 

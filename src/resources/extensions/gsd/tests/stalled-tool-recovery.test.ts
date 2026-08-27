@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifyExpectedArtifact } from "../auto-recovery.ts";
 import { recoverTimedOutUnit, type RecoveryContext } from "../auto-timeout-recovery.ts";
-import { closeDatabase, insertAssessment, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
+import { closeDatabase, getMilestoneSlices, getPlanMilestoneRecoveryBlock, insertAssessment, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -217,6 +217,39 @@ function makeRecordingCtx() {
     rmSync(base, { recursive: true, force: true });
   }
 }
+
+// ═══ plan-milestone timeout recovery fails closed without fake work ═══
+
+test("plan-milestone timeout recovery persists a blocker and pauses", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-timeout-plan-milestone-blocked-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  const ctx = makeRecordingCtx();
+  const pi = makeRecordingPi();
+  const recoveryContext: RecoveryContext = {
+    basePath: base,
+    verbose: false,
+    currentUnitStartedAt: Date.now(),
+    unitRecoveryCount: new Map(),
+  };
+
+  assert.equal(await recoverTimedOutUnit(ctx, pi, "plan-milestone", "M001", "idle", recoveryContext), "recovered");
+  assert.equal(await recoverTimedOutUnit(ctx, pi, "plan-milestone", "M001", "idle", recoveryContext), "recovered");
+  assert.equal(await recoverTimedOutUnit(ctx, pi, "plan-milestone", "M001", "idle", recoveryContext), "paused");
+
+  assert.deepEqual(getMilestoneSlices("M001"), [], "timeout recovery must not fabricate a completed slice");
+  assert.match(getPlanMilestoneRecoveryBlock("M001")?.reason ?? "", /recovery exhausted/);
+  assert.ok(
+    ctx.notifications.some((entry: { message: string }) => entry.message.includes("no milestone work was marked complete")),
+    "timeout recovery should explain why planning paused",
+  );
+});
 
 // ═══ plan-slice verification accepts completed task summaries ═══════════════
 

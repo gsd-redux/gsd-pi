@@ -18,6 +18,7 @@ import {
   getAllMilestones,
   getArtifact,
   getMilestoneScopedArtifacts,
+  getPlanMilestoneRecoveryBlock,
   getPendingGateCountForTurn,
   getReplanHistory,
   getRequirementCounts,
@@ -481,6 +482,15 @@ export async function deriveStateFromDb(
   }
 
   if (activeMilestoneSlices.length === 0) {
+    const planningBlocker = getPlanMilestoneRecoveryBlock(activeMilestone.id);
+    if (planningBlocker) {
+      return buildDerivedState(
+        { activeMilestone, registry, requirements, milestoneProgress },
+        'blocked',
+        `Milestone ${activeMilestone.id} planning is blocked. Resolve the planning failure before resuming auto-mode.`,
+        { blockers: [planningBlocker.reason] },
+      );
+    }
     const phase = activeMilestoneHasDraft ? 'needs-discussion' as const : 'pre-planning' as const;
     const nextAction = activeMilestoneHasDraft
       ? `Discuss draft context for milestone ${activeMilestone.id}.`

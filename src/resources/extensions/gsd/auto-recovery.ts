@@ -11,7 +11,6 @@
 
 import { parseUnitId } from "./unit-id.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
-import { appendEvent } from "./workflow-events.js";
 import { clearParseCache } from "./files.js";
 import {
   isDbAvailable,
@@ -20,7 +19,7 @@ import {
   getSlice,
   getSliceTasks,
   getPendingGatesForTurn,
-  insertSlice,
+  insertGateRun,
   getMilestone,
   immediateTransaction,
   updateMilestoneStatus,
@@ -29,7 +28,7 @@ import {
   recordMilestoneCommitAttribution,
 } from "./gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
-import { isValidationTerminal } from "./state.js";
+import { invalidateStateCache, isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { readIntegrationBranch } from "./git-service.js";
@@ -450,23 +449,7 @@ export function writeReactiveExecuteBlocker(
 }
 
 /**
- * Whether a milestone already has canonical Domain-Operation lifecycle
- * history. Adopted milestones must not have a fabricated blocker slice
- * inserted to paper over a stuck plan-milestone unit (fail-closed).
- */
-function hasAdoptedMilestoneHistory(milestoneId: string): boolean {
-  return Boolean(getDb().prepare(`
-    SELECT 1 AS adopted
-    FROM workflow_item_lifecycles
-    WHERE item_kind = 'milestone'
-      AND milestone_id = :milestone_id
-      AND slice_id IS NULL
-      AND task_id IS NULL
-  `).get({ ":milestone_id": milestoneId }));
-}
-
-/**
- * Write a placeholder artifact so the pipeline can advance past a stuck unit.
+ * Write a placeholder artifact so recovery can surface a stuck unit.
  * Returns the relative path written, or null if the path couldn't be resolved.
  */
 export function writeBlockerPlaceholder(
@@ -487,7 +470,9 @@ export function writeBlockerPlaceholder(
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const recoveryLine = unitType === "research-project"
     ? "This placeholder was written by auto-mode so the project research gate can stop fail-closed."
-    : "This placeholder was written by auto-mode so the pipeline can advance.";
+    : unitType === "plan-milestone"
+      ? "This diagnostic records a fail-closed planning gate; it is not a roadmap or completed milestone work."
+      : "This placeholder was written by auto-mode so the pipeline can advance.";
   const content = [
     `# BLOCKER — auto-mode recovery failed`,
     ``,
@@ -508,23 +493,34 @@ export function writeBlockerPlaceholder(
   clearPathCache();
   clearParseCache();
 
-  // Legacy non-Task placeholder handling remains until its owning lifecycle
-  // cutover. Task placeholders are diagnostic-only.
+  // A failed milestone plan must stop durably without fabricating a completed
+  // slice. The recovery gate remains authoritative while the milestone has no
+  // real slices; a later successful plan supersedes it by creating those rows.
   if (isDbAvailable()) {
     const { milestone: mid } = parseUnitId(unitId);
-    const ts = new Date().toISOString();
-    // Insert a placeholder complete slice so deriveState sees activeMilestoneSlices.length > 0
-    // and exits the pre-planning phase. Without this, activeMilestoneSlices stays empty
-    // after the blocker ROADMAP.md is written, causing deriveState to return phase:'pre-planning'
-    // indefinitely and re-dispatching plan-milestone in an infinite loop (#4378).
     if (unitType === "plan-milestone" && mid) {
-      if (hasAdoptedMilestoneHistory(mid)) {
-        logWarning("recovery", `Skipping fabricated S00-blocker slice for ${mid}: adopted canonical milestone history exists (fail-closed; see S05 for the real cascade).`);
-      } else {
-        try {
-          insertSlice({ id: "S00-blocker", milestoneId: mid, title: "Blocker placeholder — planning failed", status: "complete", sequence: 0 });
-        } catch (e) { logWarning("recovery", `insertSlice placeholder failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
-        try { appendEvent(base, { cmd: "plan-milestone", params: { milestoneId: mid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      const recordedAt = new Date().toISOString();
+      try {
+        insertGateRun({
+          traceId: `auto-recovery:${mid}`,
+          turnId: `plan-milestone:${mid}:${recordedAt}`,
+          gateId: "plan-milestone-recovery",
+          gateType: "policy",
+          unitType,
+          unitId,
+          milestoneId: mid,
+          outcome: "manual-attention",
+          failureClass: "manual-attention",
+          rationale: reason,
+          findings: `Diagnostic artifact: ${blockerArtifactPath}`,
+          attempt: 1,
+          maxAttempts: 1,
+          retryable: false,
+          evaluatedAt: recordedAt,
+        });
+        invalidateStateCache();
+      } catch (e) {
+        logWarning("recovery", `planning blocker persistence failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
