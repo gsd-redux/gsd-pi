@@ -107,7 +107,6 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   // Dotted aliases: real GitHub Copilot dispatch IDs (claude point-releases use a dot,
   // e.g. "claude-opus-4.8"). Without these, getModelTier/isKnownModel fail to classify
   // the configured ceiling and dynamic downgrade is silently skipped (everything pins to Opus).
-  "claude-opus-4.5": "heavy",
   "claude-opus-4.6": "heavy",
   "claude-opus-4.7": "heavy",
   "claude-opus-4.8": "heavy",
@@ -148,8 +147,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-opus-4-6": 0.005,
   "claude-opus-4-7": 0.005,
   "claude-opus-4-8": 0.005,
-  "claude-opus-4.5": 0.005,               // dotted aliases
-  "claude-opus-4.6": 0.005,
+  "claude-opus-4.6": 0.005,               // dotted aliases
   "claude-opus-4.7": 0.005,
   "claude-opus-4.8": 0.005,
   "claude-opus-5": 0.005,

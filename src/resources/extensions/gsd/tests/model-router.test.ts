@@ -1522,6 +1522,65 @@ describe("model-router registry keys", () => {
     );
   });
 
+  test("dotted claude aliases keep parity across tier, cost, and capability registries", () => {
+    // Regression for PR #2024 review (copilot-pull-request-reviewer): a phantom
+    // "claude-opus-4.5" dotted alias was added to MODEL_CAPABILITY_TIER and
+    // MODEL_COST_PER_1K_INPUT but not to MODEL_CAPABILITY_PROFILES (nor the cost
+    // table), so a half-added alias would fall back to the default 50/50 profile
+    // and the expensive cost path. Dotted aliases must appear in ALL THREE router
+    // registries or NONE. This walks the real object literals via the TS AST.
+    const routerPath = join(dirname(fileURLToPath(import.meta.url)), "..", "model-router.ts");
+    // allow-source-grep: AST structural linter over the three registry object
+    // literals; it reads PropertyAssignment nodes, not source text.
+    const source = ts.createSourceFile(
+      routerPath,
+      readFileSync(routerPath, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+
+    const registryKeys: Record<string, Set<string>> = {
+      MODEL_CAPABILITY_TIER: new Set(),
+      MODEL_COST_PER_1K_INPUT: new Set(),
+      MODEL_CAPABILITY_PROFILES: new Set(),
+    };
+    const DOTTED_CLAUDE = /^claude-.*\.\d/;
+
+    function keyText(prop: ts.ObjectLiteralElementLike): string | undefined {
+      if (!ts.isPropertyAssignment(prop)) return undefined;
+      const name = prop.name;
+      if (ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+      if (ts.isIdentifier(name)) return name.text;
+      return undefined;
+    }
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text in registryKeys &&
+        node.initializer &&
+        ts.isObjectLiteralExpression(node.initializer)
+      ) {
+        const bucket = registryKeys[node.name.text]!;
+        for (const prop of node.initializer.properties) {
+          const key = keyText(prop);
+          if (key && DOTTED_CLAUDE.test(key)) bucket.add(key);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+
+    const tier = [...registryKeys.MODEL_CAPABILITY_TIER!].sort();
+    const cost = [...registryKeys.MODEL_COST_PER_1K_INPUT!].sort();
+    const profiles = [...registryKeys.MODEL_CAPABILITY_PROFILES!].sort();
+
+    assert.ok(tier.length > 0, "expected at least one dotted claude alias in the tier map");
+    assert.deepEqual(cost, tier, `cost registry dotted-alias keys differ from tier: ${cost.join(", ")} vs ${tier.join(", ")}`);
+    assert.deepEqual(profiles, tier, `capability-profile dotted-alias keys differ from tier: ${profiles.join(", ")} vs ${tier.join(", ")}`);
+  });
+
   test("claude-sonnet-5 keeps one consistent entry across tier, cost, and capability registries", () => {
     assert.equal(MODEL_CAPABILITY_TIER["claude-sonnet-5"], "standard");
     assert.deepEqual(MODEL_CAPABILITY_PROFILES["claude-sonnet-5"], {
