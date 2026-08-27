@@ -129,7 +129,36 @@ test("downgrades from opus to sonnet for standard tier", () => {
   assert.equal(result.wasDowngraded, true);
 });
 
-// ─── Explicit tier_models ────────────────────────────────────────────────────
+// ─── Dotted claude IDs (real GitHub Copilot dispatch IDs) ────────────────────
+
+test("dotted claude-opus-4.8 ceiling is classified heavy and downgrades a light task (not bypassed as unknown)", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  const result = resolveModelForComplexity(
+    makeClassification("light"),
+    { primary: "claude-opus-4.8", fallbacks: [] },
+    config,
+    ["claude-opus-4.8", "claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"],
+  );
+  // Regression: dotted claude point-release IDs must be recognized by the tier map;
+  // otherwise isKnownModel() returns false and routing is bypassed (everything pins to Opus).
+  assert.ok(
+    result.modelId === "claude-haiku-4-5" || result.modelId === "gpt-4o-mini",
+    `Expected light-tier downgrade, got ${result.modelId}`,
+  );
+  assert.equal(result.wasDowngraded, true);
+});
+
+test("dotted claude-opus-4.8 ceiling downgrades a standard task to sonnet", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  const result = resolveModelForComplexity(
+    makeClassification("standard"),
+    { primary: "claude-opus-4.8", fallbacks: [] },
+    config,
+    ["claude-opus-4.8", "claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o-mini"],
+  );
+  assert.equal(result.modelId, "claude-sonnet-4-6");
+  assert.equal(result.wasDowngraded, true);
+});
 
 test("uses explicit tier_models when configured", () => {
   const config: DynamicRoutingConfig = {

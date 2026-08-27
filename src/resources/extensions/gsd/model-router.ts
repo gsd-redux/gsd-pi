@@ -73,6 +73,7 @@ export interface ModelCapabilities {
 export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   // Light-tier models (cheapest)
   "claude-haiku-4-5": "light",
+  "claude-haiku-4.5": "light",             // dotted alias: real GitHub Copilot dispatch ID
   "claude-3-5-haiku-latest": "light",
   "claude-3-haiku-20240307": "light",
   "gpt-4o-mini": "light",
@@ -89,6 +90,7 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
 
   // Standard-tier models
   "claude-sonnet-4-6": "standard",
+  "claude-sonnet-4.6": "standard",         // dotted alias
   "claude-sonnet-5": "standard",           // GA on GitHub Copilot, Anthropic, Vertex, Bedrock
   "claude-sonnet-4-5-20250514": "standard",
   "claude-3-5-sonnet-latest": "standard",
@@ -102,6 +104,13 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-opus-4-6": "heavy",
   "claude-opus-4-7": "heavy",
   "claude-opus-4-8": "heavy",
+  // Dotted aliases: real GitHub Copilot dispatch IDs (claude point-releases use a dot,
+  // e.g. "claude-opus-4.8"). Without these, getModelTier/isKnownModel fail to classify
+  // the configured ceiling and dynamic downgrade is silently skipped (everything pins to Opus).
+  "claude-opus-4.5": "heavy",
+  "claude-opus-4.6": "heavy",
+  "claude-opus-4.7": "heavy",
+  "claude-opus-4.8": "heavy",
   "claude-opus-5": "heavy",
   "claude-fable-5": "heavy",
   "claude-3-opus-latest": "heavy",
@@ -130,13 +139,19 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
 
 const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-haiku-4-5": 0.0008,
+  "claude-haiku-4.5": 0.0008,             // dotted alias
   "claude-3-5-haiku-latest": 0.0008,
   "claude-sonnet-4-6": 0.003,
+  "claude-sonnet-4.6": 0.003,             // dotted alias
   "claude-sonnet-5": 0.003,                // $3.00/M input; matches Sonnet 4.x pricing
   "claude-sonnet-4-5-20250514": 0.003,
   "claude-opus-4-6": 0.005,
   "claude-opus-4-7": 0.005,
   "claude-opus-4-8": 0.005,
+  "claude-opus-4.5": 0.005,               // dotted aliases
+  "claude-opus-4.6": 0.005,
+  "claude-opus-4.7": 0.005,
+  "claude-opus-4.8": 0.005,
   "claude-opus-5": 0.005,
   "claude-fable-5": 0.010,
   "gpt-4o-mini": 0.00015,
@@ -179,13 +194,19 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "claude-opus-4-6":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-opus-4-7":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-opus-4-8":              { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
+  // Dotted aliases (real GitHub Copilot dispatch IDs)
+  "claude-opus-4.6":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
+  "claude-opus-4.7":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
+  "claude-opus-4.8":              { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
   "claude-opus-5":                { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
   "claude-fable-5":               { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
   "claude-sonnet-4-6":            { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
+  "claude-sonnet-4.6":            { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-sonnet-5":              { coding: 90, debugging: 85, research: 80, reasoning: 87, speed: 55, longContext: 80, instruction: 88 },
   "claude-sonnet-4-5-20250514":   { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-3-5-sonnet-latest":     { coding: 82, debugging: 78, research: 72, reasoning: 78, speed: 62, longContext: 70, instruction: 82 },
   "claude-haiku-4-5":             { coding: 60, debugging: 50, research: 45, reasoning: 50, speed: 95, longContext: 50, instruction: 75 },
+  "claude-haiku-4.5":             { coding: 60, debugging: 50, research: 45, reasoning: 50, speed: 95, longContext: 50, instruction: 75 },
   "claude-3-5-haiku-latest":      { coding: 60, debugging: 50, research: 45, reasoning: 50, speed: 95, longContext: 50, instruction: 75 },
   "claude-3-haiku-20240307":      { coding: 50, debugging: 40, research: 35, reasoning: 40, speed: 95, longContext: 40, instruction: 65 },
   "claude-3-opus-latest":         { coding: 90, debugging: 85, research: 82, reasoning: 90, speed: 35, longContext: 75, instruction: 88 },
