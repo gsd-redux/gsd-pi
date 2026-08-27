@@ -1001,6 +1001,89 @@ afterEach(() => {
   tempDirs.clear();
 });
 
+test("ready pending Task can authorize its current agent-owned abort (#2020)", () => {
+  const failed = seedFailedAttempt();
+  const aborted = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/ready-pending/abort"),
+    attemptId: failed.attemptId,
+    resultId: failed.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "The executor stopped before the Task could complete.",
+    evidence: { source: "executor" },
+    rationale: "Require an explicit repaired retry.",
+  });
+  assert.equal(aborted.action, "abort");
+
+  for (const lifecycleStatus of ["paused", "ready"] as const) {
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: "test.task.lifecycle",
+      idempotencyKey: `recovery/ready-pending/${lifecycleStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { lifecycleStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus,
+      });
+      return {
+        events: [{
+          eventType: "test.task.lifecycle",
+          entityType: "task",
+          entityId: "M001/S01/T01",
+          payload: { lifecycleStatus },
+          destinations: ["test"],
+        }],
+        projections: [{
+          projectionKey: `test/task/${lifecycleStatus}`,
+          projectionKind: "test",
+          rendererVersion: "1",
+        }],
+      };
+    });
+  }
+
+  assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "pending");
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "ready");
+  assert.deepEqual(readTaskRecoveryResumeEligibility(aborted.recoveryActionId), {
+    recoveryActionId: aborted.recoveryActionId,
+    eligible: true,
+    attemptId: failed.attemptId,
+    resultId: failed.resultId,
+  });
+  assert.deepEqual(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), {
+    recoveryActionId: aborted.recoveryActionId,
+  });
+
+  const resumed = resumeTaskRecovery({
+    invocation: invocation("recovery/ready-pending/resume"),
+    recoveryActionId: aborted.recoveryActionId,
+    repairSummary: "Repaired the executor and verified that it can claim the Task again.",
+    evidence: { command: "pnpm test task-recovery", exitCode: 0 },
+  });
+  assert.equal(resumed.status, "committed");
+  assert.equal(readTaskRecoveryRoute(failed.attemptId)?.resumeAuthorized, true);
+  assert.equal(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), null);
+
+  const claimed = claimTaskAttempt({
+    invocation: invocation("recovery/ready-pending/claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: insertClaimedDispatch(2),
+    retryOfAttemptId: failed.attemptId,
+  });
+  assert.equal(claimed.attemptNumber, 2);
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+});
+
 test("durable budget use survives retries and exhausts to agent abort", async () => {
   const firstFailure = seedFailedAttempt();
   const summaries = [

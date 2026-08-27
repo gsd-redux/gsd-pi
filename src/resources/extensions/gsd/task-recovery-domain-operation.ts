@@ -729,7 +729,9 @@ export function readTaskRecoveryResumeEligibility(
   if (stored["recovery_owner"] !== "agent") return reject("agent-owned", `recovery owner is ${String(stored["recovery_owner"])}, not agent`);
   if (stored["blocker_id"] !== null) return reject("action-blocker", "Recovery Action is linked to a Blocker");
   if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
-  if (stored["lifecycle_status"] !== "in_progress") return reject("lifecycle-in-progress", `Task lifecycle is ${String(stored["lifecycle_status"])}`);
+  if (stored["lifecycle_status"] !== "in_progress" && stored["lifecycle_status"] !== "ready") {
+    return reject("lifecycle-in-progress", `Task lifecycle is ${String(stored["lifecycle_status"])}`);
+  }
   if (stored["attempt_state"] !== "settled") return reject("attempt-settled", `Attempt state is ${String(stored["attempt_state"])}`);
   if (Number(stored["causal_authority"]) !== 1) return reject("causal-authority", "Result no longer owns the current execute/verify failure route");
   // #1754 residual databases can contain a settled successful successor that
