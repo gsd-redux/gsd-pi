@@ -88,6 +88,8 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gemini-flash-2.0": "light",
 
   // Standard-tier models
+  "claude-sonnet-4": "standard",
+  "claude-sonnet-4-5": "standard",
   "claude-sonnet-4-6": "standard",
   "claude-sonnet-5": "standard",           // GA on GitHub Copilot, Anthropic, Vertex, Bedrock
   "claude-sonnet-4-5-20250514": "standard",
@@ -99,6 +101,7 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "deepseek-chat": "standard",
 
   // Heavy-tier models (most capable)
+  "claude-opus-4-5": "heavy",
   "claude-opus-4-6": "heavy",
   "claude-opus-4-7": "heavy",
   "claude-opus-4-8": "heavy",
@@ -131,9 +134,12 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
 const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-haiku-4-5": 0.0008,
   "claude-3-5-haiku-latest": 0.0008,
+  "claude-sonnet-4": 0.003,
+  "claude-sonnet-4-5": 0.003,
   "claude-sonnet-4-6": 0.003,
   "claude-sonnet-5": 0.003,                // $3.00/M input; matches Sonnet 4.x pricing
   "claude-sonnet-4-5-20250514": 0.003,
+  "claude-opus-4-5": 0.005,
   "claude-opus-4-6": 0.005,
   "claude-opus-4-7": 0.005,
   "claude-opus-4-8": 0.005,
@@ -176,11 +182,14 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
 
 export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   // ── Anthropic ──────────────────────────────────────────────────────────────
+  "claude-opus-4-5":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-opus-4-6":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-opus-4-7":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-opus-4-8":              { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
   "claude-opus-5":                { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
   "claude-fable-5":               { coding: 97, debugging: 92, research: 87, reasoning: 97, speed: 30, longContext: 85, instruction: 92 },
+  "claude-sonnet-4":              { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
+  "claude-sonnet-4-5":            { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-sonnet-4-6":            { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-sonnet-5":              { coding: 90, debugging: 85, research: 80, reasoning: 87, speed: 55, longContext: 80, instruction: 88 },
   "claude-sonnet-4-5-20250514":   { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
@@ -316,9 +325,12 @@ export function scoreEligibleModels(
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): Array<{ modelId: string; score: number }> {
   const scored = eligibleModelIds.map(modelId => {
-    const bareId = bareModelId(modelId);
-    const builtin = MODEL_CAPABILITY_PROFILES[bareId];
-    const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
+    const bareId = modelId.split("/").pop() ?? modelId;
+    const canonicalId = canonicalModelId(modelId);
+    const builtin = MODEL_CAPABILITY_PROFILES[canonicalId];
+    const override = capabilityOverrides?.[modelId]
+      ?? capabilityOverrides?.[bareId]
+      ?? capabilityOverrides?.[canonicalId];
     const profile: ModelCapabilities = builtin
       ? override ? { ...builtin, ...override } : builtin
       : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
@@ -327,8 +339,8 @@ export function scoreEligibleModels(
   scored.sort((a, b) => {
     const scoreDiff = b.score - a.score;
     if (Math.abs(scoreDiff) > 2) return scoreDiff;
-    const costA = MODEL_COST_PER_1K_INPUT[a.modelId] ?? Infinity;
-    const costB = MODEL_COST_PER_1K_INPUT[b.modelId] ?? Infinity;
+    const costA = getModelCost(a.modelId);
+    const costB = getModelCost(b.modelId);
     if (costA !== costB) return costA - costB;
     return a.modelId.localeCompare(b.modelId);
   });
@@ -354,8 +366,8 @@ export function getEligibleModels(
     // Exact match
     if (availableModelIds.includes(explicitModel)) return [explicitModel];
     // Provider-prefix-stripped match
-    const bareExplicit = bareModelId(explicitModel);
-    const match = availableModelIds.find(id => bareModelId(id) === bareExplicit);
+    const bareExplicit = canonicalModelId(explicitModel);
+    const match = availableModelIds.find(id => canonicalModelId(id) === bareExplicit);
     if (match) return [match];
   }
 
@@ -646,7 +658,7 @@ function findModelForTier(
   // Same-provider only: keep models whose bare ID matches a canonical
   // Anthropic ID at this tier (i.e., a claude-* model in the tier map).
   const sameProvider = eligible.filter(id => {
-    const bare = bareModelId(id);
+    const bare = canonicalModelId(id);
     return MODEL_CAPABILITY_TIER[bare] === tier && bare.startsWith("claude-");
   });
 
@@ -741,17 +753,17 @@ function findAvailableModelId(
   if (!preferredModelId) return undefined;
   if (availableModelIds.includes(preferredModelId)) return preferredModelId;
 
-  const preferredBare = bareModelId(preferredModelId);
+  const preferredBare = canonicalModelId(preferredModelId);
   if (!preferredBare) return undefined;
   const preferredProvider = modelProvider(preferredModelId)?.toLowerCase();
   if (preferredProvider) {
     const providerMatch = availableModelIds.find(id =>
-      modelProvider(id)?.toLowerCase() === preferredProvider && bareModelId(id) === preferredBare
+      modelProvider(id)?.toLowerCase() === preferredProvider && canonicalModelId(id) === preferredBare
     );
     if (providerMatch) return providerMatch;
   }
 
-  return availableModelIds.find(id => bareModelId(id) === preferredBare);
+  return availableModelIds.find(id => canonicalModelId(id) === preferredBare);
 }
 
 function modelSatisfiesTier(modelId: string, tier: ComplexityTier): boolean {
@@ -770,21 +782,21 @@ function findPreferredModelForTier(
 
 /**
  * Check whether a model ID is present in the available models list.
- * Handles bare IDs ("claude-opus-4-6") and provider-prefixed IDs ("anthropic/claude-opus-4-6").
+ * Handles provider prefixes and dotted/hyphenated aliases.
  */
 function isModelAvailable(modelId: string, availableModelIds: string[]): boolean {
   if (availableModelIds.includes(modelId)) return true;
-  // Strip provider prefix for comparison. Treat trailing-slash IDs ("provider/")
-  // as no-bare-ID rather than empty-string match (which would erroneously match
-  // any other "provider/" ID).
-  const bare = bareModelId(modelId);
+  // Canonicalize provider prefixes and aliases for comparison. Treat
+  // trailing-slash IDs ("provider/") as no-bare-ID rather than empty-string
+  // match (which would erroneously match any other "provider/" ID).
+  const bare = canonicalModelId(modelId);
   if (!bare) return false;
-  return availableModelIds.some(id => bareModelId(id) === bare);
+  return availableModelIds.some(id => canonicalModelId(id) === bare);
 }
 
 function getModelTier(modelId: string): ComplexityTier {
-  // Strip provider prefix if present
-  const bareId = bareModelId(modelId);
+  // Normalize provider prefixes and dotted aliases before lookup.
+  const bareId = canonicalModelId(modelId);
 
   // Check exact match first
   if (MODEL_CAPABILITY_TIER[bareId]) return MODEL_CAPABILITY_TIER[bareId];
@@ -800,7 +812,7 @@ function getModelTier(modelId: string): ComplexityTier {
 
 /** Check if a model ID has a known capability tier mapping. (#2192) */
 function isKnownModel(modelId: string): boolean {
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalModelId(modelId);
   if (MODEL_CAPABILITY_TIER[bareId]) return true;
   for (const knownId of Object.keys(MODEL_CAPABILITY_TIER)) {
     if (bareId.includes(knownId) || knownId.includes(bareId)) return true;
@@ -809,7 +821,7 @@ function isKnownModel(modelId: string): boolean {
 }
 
 function getModelCost(modelId: string): number {
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalModelId(modelId);
 
   if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
     return MODEL_COST_PER_1K_INPUT[bareId];
@@ -834,15 +846,23 @@ function normalizeResolvedTierModelId(
     return modelId;
   }
 
-  const bareId = bareModelId(modelId);
-  return MODEL_CAPABILITY_TIER[bareId] ? bareId : modelId;
+  const canonicalId = canonicalModelId(modelId);
+  if (!MODEL_CAPABILITY_TIER[canonicalId]) return modelId;
+  return modelId.split("/").pop() ?? modelId;
 }
 
-function bareModelId(modelId: string): string {
-  if (!modelId.includes("/")) return modelId;
-  // .pop() never returns undefined on a non-empty string but ?? guards future
-  // refactors and avoids the misleading non-null assertion.
-  return modelId.split("/").pop() ?? modelId;
+function canonicalModelId(modelId: string): string {
+  const bareId = modelId.includes("/")
+    // .pop() never returns undefined on a non-empty string but ?? guards future
+    // refactors and avoids the misleading non-null assertion.
+    ? modelId.split("/").pop() ?? modelId
+    : modelId;
+
+  // GitHub Copilot dispatches Claude versions with dots while the shared
+  // router registries use hyphens (for example, 4.6 vs 4-6).
+  return bareId.startsWith("claude-")
+    ? bareId.replace(/(\d)\.(?=\d)/g, "$1-")
+    : bareId;
 }
 
 // ─── Provider-specific Tool Limits ─────────────────────────────────────────

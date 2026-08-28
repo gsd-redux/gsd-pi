@@ -129,6 +129,42 @@ test("downgrades from opus to sonnet for standard tier", () => {
   assert.equal(result.wasDowngraded, true);
 });
 
+test("downgrades dotted GitHub Copilot Claude IDs by their canonical tier", () => {
+  const config = { ...defaultRoutingConfig(), enabled: true };
+  const copilotModels = [
+    "github-copilot/claude-opus-4.6",
+    "github-copilot/claude-sonnet-4.6",
+    "github-copilot/claude-haiku-4.5",
+  ];
+
+  const standard = resolveModelForComplexity(
+    makeClassification("standard"),
+    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
+    config,
+    copilotModels,
+  );
+  assert.equal(standard.modelId, "github-copilot/claude-sonnet-4.6");
+  assert.equal(standard.wasDowngraded, true);
+
+  const light = resolveModelForComplexity(
+    makeClassification("light"),
+    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
+    config,
+    copilotModels,
+  );
+  assert.equal(light.modelId, "github-copilot/claude-haiku-4.5");
+  assert.equal(light.wasDowngraded, true);
+
+  const heavy = resolveModelForComplexity(
+    makeClassification("heavy"),
+    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
+    config,
+    copilotModels,
+  );
+  assert.equal(heavy.modelId, "github-copilot/claude-opus-4.6");
+  assert.equal(heavy.wasDowngraded, false);
+});
+
 // ─── Explicit tier_models ────────────────────────────────────────────────────
 
 test("uses explicit tier_models when configured", () => {
@@ -479,6 +515,11 @@ test("resolveModelForTier: handles provider-prefixed available models", () => {
   assert.equal(result, "claude-opus-4-6");
 });
 
+test("resolveModelForTier: preserves dotted Copilot dispatch spelling", () => {
+  const result = resolveModelForTier("heavy", ["github-copilot/claude-opus-4.6"]);
+  assert.equal(result, "claude-opus-4.6");
+});
+
 test("resolveModelForTier: picks Gemini models when only Google available", () => {
   const result = resolveModelForTier("light", ["gemini-2.5-pro", "gemini-2.0-flash"]);
   assert.equal(result, "gemini-2.0-flash");
@@ -807,6 +848,54 @@ test("scoreEligibleModels uses bare capability profiles for provider-qualified I
     (scored[0]?.score ?? 0) > (scored[1]?.score ?? 0),
     "provider-qualified IDs should still use the built-in bare model capability profile",
   );
+});
+
+test("scoreEligibleModels uses canonical profiles for dotted GitHub Copilot Claude IDs", () => {
+  const scored = scoreEligibleModels(
+    ["github-copilot/claude-sonnet-4.6", "unknown/model"],
+    { coding: 1 },
+  );
+
+  assert.equal(scored[0]?.modelId, "github-copilot/claude-sonnet-4.6");
+  assert.equal(scored[0]?.score, MODEL_CAPABILITY_PROFILES["claude-sonnet-4-6"].coding);
+});
+
+test("scoreEligibleModels honors dotted bare-ID capability overrides", () => {
+  const scored = scoreEligibleModels(
+    ["github-copilot/claude-sonnet-4.6", "gpt-4o"],
+    { coding: 1 },
+    { "claude-sonnet-4.6": { coding: 30 } },
+  );
+
+  assert.equal(scored[0]?.modelId, "gpt-4o");
+});
+
+test("scoreEligibleModels uses canonical costs for provider-qualified dotted IDs", () => {
+  const scored = scoreEligibleModels(
+    ["github-copilot/claude-opus-4.6", "gpt-5"],
+    {},
+  );
+
+  assert.equal(scored[0]?.modelId, "github-copilot/claude-opus-4.6");
+});
+
+test("all cataloged GitHub Copilot Claude aliases have tiers and capability profiles", () => {
+  const aliases: Array<[string, "light" | "standard" | "heavy"]> = [
+    ["claude-haiku-4.5", "light"],
+    ["claude-opus-4.5", "heavy"],
+    ["claude-opus-4.6", "heavy"],
+    ["claude-opus-4.7", "heavy"],
+    ["claude-opus-4.8", "heavy"],
+    ["claude-sonnet-4", "standard"],
+    ["claude-sonnet-4.5", "standard"],
+    ["claude-sonnet-4.6", "standard"],
+  ];
+
+  for (const [alias, tier] of aliases) {
+    const qualified = `github-copilot/${alias}`;
+    assert.deepEqual(getEligibleModels(tier, [qualified], defaultRoutingConfig()), [qualified]);
+    assert.notEqual(scoreEligibleModels([qualified], { coding: 1 })[0]?.score, 50);
+  }
 });
 
 test("scoreModel computes weighted average of capability × requirement", () => {
