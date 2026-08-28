@@ -718,7 +718,7 @@ test("usage-limit agent_end resolves a credential-cooldown cancellation without 
   }
 });
 
-test("retry-exhausted abort/unknown provider stop reasons trigger model fallback (#1364)", async () => {
+test("retry-exhausted transient provider errors trigger model fallback (#1364, #2031)", async () => {
   const originalCwd = process.cwd();
   const originalSetTimeout = globalThis.setTimeout;
 
@@ -730,7 +730,23 @@ test("retry-exhausted abort/unknown provider stop reasons trigger model fallback
   }) as typeof setTimeout;
 
   try {
-    for (const reason of ["abort", "unknown"]) {
+    for (const { reason, errorMessage, willRetry } of [
+      {
+        reason: "abort",
+        errorMessage: "Retry failed after 3 attempts: Unhandled stop reason: abort",
+        willRetry: undefined,
+      },
+      {
+        reason: "unknown",
+        errorMessage: "Retry failed after 3 attempts: Unhandled stop reason: unknown",
+        willRetry: undefined,
+      },
+      {
+        reason: "no_available_providers",
+        errorMessage: '503 {"error":{"type":"no_available_providers","message":"No available providers"}}',
+        willRetry: false,
+      },
+    ]) {
       const base = mkdtempSync(join(tmpdir(), `gsd-stop-reason-${reason}-`));
       const notifications: Array<{ message: string; level?: string }> = [];
       const setModelCalls: string[] = [];
@@ -789,10 +805,11 @@ test("retry-exhausted abort/unknown provider stop reasons trigger model fallback
         } as any;
 
         await handleAgentEnd(pi, {
+          willRetry,
           messages: [{
             role: "assistant",
             stopReason: "error",
-            errorMessage: `Retry failed after 3 attempts: Unhandled stop reason: ${reason}`,
+            errorMessage,
           }],
         } as any, ctx);
 

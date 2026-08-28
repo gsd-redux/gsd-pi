@@ -785,10 +785,14 @@ export async function handleAgentEnd(
     }
 
     // ── 1b. Defer to Core RetryHandler for most transient errors ────────
-    // Core retries transient failures in-session after this handler.
-    // Keep that behavior for non-rate-limit classes to avoid pause/retry races,
-    // but let rate-limit continue into model fallback logic below (#4373).
-    if (shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg, rawErrorMsg || displayMsg)) {
+    // Core retries transient failures in-session after this handler. Its
+    // explicit willRetry=false signal hands exhausted retries off to model
+    // fallback; legacy events still use the rendered-prefix compatibility check.
+    // Keep rate limits on model fallback logic below (#4373).
+    if (
+      event.willRetry !== false
+      && shouldDeferTransientErrorToCoreRetry(cls, rawErrorMsg, rawErrorMsg || displayMsg)
+    ) {
       return;
     }
 

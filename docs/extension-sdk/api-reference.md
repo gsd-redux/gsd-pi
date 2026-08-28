@@ -345,7 +345,7 @@ Agent lifecycle events carry optional correlation metadata when the current prov
 |-------|------|-------------|-------------|
 | `before_agent_start` | `BeforeAgentStartEvent` | `BeforeAgentStartEventResult` | After user submits prompt, before agent loop. Can inject system prompt or message. |
 | `agent_start` | `AgentStartEvent` | — | Agent loop started. May include `sessionId` and `turnId`. |
-| `agent_end` | `AgentEndEvent` | — | Agent loop ended. Includes `messages`; may include `sessionId`, `turnId`, and `abortOrigin`. |
+| `agent_end` | `AgentEndEvent` | — | Agent loop ended. Includes `messages`; may include `willRetry`, `sessionId`, `turnId`, and `abortOrigin`. |
 | `stop` | `StopEvent` | — | Agent is truly idle with no follow-up or steering pending. May include `sessionId`, `turnId`, and `abortOrigin`. |
 | `turn_start` | `TurnStartEvent` | — | Start of each turn. Includes `turnIndex` and `timestamp`; may include `sessionId` and `turnId`. |
 | `turn_end` | `TurnEndEvent` | — | End of each turn. Includes `turnIndex`, `message`, and `toolResults`; may include `sessionId` and `turnId`. |

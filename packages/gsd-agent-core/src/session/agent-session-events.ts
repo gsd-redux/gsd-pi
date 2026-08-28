@@ -54,11 +54,13 @@ export class AgentSessionEventsModule {
 			}
 		}
 
+		const agentEndWillRetry = event.type === "agent_end" ? this.willRetryAfterAgentEnd(event) : undefined;
+
 		// Emit to extensions first
-		await this.emitExtensionEvent(event);
+		await this.emitExtensionEvent(event, agentEndWillRetry);
 
 		// Notify all listeners
-		this.emit(event.type === "agent_end" ? { ...event, willRetry: this.willRetryAfterAgentEnd(event) } : event);
+		this.emit(event.type === "agent_end" ? { ...event, willRetry: agentEndWillRetry ?? false } : event);
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -155,12 +157,16 @@ export class AgentSessionEventsModule {
 		Object.assign(targetRecord, replacement);
 	}
 
-	async emitExtensionEvent(event: AgentEvent): Promise<void> {
+	async emitExtensionEvent(event: AgentEvent, agentEndWillRetry?: boolean): Promise<void> {
 		if (event.type === "agent_start") {
 			this.host._turnIndex = 0;
 			await this.host._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
-			await this.host._extensionRunner.emit({ type: "agent_end", messages: event.messages });
+			await this.host._extensionRunner.emit({
+				type: "agent_end",
+				messages: event.messages,
+				willRetry: agentEndWillRetry ?? false,
+			});
 		} else if (event.type === "turn_start") {
 			const extensionEvent: TurnStartEvent = {
 				type: "turn_start",

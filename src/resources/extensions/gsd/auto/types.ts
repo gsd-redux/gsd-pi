@@ -41,10 +41,13 @@ export const BUDGET_THRESHOLDS: Array<{
 
 /**
  * Minimal shape of the event parameter from pi.on("agent_end", ...).
- * The full event has more fields, but the loop only needs messages.
+ * The full event has more fields, but the loop only needs messages plus the
+ * core-retry hand-off signal when the host provides it.
  */
 export interface AgentEndEvent {
   messages: unknown[];
+  /** Present on session events; optional for legacy hosts and synthetic events. */
+  willRetry?: boolean;
   sessionId?: string;
   turnId?: string;
   abortOrigin?: "session-transition" | "user" | "timeout" | "unknown";

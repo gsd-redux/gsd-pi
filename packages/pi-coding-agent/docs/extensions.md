@@ -509,6 +509,7 @@ pi.on("agent_start", async (_event, ctx) => {});
 
 pi.on("agent_end", async (event, ctx) => {
   // event.messages - messages from this prompt
+  // event.willRetry - whether core will retry after handlers finish (when available)
 });
 ```
 

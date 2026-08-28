@@ -709,6 +709,8 @@ export interface AgentStartEvent {
 export interface AgentEndEvent {
 	type: "agent_end";
 	messages: AgentMessage[];
+	/** Whether core will retry the failed turn after extension handlers finish. */
+	willRetry?: boolean;
 }
 
 /** Fired at the start of each turn */
