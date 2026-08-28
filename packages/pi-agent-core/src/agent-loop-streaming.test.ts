@@ -8,7 +8,7 @@ import {
 	type Model,
 	type UserMessage,
 } from "@gsd/pi-ai";
-import { agentLoop } from "./agent-loop.js";
+import { agentLoop, agentLoopContinue } from "./agent-loop.js";
 import type { AgentContext, AgentLoopConfig, AgentMessage } from "./types.js";
 
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -129,4 +129,57 @@ test("agent loop accumulates streamed content and emits fresh message objects", 
 	}
 	assert.deepEqual(contentSnapshots[11]?.[2], toolCall);
 	assert.equal(new Set(updateMessages).size, updateMessages.length);
+});
+
+test("agentLoop ends the stream with an error message when the loop throws", async () => {
+	const context: AgentContext = { systemPrompt: "", messages: [], tools: [] };
+	const config: AgentLoopConfig = {
+		model: createModel(),
+		// Throwing here simulates setup failures (context conversion, missing
+		// API key, hook errors) that escape the per-turn error handling.
+		convertToLlm: () => {
+			throw new Error("context conversion exploded");
+		},
+	};
+	const events: Array<{ type: string }> = [];
+	const stream = agentLoop([createUserMessage("hi")], context, config);
+
+	const collected: Array<{ type: string }> = [];
+	for await (const event of stream) {
+		collected.push(event);
+		events.push(event);
+	}
+
+	const finalMessages = await stream.result();
+	const last = finalMessages.at(-1) as AssistantMessage;
+	assert.equal(last.stopReason, "error");
+	assert.match(last.errorMessage ?? "", /context conversion exploded/);
+	// The stream must have terminated: the consumer above returned instead of hanging.
+	assert.ok(collected.some((e) => e.type === "message_end"));
+});
+
+test("agentLoopContinue ends the stream with an error message when the loop throws", async () => {
+	const context: AgentContext = {
+		systemPrompt: "",
+		messages: [createUserMessage("hi")],
+		tools: [],
+	};
+	const config: AgentLoopConfig = {
+		model: createModel(),
+		convertToLlm: identityConverter,
+		getSteeringMessages: () => {
+			throw new Error("steering hook exploded");
+		},
+	};
+	const stream = agentLoopContinue(context, config);
+
+	const collected: Array<{ type: string }> = [];
+	for await (const event of stream) {
+		collected.push(event);
+	}
+
+	const finalMessages = await stream.result();
+	const last = finalMessages.at(-1) as AssistantMessage;
+	assert.equal(last.stopReason, "error");
+	assert.match(last.errorMessage ?? "", /steering hook exploded/);
 });

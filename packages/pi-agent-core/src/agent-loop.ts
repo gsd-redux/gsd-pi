@@ -50,6 +50,41 @@ const ZERO_USAGE = {
 } as const;
 
 /**
+ * Close a loop stream after `runAgentLoop*` threw outside the per-turn error
+ * handling (e.g. context conversion, API key resolution, or a hook threw).
+ * Without this the rejection is unhandled (fatal under Node's default) and
+ * the stream never ends, hanging every consumer.
+ *
+ * Emits a final assistant message with stopReason "error" — the documented
+ * error contract — then ends the stream with that message as the result.
+ */
+function endLoopStreamWithError(
+	stream: ReturnType<typeof createAgentStream>,
+	config: AgentLoopConfig,
+	err: unknown,
+): void {
+	const message: AssistantMessage = {
+		role: "assistant",
+		content: [
+			{
+				type: "text",
+				text: `Agent loop failed: ${err instanceof Error ? err.message : String(err)}`,
+			},
+		],
+		api: config.model.api,
+		provider: config.model.provider,
+		model: config.model.id,
+		usage: ZERO_USAGE,
+		stopReason: "error",
+		errorMessage: err instanceof Error ? err.message : String(err),
+		timestamp: Date.now(),
+	};
+	stream.push({ type: "message_start", message });
+	stream.push({ type: "message_end", message });
+	stream.end([message]);
+}
+
+/**
  * Start an agent loop with a new prompt message.
  * The prompt is added to the context and events are emitted for it.
  */
@@ -71,9 +106,13 @@ export function agentLoop(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	)
+		.then((messages) => {
+			stream.end(messages);
+		})
+		.catch((err) => {
+			endLoopStreamWithError(stream, config, err);
+		});
 
 	return stream;
 }
@@ -110,9 +149,13 @@ export function agentLoopContinue(
 		},
 		signal,
 		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	)
+		.then((messages) => {
+			stream.end(messages);
+		})
+		.catch((err) => {
+			endLoopStreamWithError(stream, config, err);
+		});
 
 	return stream;
 }
