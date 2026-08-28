@@ -32,6 +32,27 @@ function makeExtension(baseDir: string, id: string, deps?: string[]): string {
 }
 
 describe('sortExtensionPaths', () => {
+  test('sorts nested package entries using their extension-root manifests', (t) => {
+    const dir = makeTempDir()
+    t.after(() => rmSync(dir, { recursive: true, force: true }))
+
+    const pathA = makeExtension(dir, 'nested.a')
+    const extensionB = join(dir, 'nested.b')
+    const pathB = join(extensionB, 'src', 'extensions', 'index.js')
+    mkdirSync(join(extensionB, 'src', 'extensions'), { recursive: true })
+    writeFileSync(join(extensionB, 'extension-manifest.json'), JSON.stringify({
+      id: 'nested.b',
+      name: 'nested.b',
+      version: '1.0.0',
+      tier: 'community',
+      dependencies: { extensions: ['nested.a'] },
+    }))
+    writeFileSync(pathB, 'export default function() {}')
+
+    const result = sortExtensionPaths([pathB, pathA])
+    assert.deepEqual(result.sortedPaths, [pathA, pathB])
+  })
+
   test('Test 1: no deps — returns alphabetically sorted by ID, zero warnings', (t) => {
     const dir = makeTempDir()
     t.after(() => rmSync(dir, { recursive: true, force: true }))

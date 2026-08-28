@@ -302,8 +302,14 @@ export function readManifest(extensionDir: string): ExtensionManifest | null {
  * resolve the parent directory and read its manifest.
  */
 export function readManifestFromEntryPath(entryPath: string): ExtensionManifest | null {
-  const dir = dirname(entryPath);
-  return readManifest(dir);
+  let dir = dirname(resolve(entryPath));
+  while (true) {
+    const manifest = readManifest(dir);
+    if (manifest) return manifest;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
 }
 
 // ─── Discovery ──────────────────────────────────────────────────────────────

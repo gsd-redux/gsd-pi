@@ -189,6 +189,68 @@ test("buildResourceLoader includes caller-provided additional extension paths", 
   );
 });
 
+test("buildResourceLoader loads user-installed extensions and lets them shadow bundled IDs", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-installed-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const bundledExtensionDir = join(fakeAgentDir, "extensions", "shared-id");
+  const installedExtensionDir = join(tmp, ".gsd", "extensions", "installed-copy");
+  const restoreHomeEnv = overrideHomeEnv(tmp);
+
+  t.after(() => {
+    restoreHomeEnv();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const manifest = JSON.stringify({
+    id: "shared-id",
+    name: "Shared ID",
+    version: "1.0.0",
+    description: "test",
+    tier: "community",
+    requires: { platform: "node" },
+  });
+  mkdirSync(bundledExtensionDir, { recursive: true });
+  mkdirSync(join(installedExtensionDir, "dist"), { recursive: true });
+  writeFileSync(join(bundledExtensionDir, "extension-manifest.json"), manifest);
+  writeFileSync(join(installedExtensionDir, "extension-manifest.json"), manifest);
+  writeFileSync(
+    join(installedExtensionDir, "package.json"),
+    JSON.stringify({ pi: { extensions: ["./dist/index.js"] } }),
+  );
+  writeFileSync(
+    join(tmp, ".gsd", "extensions", "registry.json"),
+    JSON.stringify({
+      version: 1,
+      entries: { "shared-id": { id: "shared-id", enabled: true, source: "user" } },
+    }),
+  );
+  const bundledEntryPath = join(bundledExtensionDir, "index.ts");
+  const installedEntryPath = join(installedExtensionDir, "dist", "index.js");
+  writeFileSync(bundledEntryPath, "export default function() {};\n");
+  writeFileSync(
+    installedEntryPath,
+    'export default function(pi) { pi.registerCommand("installed-command", { handler: async () => {} }); };\n',
+  );
+
+  const { buildResourceLoader } = await import("../resource-loader.ts");
+  const loader = await buildResourceLoader(fakeAgentDir) as {
+    reload(): Promise<void>;
+    getExtensions(): { extensions: Array<{ path: string; commands: Map<string, unknown> }> };
+  };
+  await loader.reload();
+
+  assert.deepEqual(
+    loader.getExtensions().extensions.map((extension) => extension.path),
+    [installedEntryPath],
+    "the installed extension should replace the bundled extension with the same manifest ID",
+  );
+  assert.equal(
+    loader.getExtensions().extensions[0]?.commands.has("installed-command"),
+    true,
+    "the installed extension's command should be registered",
+  );
+});
+
 test("initResources manifest tracks all bundled extension subdirectories including remote-questions (#2367)", async () => {
   const { initResources } = await import("../resource-loader.ts");
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-manifest-"));
