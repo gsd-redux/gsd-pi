@@ -69,10 +69,27 @@ Keep `cross_provider: false` when routing inside a flat-rate subscription unless
 Override which model is used for each tier. When omitted, the router uses a built-in capability mapping that knows common model families:
 
 - **Light:** `claude-haiku-4-5`, `gpt-4o-mini`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.1-codex-mini`, `gpt-5.3-codex-spark`, `gpt-5.4-mini`, `gemini-2.0-flash`
-- **Standard:** `claude-sonnet-4-6`, `gpt-4o`, `gpt-4.1`, `gpt-5.1-codex-max`, `gemini-2.5-pro`, `deepseek-chat`
-- **Heavy:** `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `gpt-5`, `gpt-5-pro`, `gpt-5.1`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `o1`, `o3`, `o4-mini`
+- **Standard:** `claude-sonnet-4`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `gpt-4o`, `gpt-4.1`, `gpt-5.1-codex-max`, `gemini-2.5-pro`, `deepseek-chat`
+- **Heavy:** `claude-opus-4-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `gpt-5`, `gpt-5-pro`, `gpt-5.1`, `gpt-5.2`, `gpt-5.2-codex`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.5`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `o1`, `o3`, `o4-mini`
 
 Token profiles use the same tier mapping. `budget`, `balanced`, and `quality` declare per-phase tier intentions, then GSD resolves those tiers against the models currently available from your configured providers. This means a profile can resolve to OpenAI, Gemini, Anthropic, or another provider-specific model instead of hardcoding Claude-family defaults.
+
+### Model ID normalization
+
+Tier, cost, capability-profile, availability, and override lookups use a provider-independent model identity. The router trims whitespace, ignores case, removes a provider prefix up to the final `/`, and treats `.`, `_`, and `-` separator runs as equivalent. For example, all of these resolve to the same internal identity:
+
+```text
+github-copilot/claude-sonnet-4.6
+github-copilot/claude_sonnet_4_6
+CLAUDE-SONNET-4-6
+```
+
+This canonicalization is only for matching. It does not rewrite the selected registry entry: complexity-routing decisions retain the available model ID, including its provider prefix, and tier resolution preserves the bare ID's separator spelling if it removes a prefix. A dotted Copilot ID is therefore dispatched with its dotted spelling rather than the router's internal hyphenated key. Explicit provider-qualified `tier_models` values are also preserved, which disambiguates providers that expose the same bare model ID.
+
+Unknown models use two safe fallback paths, each warning once per canonical model identity for the life of the process:
+
+- An unknown model explicitly configured as a phase's primary model is honored exactly and is not downgraded, because the router cannot safely infer its ceiling.
+- An unknown model encountered while building routing candidates is treated as Standard tier, receives neutral capability scores of 50, and receives an expensive comparison cost so it is not assumed to be a cheap option.
 
 ### `escalate_on_failure`
 
@@ -127,9 +144,9 @@ Each model has a built-in **capability profile** — a 7-dimension score (0–10
 | `longContext` | Handling large codebases and long documents |
 | `instruction` | Following structured instructions precisely |
 
-**Built-in profiles** ship for the Claude 4.6/4.7 family, the OpenAI GPT-4.x and GPT-5.x lines (including GPT-5.5), the o-series reasoning models (`o1`, `o3`, `o4-mini`, `o4-mini-deep-research`), Gemini 2.0/2.5, and `deepseek-chat`. The full table lives in `src/resources/extensions/gsd/model-router.ts` (`MODEL_CAPABILITY_PROFILES`).
+**Built-in profiles** ship for Claude 4 and 4.5 models (`claude-sonnet-4`, `claude-sonnet-4-5`, `claude-opus-4-5`, and `claude-haiku-4-5`) as well as later Claude families, the OpenAI GPT-4.x and GPT-5.x lines (including GPT-5.5), the o-series reasoning models (`o1`, `o3`, `o4-mini`, `o4-mini-deep-research`), Gemini 2.0/2.5, and `deepseek-chat`. The full table lives in `src/resources/extensions/gsd/model-router.ts` (`MODEL_CAPABILITY_PROFILES`).
 
-Models without a built-in profile receive **uniform scores of 50** across all dimensions. This is a cold-start policy — unknown models compete but don't have an advantage. From the user's perspective, routing behaves the same as before capability scoring was introduced for those models.
+Models without a built-in profile receive **uniform scores of 50** across all dimensions. This is the neutral-capability part of the unknown-model fallback described above; the router also assigns an expensive comparison cost and emits a deduplicated warning.
 
 **Profiles are heuristic rankings, not benchmarks.** They represent approximate relative strengths, not verified benchmark results. Use user overrides (below) to correct them for models you know well.
 

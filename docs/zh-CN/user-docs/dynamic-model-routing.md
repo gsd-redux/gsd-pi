@@ -53,8 +53,25 @@ dynamic_routing:
 覆盖每个 tier 默认使用的 model。如果省略，router 会使用内置 capability mapping，它已经知道一些常见 model 家族的大致定位：
 
 - **Light：** `claude-haiku-4-5`、`gpt-4o-mini`、`gemini-2.0-flash`
-- **Standard：** `claude-sonnet-4-6`、`gpt-4o`、`gemini-2.5-pro`
-- **Heavy：** `claude-opus-4-6`、`gpt-4.5-preview`、`gemini-2.5-pro`
+- **Standard：** `claude-sonnet-4`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`gpt-4o`、`gemini-2.5-pro`
+- **Heavy：** `claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`gpt-5`、`o3`
+
+### Model ID 规范化
+
+router 在查询 tier、成本、capability profile、可用性和用户覆盖项时，会使用与 provider 无关的 model identity。它会去除首尾空白、忽略大小写、移除最后一个 `/` 之前的 provider 前缀，并把连续的 `.`、`_` 和 `-` 视为等价分隔符。例如，以下 ID 都会映射到同一个内部 identity：
+
+```text
+github-copilot/claude-sonnet-4.6
+github-copilot/claude_sonnet_4_6
+CLAUDE-SONNET-4-6
+```
+
+规范化仅用于匹配，不会改写选中的 registry entry：复杂度路由决策会保留可用 model ID（包括 provider 前缀）；tier resolution 即使移除前缀，也会保留 bare ID 原有的分隔符拼写。因此，带点号的 Copilot ID 在派发时仍使用带点号的拼写，而不是 router 内部的连字符 key。显式指定的、带 provider 前缀的 `tier_models` 值也会保留，以便区分提供相同 bare model ID 的多个 providers。
+
+未知 models 有两条安全 fallback 路径；每个规范化后的 model identity 在同一进程生命周期内只会触发一次对应 warning：
+
+- 如果未知 model 被显式配置为某个 phase 的 primary model，router 会原样采用它且不进行降级，因为 router 无法可靠推断其能力上限。
+- 如果未知 model 出现在路由候选集合中，router 会把它视为 Standard tier，给所有 capability 维度赋中性分数 50，并使用较高的比较成本，避免把它误判为低价选项。
 
 ### `escalate_on_failure`
 
@@ -99,9 +116,9 @@ dynamic_routing:
 | `longContext` | 处理大代码库和长文档的能力 |
 | `instruction` | 精确遵循结构化指令的能力 |
 
-目前 9 个 models 带有内置 profile：`claude-opus-4-6`、`claude-sonnet-4-6`、`claude-haiku-4-5`、`gpt-4o`、`gpt-4o-mini`、`gemini-2.5-pro`、`gemini-2.0-flash`、`deepseek-chat`、`o3`。
+内置 profiles 覆盖 Claude 4 和 4.5 models（`claude-sonnet-4`、`claude-sonnet-4-5`、`claude-opus-4-5` 和 `claude-haiku-4-5`），也覆盖后续 Claude families、OpenAI GPT-4.x 和 GPT-5.x 系列、o-series reasoning models（`o1`、`o3`、`o4-mini`、`o4-mini-deep-research`）、Gemini 2.0/2.5 以及 `deepseek-chat`。完整表格位于 `src/resources/extensions/gsd/model-router.ts` 的 `MODEL_CAPABILITY_PROFILES`。
 
-没有内置 profile 的 models 会收到**全维度均为 50** 的默认分数。这是一个冷启动策略：未知模型可以参与竞争，但不会凭空占优。从用户角度看，这类模型的路由行为和 capability scoring 引入前保持一致。
+没有内置 profile 的 models 会收到**全维度均为 50** 的默认分数。这是上文未知 model fallback 的中性 capability 部分；router 还会给它们分配较高的比较成本，并输出去重后的 warning。
 
 **这些 profiles 是启发式排序，不是 benchmark。** 它们表达的是大致的相对优势，而不是经过严格验证的 benchmark 结果。如果你很了解某个 model，可通过用户覆盖项（见下文）修正这些分值。
 
