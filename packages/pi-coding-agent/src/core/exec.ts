@@ -48,17 +48,23 @@ export async function execCommand(
 		let stderr = "";
 		let killed = false;
 		let timeoutId: NodeJS.Timeout | undefined;
+		let escalationId: NodeJS.Timeout | undefined;
 
 		const killProcess = () => {
 			if (!killed) {
 				killed = true;
 				proc.kill("SIGTERM");
-				// Force kill after 5 seconds if SIGTERM doesn't work
-				setTimeout(() => {
-					if (!proc.killed) {
+				// Force kill after 5 seconds if SIGTERM doesn't work.
+				// `subprocess.killed` only means kill() was called, not that the
+				// process exited — check actual liveness, or a SIGTERM-immune
+				// child would never be escalated and the caller would hang
+				// forever despite passing `timeout`.
+				escalationId = setTimeout(() => {
+					if (proc.exitCode === null && proc.signalCode === null) {
 						proc.kill("SIGKILL");
 					}
 				}, 5000);
+				escalationId.unref?.();
 			}
 		};
 
@@ -91,13 +97,15 @@ export async function execCommand(
 		waitForChildProcess(proc)
 			.then((code) => {
 				if (timeoutId) clearTimeout(timeoutId);
+				if (escalationId) clearTimeout(escalationId);
 				if (options?.signal) {
 					options.signal.removeEventListener("abort", killProcess);
 				}
-				resolve({ stdout, stderr, code: code ?? 0, killed });
+				resolve({ stdout, stderr, code: code ?? (killed ? 1 : 0), killed });
 			})
 			.catch((_err) => {
 				if (timeoutId) clearTimeout(timeoutId);
+				if (escalationId) clearTimeout(escalationId);
 				if (options?.signal) {
 					options.signal.removeEventListener("abort", killProcess);
 				}
