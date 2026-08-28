@@ -746,7 +746,8 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   if (manifest && isCurrentPackageManifest(manifest) && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = getCurrentResourceFingerprint()
-    if (manifest.contentHash && manifest.contentHash === currentHash) {
+    if (manifest.contentHash && manifest.contentHash === currentHash
+      && !hasMissingBundledResourceFiles(extensionsDir, bundledExtensionsDir)) {
       return
     }
   }
