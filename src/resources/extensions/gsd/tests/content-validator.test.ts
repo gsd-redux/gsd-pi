@@ -72,3 +72,25 @@ test("validateContent marks empty slice plans as blocking", () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("validateContent accepts slice-qualified task IDs", (t) => {
+  for (const taskId of ["S07-T01", "S07.T01"]) {
+    const { base, path } = makeTempFile([
+      "# S07: Qualified tasks",
+      "",
+      "## Tasks",
+      "",
+      `- [ ] **${taskId}**: Implement the fix`,
+      "",
+      "## Files",
+      "",
+      "- `src/example.ts`",
+      "",
+      "Verify: pnpm test",
+      "",
+    ].join("\n"));
+    t.after(() => rmSync(base, { recursive: true, force: true }));
+
+    assert.deepEqual(validateContent("plan-slice", path), [], taskId);
+  }
+});
