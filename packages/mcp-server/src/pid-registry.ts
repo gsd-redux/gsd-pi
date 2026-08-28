@@ -4,7 +4,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -491,6 +491,80 @@ function killPid(
     if (isAlreadyDead) return 'already-dead';
     return { error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export type SignalAutoLockPidOptions = {
+  kill?: (pid: number, signal?: NodeJS.Signals | 0) => void;
+  getProcessCwd?: (pid: number) => string | null;
+  getProcessStartTime?: (pid: number) => number | null;
+};
+
+export type SignalAutoLockPidResult =
+  | 'signaled'
+  | 'already-dead'
+  | 'stale-lock'
+  | 'foreign-cwd'
+  | 'invalid-lock'
+  | { error: string };
+
+/**
+ * Verify and signal the PID recorded in a project's `.gsd/auto.lock`.
+ *
+ * The lock only records `pid` + `startedAt`; between write and read that PID
+ * can be recycled by an unrelated process. Mirrors the killPid() policy above:
+ * refuse to signal unless the live process's start time is no later than the
+ * recorded one (within STALE_PID_START_SKEW_MS) and its cwd is rooted in the
+ * project directory. An unknown cwd is tolerated (start time is the primary
+ * identity); an unparseable `startedAt` invalidates the lock — a foreign or
+ * corrupt lock must not authorize a signal.
+ */
+export function signalAutoLockPid(
+  lock: unknown,
+  projectDir: string,
+  options: SignalAutoLockPidOptions = {},
+): SignalAutoLockPidResult {
+  if (!lock || typeof lock !== 'object') return 'invalid-lock';
+  const { pid, startedAt } = lock as { pid?: unknown; startedAt?: unknown };
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return 'invalid-lock';
+  const recordedMs = typeof startedAt === 'string' ? Date.parse(startedAt) : NaN;
+  if (!Number.isFinite(recordedMs)) return 'invalid-lock';
+
+  const sendSignal = options.kill ?? ((target: number, signal?: NodeJS.Signals | 0) => process.kill(target, signal));
+  const getProcessCwd = options.getProcessCwd ?? defaultGetProcessCwd;
+  const getProcessStartTime = options.getProcessStartTime ?? defaultGetProcessStartTime;
+
+  try {
+    sendSignal(pid, 0);
+  } catch (error) {
+    const isAlreadyDead =
+      error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ESRCH';
+    if (isAlreadyDead) return 'already-dead';
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  const actualStartMs = getProcessStartTime(pid);
+  if (actualStartMs !== null && actualStartMs > recordedMs + STALE_PID_START_SKEW_MS) {
+    return 'stale-lock';
+  }
+
+  const cwd = getProcessCwd(pid);
+  if (cwd !== null) {
+    const cwdKey = resolveComparableProjectPath(normalizeProcessCwd(cwd));
+    const projectKeys = [resolveComparableProjectPath(projectDir)];
+    try {
+      projectKeys.push(resolveComparableProjectPath(realpathSync(projectDir)));
+    } catch {
+      // projectDir vanished between the lock read and now — the raw key above still applies
+    }
+    if (!projectKeys.includes(cwdKey)) return 'foreign-cwd';
+  }
+
+  try {
+    sendSignal(pid, 'SIGTERM');
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  return 'signaled';
 }
 
 /**

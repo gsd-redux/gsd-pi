@@ -1219,17 +1219,20 @@ export async function createMcpServer(
         if (!sessionId && !projectDir) {
           return errorContent('Either sessionId or projectDir must be provided');
         }
+        // Same validation gsd_cancel_by_project applies — projectDir reaches
+        // cancelSessionByDir, which reads .gsd/auto.lock under it.
+        const validatedDir = projectDir ? validateProjectDir(projectDir) : undefined;
         if (sessionId) {
           try {
             await sessionManager.cancelSession(sessionId);
           } catch (err) {
-            if (!projectDir || !(err instanceof Error) || !err.message.includes('Session not found')) {
+            if (!validatedDir || !(err instanceof Error) || !err.message.includes('Session not found')) {
               throw err;
             }
-            await sessionManager.cancelSessionByDir(projectDir);
+            await sessionManager.cancelSessionByDir(validatedDir);
           }
-        } else if (projectDir) {
-          await sessionManager.cancelSessionByDir(projectDir);
+        } else if (validatedDir) {
+          await sessionManager.cancelSessionByDir(validatedDir);
         }
         return jsonContent({ cancelled: true });
       } catch (err) {

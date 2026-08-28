@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import {
   readMcpRegistry,
   registerMcpInstance,
+  signalAutoLockPid,
   sweepProjectOrphanMcpServers,
   unregisterMcpInstance,
   type McpInstanceEntry,
@@ -795,5 +796,96 @@ describe('unregisterMcpInstance', () => {
 
   test('no-ops on missing registry', () => {
     assert.doesNotThrow(() => unregisterMcpInstance(tmp, registryPath));
+  });
+});
+
+describe('signalAutoLockPid', () => {
+  const lock = (pid: number, startedAt: string) => ({ pid, startedAt });
+
+  const probes = (overrides: {
+    alive?: boolean;
+    startMs?: number | null;
+    cwd?: string | null;
+  } = {}) => {
+    const signals: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+    return {
+      signals,
+      opts: {
+        kill: (pid: number, signal?: NodeJS.Signals | 0) => {
+          if (overrides.alive === false && signal === 0) {
+            const err = new Error('ESRCH') as NodeJS.ErrnoException;
+            err.code = 'ESRCH';
+            throw err;
+          }
+          signals.push({ pid, signal });
+        },
+        getProcessStartTime: () => overrides.startMs ?? null,
+        getProcessCwd: () => overrides.cwd ?? null,
+      } as const,
+    };
+  };
+
+  test('rejects locks without a usable pid or startedAt', () => {
+    for (const bad of [null, undefined, 'x', {}, { pid: 1 }, { pid: -3, startedAt: new Date().toISOString() }, { pid: 1.5, startedAt: new Date().toISOString() }, { pid: 1, startedAt: 'not-a-date' }]) {
+      assert.equal(signalAutoLockPid(bad, '/tmp/project', probes().opts), 'invalid-lock');
+    }
+  });
+
+  test('reports already-dead when the recorded pid is gone', () => {
+    const { opts } = probes({ alive: false });
+    assert.equal(signalAutoLockPid(lock(1, new Date().toISOString()), '/tmp/project', opts), 'already-dead');
+  });
+
+  test('refuses to signal a recycled pid whose start time is after the lock', () => {
+    const recorded = Date.now() - 1_000;
+    const { opts, signals } = probes({ startMs: recorded + 120_000 });
+    const res = signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts);
+    assert.equal(res, 'stale-lock');
+    // only the liveness probe (signal 0) may have been sent, never SIGTERM
+    assert.ok(signals.every((s) => s.signal === 0));
+  });
+
+  test('accepts a pid whose start time is within the skew window', () => {
+    const recorded = Date.now() - 1_000;
+    const { opts, signals } = probes({ startMs: recorded + 30_000 });
+    assert.equal(signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts), 'signaled');
+    assert.ok(signals.some((s) => s.signal === 'SIGTERM'));
+  });
+
+  test('refuses a live process rooted outside the project directory', () => {
+    const recorded = Date.now() - 1_000;
+    const { opts, signals } = probes({ startMs: recorded, cwd: '/tmp/other-project' });
+    const res = signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts);
+    assert.equal(res, 'foreign-cwd');
+    assert.ok(signals.every((s) => s.signal === 0));
+  });
+
+  test('accepts a live process rooted inside the project directory', () => {
+    const recorded = Date.now() - 1_000;
+    const { opts, signals } = probes({ startMs: recorded, cwd: '/tmp/project' });
+    assert.equal(signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts), 'signaled');
+    assert.ok(signals.some((s) => s.signal === 'SIGTERM'));
+  });
+
+  test('tolerates unknown cwd when the start time matches', () => {
+    const recorded = Date.now() - 1_000;
+    const { opts, signals } = probes({ startMs: recorded, cwd: null });
+    assert.equal(signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts), 'signaled');
+    assert.ok(signals.some((s) => s.signal === 'SIGTERM'));
+  });
+
+  test('surfaces SIGTERM failures as errors', () => {
+    const recorded = Date.now() - 1_000;
+    const signals: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
+    const opts = {
+      kill: (pid: number, signal?: NodeJS.Signals | 0) => {
+        if (signal === 'SIGTERM') throw new Error('EPERM');
+        signals.push({ pid, signal });
+      },
+      getProcessStartTime: () => recorded,
+      getProcessCwd: () => null,
+    };
+    const res = signalAutoLockPid(lock(7, new Date(recorded).toISOString()), '/tmp/project', opts);
+    assert.deepEqual(res, { error: 'EPERM' });
   });
 });

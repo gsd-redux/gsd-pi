@@ -18,6 +18,7 @@ import type {
   SessionStatus,
 } from './types.js';
 import { MAX_EVENTS, INIT_TIMEOUT_MS } from './types.js';
+import { signalAutoLockPid } from './pid-registry.js';
 
 // ---------------------------------------------------------------------------
 // Inlined detection logic (from headless-events.ts — no internal package imports)
@@ -305,12 +306,8 @@ export class SessionManager {
     const lockPath = join(projectDir, '.gsd', 'auto.lock');
     if (!existsSync(lockPath)) return false;
     try {
-      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid?: number };
-      const pid = lockData.pid;
-      if (typeof pid !== 'number') return false;
-      try { process.kill(pid, 0); } catch { return false; }
-      process.kill(pid, 'SIGTERM');
-      return true;
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      return signalAutoLockPid(lockData, projectDir) === 'signaled';
     } catch {
       return false;
     }
