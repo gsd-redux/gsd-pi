@@ -17,7 +17,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { findCheaperSameTierOption, type CheaperSameTierSuggestion } from "./commands/handlers/copilot-models.js";
 import type { CopilotModelSnapshot } from "./copilot-model-catalog.js";
-import { MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
+import { canonicalizeModelId, MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
 
 // Session-scoped only — never persisted to disk, mirrors the existing
 // per-account notification dedup pattern in commands/handlers/copilot-models.ts.
@@ -54,7 +54,10 @@ export function compareCapabilityScores(
 
 function isHigherCapability(selectedBareId: string, candidateBareId: string): boolean {
 	return (
-		compareCapabilityScores(MODEL_CAPABILITY_PROFILES[selectedBareId], MODEL_CAPABILITY_PROFILES[candidateBareId])
+		compareCapabilityScores(
+			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(selectedBareId)],
+			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
+		)
 		=== "higher"
 	);
 }
