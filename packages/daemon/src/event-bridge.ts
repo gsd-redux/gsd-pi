@@ -464,12 +464,13 @@ export class EventBridge {
 
     // If session has a pending blocker with input/editor method, resolve it
     if (session.pendingBlocker && (session.pendingBlocker.method === 'input' || session.pendingBlocker.method === 'editor')) {
+      const blockerMethod = session.pendingBlocker.method;
       try {
         await this.sessionManager.resolveBlocker(sessionId, message.content);
         await message.react('✅').catch(() => {});
         this.logger.info('bridge: blocker resolved via relay', {
           sessionId,
-          method: session.pendingBlocker.method,
+          method: blockerMethod,
         });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);

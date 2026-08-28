@@ -462,6 +462,10 @@ describe('EventBridge', () => {
       const session = createMockSession({ pendingBlocker: blocker, status: 'blocked' });
       const { bridge, sessionManager, client } = buildBridge();
       sessionManager.getSession = mock.fn(() => session);
+      // Real resolveBlocker clears pendingBlocker before the bridge logs success
+      sessionManager.resolveBlocker = mock.fn(async () => {
+        session.pendingBlocker = null;
+      });
       bridge.start();
 
       sessionManager.emit('session:started', {
@@ -481,6 +485,10 @@ describe('EventBridge', () => {
 
       assert.equal(mockFn(sessionManager.resolveBlocker).mock.callCount(), 1);
       assert.equal(mockFn(sessionManager.resolveBlocker).mock.calls[0]!.arguments[1], 'my-api-key-value');
+      // Success path must not surface a failure reply (regression: success log
+      // dereferenced the already-cleared pendingBlocker and threw)
+      assert.equal(mockFn(msg.reply).mock.callCount(), 0);
+      assert.equal(mockFn(msg.react).mock.callCount(), 1);
     });
 
     it('ignores bot messages', async () => {

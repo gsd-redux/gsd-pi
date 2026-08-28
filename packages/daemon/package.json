@@ -25,7 +25,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc",
-    "test": "pnpm run build && node --test dist/daemon.test.js dist/message-batcher.test.js"
+    "test": "pnpm run build && node --test dist/daemon.test.js dist/message-batcher.test.js dist/event-bridge.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
