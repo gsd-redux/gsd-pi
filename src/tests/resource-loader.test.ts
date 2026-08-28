@@ -586,8 +586,9 @@ test("initResources repairs missing bundled extension files with a current manif
   initResources(fakeAgentDir, skillsDir);
 
   const extensionsDir = join(fakeAgentDir, "extensions", "gsd");
-  const missingFile = join(extensionsDir, "debug-logger.ts");
-  const corruptedFile = join(extensionsDir, "auto.ts");
+  const extensionSuffix = existsSync(join(extensionsDir, "auto.ts")) ? ".ts" : ".js";
+  const missingFile = join(extensionsDir, `debug-logger${extensionSuffix}`);
+  const corruptedFile = join(extensionsDir, `auto${extensionSuffix}`);
   const originalCorruptedContent = readFileSync(corruptedFile, "utf-8");
 
   rmSync(missingFile);
