@@ -567,6 +567,117 @@ describe("legacy .gsd captured-byte interpretation", () => {
     assertOracleSemantics(captured, interpretLegacyGsdCapture(captured.capture));
   });
 
+  test("maps generated flat task artifacts without legacy parent frontmatter", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/09-team/09-ROADMAP.md": [
+        "# M009-rfuh2h: Team milestone",
+        "",
+        "- [ ] **S01: Current task artifacts** `risk:low` `depends:[]`",
+        "- [ ] **S02: Current slice plan** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "phases/09-team/S01-T01-PLAN.md": [
+        "---",
+        "estimated_steps: 1",
+        "estimated_files: 1",
+        "---",
+        "",
+        "# T01: Recover current task plan",
+        "",
+      ].join("\n"),
+      "phases/09-team/S01-T01-SUMMARY.md": [
+        "---",
+        "id: T01",
+        "parent: S01",
+        "milestone: M009-rfuh2h",
+        "---",
+        "",
+        "# T01: Recover current task summary",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-02-PLAN.md": [
+        "# S02: Current slice plan",
+        "",
+        "**Milestone:** M009-rfuh2h",
+        "**Slice:** S02",
+        "",
+        "<tasks>",
+        "- [ ] **T01**: Recover embedded task",
+        "</tasks>",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "task")
+        .map((candidate) => [candidate.target.key, candidate.target.field, candidate.normalized]),
+      [
+        ["M009-rfuh2h/S02/T01", undefined, {
+          id: "T01",
+          milestone_id: "M009-rfuh2h",
+          slice_id: "S02",
+          status: "pending",
+          title: "Recover embedded task",
+        }],
+        ["M009-rfuh2h/S01/T01", undefined, {
+          id: "T01",
+          milestone_id: "M009-rfuh2h",
+          slice_id: "S01",
+          status: "pending",
+          title: "Recover current task plan",
+        }],
+        ["M009-rfuh2h/S01/T01", "status", "complete"],
+      ],
+    );
+    assert.deepEqual(interpretation.diagnoses, []);
+    const classification = classifyLegacyImportChanges(classificationBase(), interpretation);
+    assert.equal(classification.applicable, true);
+    assert.equal(classification.counts.unresolved, 0);
+  });
+
+  test("rejects conflicting generated flat task parent evidence", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/09-team/09-ROADMAP.md": [
+        "# M009-rfuh2h: Team milestone",
+        "",
+        "- [ ] **S01: First slice** `risk:low` `depends:[]`",
+        "- [ ] **S02: Second slice** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-01-PLAN.md": [
+        "# S02: Misfiled slice plan",
+        "",
+        "**Milestone:** M009-rfuh2h",
+        "**Slice:** S02",
+        "",
+        "<tasks>",
+        "- [ ] **T01**: Must not map",
+        "</tasks>",
+        "",
+      ].join("\n"),
+      "phases/09-team/S01-T01-SUMMARY.md": [
+        "---",
+        "id: T01",
+        "parent: S02",
+        "milestone: M009-rfuh2h",
+        "---",
+        "",
+        "# T01: Misfiled task summary",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.diagnoses.map((diagnosis) => diagnosis.code),
+      ["task-plan-parent-conflict", "task-summary-parent-conflict"],
+    );
+    assert.deepEqual(
+      interpretation.candidates.filter((candidate) => candidate.target.kind === "task"),
+      [],
+    );
+  });
+
   test("emits action-matrix decision candidates and complete anchors for present collections", (t) => {
     const base = temporaryDirectory(t);
     const physicalRoot = join(base, ".gsd");

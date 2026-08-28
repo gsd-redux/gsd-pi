@@ -573,42 +573,100 @@ function emitFlatRoadmap(
 function expectedFlatParent(
   file: SourceFile,
   claimsByDirectory: ReadonlyMap<string, HierarchyClaim>,
-): { milestoneId: string; sliceIds: ReadonlySet<string>; taskId: string } | undefined {
+): { milestoneId: string; sliceIds: ReadonlySet<string>; sliceId?: string; taskId: string } | undefined {
   const relative = file.entry.logical_path.slice(FLAT_PREFIX.length);
   const [directory, fileName] = relative.split("/");
   const claim = claimsByDirectory.get(directory);
-  const fileIdentity = /^.+?-(\d+)-(?:PLAN|SUMMARY)\.md$/u.exec(fileName ?? "");
-  if (claim === undefined || fileIdentity === null) return undefined;
+  const currentIdentity = /^S(\d+)-(T\d+)-(?:PLAN|SUMMARY)\.md$/u.exec(fileName ?? "");
+  const legacyFlatIdentity = /^.+?-(\d+)-(?:PLAN|SUMMARY)\.md$/u.exec(fileName ?? "");
+  const taskId = currentIdentity?.[2]
+    ?? (legacyFlatIdentity === null
+      ? undefined
+      : `T${String(Number(legacyFlatIdentity[1])).padStart(2, "0")}`);
+  if (claim === undefined || taskId === undefined) return undefined;
   const sliceIds = new Set(roadmapSlices(claim.file).map((slice) => slice.id));
   if (sliceIds.size === 0) return undefined;
   return {
     milestoneId: claim.canonicalId,
     sliceIds,
-    taskId: `T${String(Number(fileIdentity[1])).padStart(2, "0")}`,
+    ...(currentIdentity === null
+      ? {}
+      : { sliceId: `S${currentIdentity[1]}` }),
+    taskId,
   };
 }
 
 function selectFlatParent(
   file: SourceFile,
-  parent: { milestoneId: string; sliceIds: ReadonlySet<string>; taskId: string } | undefined,
+  parent: {
+    milestoneId: string;
+    sliceIds: ReadonlySet<string>;
+    sliceId?: string;
+    taskId: string;
+  } | undefined,
 ): {
   selected?: { milestoneId: string; sliceId: string; taskId: string };
   evidence?: SourceLine;
 } {
   const milestone = frontmatterField(file, "milestone");
   const slice = frontmatterField(file, "slice");
+  const parentSlice = frontmatterField(file, "parent");
   const task = frontmatterField(file, "task");
-  if (parent === undefined) return { evidence: slice?.line ?? milestone?.line ?? task?.line ?? file.lines[0] };
-  if (milestone === undefined || milestone.value !== parent.milestoneId) {
-    return { evidence: milestone?.line ?? file.lines[0] };
+  const id = frontmatterField(file, "id");
+  if (parent === undefined) {
+    return { evidence: slice?.line ?? parentSlice?.line ?? milestone?.line ?? task?.line ?? id?.line ?? file.lines[0] };
   }
-  if (slice === undefined || !parent.sliceIds.has(slice.value)) {
-    return { evidence: slice?.line ?? file.lines[0] };
+  if (milestone !== undefined && milestone.value !== parent.milestoneId) {
+    return { evidence: milestone.line };
   }
-  if (task === undefined || task.value !== parent.taskId) {
-    return { evidence: task?.line ?? file.lines[0] };
+  const sliceFields = [slice, parentSlice].filter((field): field is FrontmatterField => field !== undefined);
+  const selectedSliceId = parent.sliceId
+    ?? sliceFields[0]?.value
+    ?? (parent.sliceIds.size === 1 ? [...parent.sliceIds][0] : undefined);
+  const conflictingSlice = sliceFields.find((field) => (
+    !parent.sliceIds.has(field.value) || (selectedSliceId !== undefined && field.value !== selectedSliceId)
+  ));
+  if (selectedSliceId === undefined || !parent.sliceIds.has(selectedSliceId) || conflictingSlice !== undefined) {
+    return { evidence: conflictingSlice?.line ?? sliceFields[0]?.line ?? file.lines[0] };
   }
-  return { selected: { milestoneId: parent.milestoneId, sliceId: slice.value, taskId: parent.taskId } };
+  const taskFields = [task, id].filter((field): field is FrontmatterField => field !== undefined);
+  const conflictingTask = taskFields.find((field) => field.value !== parent.taskId);
+  if (conflictingTask !== undefined) return { evidence: conflictingTask.line };
+  return { selected: { milestoneId: parent.milestoneId, sliceId: selectedSliceId, taskId: parent.taskId } };
+}
+
+function selectFlatSlicePlanParent(
+  file: SourceFile,
+  claimsByDirectory: ReadonlyMap<string, HierarchyClaim>,
+  heading: { line: SourceLine; match: RegExpExecArray; span: TextSpan },
+): {
+  selected?: { milestoneId: string; sliceId: string };
+  evidence?: SourceLine;
+} {
+  const claim = claimsByDirectory.get(directorySegment(file.entry.logical_path, "flat"));
+  const fileName = file.entry.logical_path.split("/").at(-1) ?? "";
+  const currentIdentity = /^S(\d+)-T\d+-PLAN\.md$/u.exec(fileName);
+  const legacyIdentity = /^.+?-(\d+)-PLAN\.md$/u.exec(fileName);
+  const fileSliceId = currentIdentity !== null
+    ? `S${currentIdentity[1]}`
+    : legacyIdentity !== null
+      ? `S${String(Number(legacyIdentity[1])).padStart(2, "0")}`
+      : undefined;
+  const milestone = firstMatch(file, /^\*\*Milestone:\*\*\s+(\S+)\s*$/u);
+  const slice = firstMatch(file, /^\*\*Slice:\*\*\s+(S\d+)\s*$/u);
+  const headingSliceId = heading.match[1];
+  const sliceIds = claim === undefined
+    ? new Set<string>()
+    : new Set(roadmapSlices(claim.file).map((candidate) => candidate.id));
+  if (claim === undefined || fileSliceId === undefined || !sliceIds.has(headingSliceId)) {
+    return { evidence: heading.line };
+  }
+  if (fileSliceId !== headingSliceId) return { evidence: heading.line };
+  if (milestone !== undefined && milestone.match[1] !== claim.canonicalId) {
+    return { evidence: milestone.line };
+  }
+  if (slice !== undefined && slice.match[1] !== headingSliceId) return { evidence: slice.line };
+  return { selected: { milestoneId: claim.canonicalId, sliceId: headingSliceId } };
 }
 
 function interpretFlatArtifact(
@@ -619,8 +677,33 @@ function interpretFlatArtifact(
 ): void {
   const path = file.entry.logical_path;
   if (roadmapPath(path) || file.encoding !== "utf-8") return;
-  const parent = selectFlatParent(file, expectedFlatParent(file, claimsByDirectory));
   if (/-PLAN\.md$/u.test(path)) {
+    const sliceHeading = firstMatch(file, /^#\s+(S\d+):\s+(.+)$/u);
+    if (sliceHeading !== undefined) {
+      const parent = selectFlatSlicePlanParent(file, claimsByDirectory, sliceHeading);
+      if (parent.selected === undefined) {
+        file.outcome = "unparsed";
+        const evidence = parent.evidence ?? sliceHeading.line;
+        addDiagnosis(
+          diagnoses,
+          file,
+          "task-plan-parent-conflict",
+          "Task plan parent metadata conflicts with its containing phase and cannot select a task.",
+          { start: evidence.start, end: evidence.end },
+        );
+        return;
+      }
+      nestedTaskCandidates(
+        file,
+        parent.selected.milestoneId,
+        parent.selected.sliceId,
+        candidates,
+        diagnoses,
+        "flat-checkbox-task",
+      );
+      return;
+    }
+    const parent = selectFlatParent(file, expectedFlatParent(file, claimsByDirectory));
     const heading = firstMatch(file, /^#\s+(T\d+):\s+(.+)$/u);
     if (parent.selected === undefined || heading === undefined || heading.match[1] !== parent.selected.taskId) {
       file.outcome = "unparsed";
@@ -647,10 +730,11 @@ function interpretFlatArtifact(
     return;
   }
   if (/-SUMMARY\.md$/u.test(path)) {
+    const parent = selectFlatParent(file, expectedFlatParent(file, claimsByDirectory));
     const status = frontmatterField(file, "status");
-    if (parent.selected === undefined || status === undefined) {
+    if (parent.selected === undefined) {
       file.outcome = "unparsed";
-      const evidence = parent.evidence ?? status?.line ?? file.lines[0];
+      const evidence = parent.evidence ?? file.lines[0];
       addDiagnosis(
         diagnoses,
         file,
@@ -660,13 +744,14 @@ function interpretFlatArtifact(
       );
       return;
     }
+    const evidence = status?.line ?? frontmatterField(file, "id")?.line ?? file.lines[0];
     addCandidate(candidates, file, {
       kind: "task",
       key: `${parent.selected.milestoneId}/${parent.selected.sliceId}/${parent.selected.taskId}`,
       field: "status",
-    }, status.value, "flat-matching-summary-attestation", {
-      start: status.line.start,
-      end: status.line.end,
+    }, status?.value ?? "complete", "flat-matching-summary-attestation", {
+      start: evidence.start,
+      end: evidence.end,
     });
     return;
   }
@@ -780,8 +865,10 @@ function nestedTaskCandidates(
   sliceId: string,
   candidates: PendingCandidate[],
   diagnoses: PendingDiagnosis[],
+  checkboxReason = "nested-checkbox-task",
 ): void {
   const checkboxes = allMatches(file, [
+    /^-\s+\[([ xX])\]\s+\*\*(T\d+)\*\*:\s+(.+?)(?:\s+_\([^)]+\)_)?$/u,
     /^-\s+\[([ xX])\]\s+\*\*(T\d+):\s+(.+?)\*\*(?:\s+`est:[^`]+`)?$/u,
     /^-\s+\[([ xX])\]\s+(T\d+)\s+(.+)$/u,
   ]);
@@ -828,7 +915,7 @@ function nestedTaskCandidates(
         status: entry.match[1].toLowerCase() === "x" ? "complete" : "pending",
         title: entry.match[3].trim(),
         ...taskSectionDetail(file, entry.match[2]),
-      }, "nested-checkbox-task", entry.span);
+      }, checkboxReason, entry.span);
     }
     return;
   }
