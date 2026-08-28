@@ -88,7 +88,9 @@ function mcpTool(tools: McpTool[], name: string): McpTool {
 }
 
 function readError(result: Record<string, unknown>): string | undefined {
-  const details = result.details as Record<string, unknown> | undefined;
+  // MCP transports drop the non-standard details field; errors ride on
+  // structuredContent (see adaptExecutorResult). Native passes details through.
+  const details = (result.structuredContent ?? result.details) as Record<string, unknown> | undefined;
   return typeof details?.error === "string" ? (details.error as string) : undefined;
 }
 
@@ -130,8 +132,10 @@ test("canonical read tools: missing DB returns db_unavailable and does not creat
     assert.equal(existsSync(dbPath), false, "native read should not create gsd.db as side effect");
 
     const mcpList = await mcpTool(mcp, "gsd_requirement_list").handler({ projectDir: base });
-    const mcpDetails = (mcpList as { details?: Record<string, unknown> }).details;
-    assert.equal(mcpDetails?.error, "db_unavailable");
+    // MCP transports drop the non-standard details field; the error detail now
+    // rides on structuredContent (see adaptExecutorResult).
+    const mcpRecord = mcpList as { details?: Record<string, unknown>; structuredContent?: Record<string, unknown> };
+    assert.equal(mcpRecord.structuredContent?.error, "db_unavailable");
     assert.equal(existsSync(dbPath), false, "MCP read should not create gsd.db as side effect");
   } finally {
     cleanup([base]);
@@ -170,7 +174,7 @@ test("canonical read tools: reading project B does not switch global DB handle f
       projectDir: baseB,
       limit: 10,
     });
-    const mcpCount = ((mcpList as { details?: { count?: number } }).details?.count ?? -1);
+    const mcpCount = ((mcpList as { structuredContent?: { count?: number } }).structuredContent?.count ?? -1);
     assert.equal(mcpCount, 1, "MCP isolated read should query project B rows");
     assert.equal(getDbPath(), before, "MCP isolated read must keep global DB path unchanged");
   } finally {
@@ -201,7 +205,7 @@ test("canonical read tools: query_error returns structured error and does not br
     assert.equal(nativeDetails?.error, "query_error");
 
     const mcpResult = await mcpTool(mcp, "gsd_requirement_list").handler({ projectDir: base });
-    const mcpDetails = (mcpResult as { details?: Record<string, unknown> }).details;
+    const mcpDetails = (mcpResult as { structuredContent?: Record<string, unknown> }).structuredContent;
     assert.equal(mcpDetails?.error, "query_error");
 
     const isolated = (await import("../db-workspace.ts")).openWorkflowDatabaseIsolated(dbPath);
@@ -234,7 +238,7 @@ test("canonical read tools: native and MCP read the same canonical requirement r
       projectDir: base,
       id: "R777",
     });
-    const mcpRequirement = (mcpGet as { details?: { requirement?: Record<string, unknown> } }).details?.requirement;
+    const mcpRequirement = (mcpGet as { structuredContent?: { requirement?: Record<string, unknown> } }).structuredContent?.requirement;
 
     assert.equal(nativeRequirement?.id, "R777");
     assert.equal(mcpRequirement?.id, "R777");
@@ -266,7 +270,7 @@ test("canonical read parity: empty valid DB returns consistent empty list semant
     });
 
     const nativeDetails = nativeList.details as { count?: number; error?: string } | undefined;
-    const mcpDetails = mcpList.details as { count?: number; error?: string } | undefined;
+    const mcpDetails = mcpList.structuredContent as { count?: number; error?: string } | undefined;
 
     assert.equal(nativeDetails?.error, undefined);
     assert.equal(mcpDetails?.error, undefined);
