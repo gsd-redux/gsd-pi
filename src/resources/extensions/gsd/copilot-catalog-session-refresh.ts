@@ -41,6 +41,7 @@ import {
 } from "./copilot-model-catalog.js";
 import { resolveModelEconomics } from "./model-cost-table.js";
 import {
+	canonicalizeModelId,
 	getModelProfileConfidence,
 	MODEL_CAPABILITY_TIER,
 	type CapabilityProfileConfidence,
@@ -158,7 +159,7 @@ export function classifyRemoteCopilotModel(
 		};
 	}
 
-	const tier = MODEL_CAPABILITY_TIER[record.id];
+	const tier = MODEL_CAPABILITY_TIER[canonicalizeModelId(record.id)];
 	const profileConfidence = getModelProfileConfidence(record.id);
 	const hasKnownLimits =
 		typeof record.execution.contextWindow === "number" && typeof record.execution.maxTokens === "number";
