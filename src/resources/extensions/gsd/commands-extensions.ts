@@ -269,16 +269,34 @@ function discoverManifests(): Map<string, ExtensionManifest> {
   }
 
   // Shell-installed packages remain in the package manager's install tree.
-  // Their registry entry records the manifest directory so this command sees
-  // the same extensions that the runtime package loader already resolves.
+  // Entries that recorded their manifest directory (extensionDir) resolve
+  // directly; npm entries without one fall back to the package manager's
+  // node_modules layout via installedFrom, so list/info/enable/disable see
+  // the same extensions the runtime package loader already resolves.
   for (const entry of Object.values(loadRegistry().entries)) {
-    if (!entry.extensionDir) continue;
     if (entry.source === "project" && entry.projectDir !== resolve(process.cwd())) continue;
-    const manifest = readManifest(entry.extensionDir);
+
+    if (entry.extensionDir) {
+      const manifest = readManifest(entry.extensionDir);
+      if (manifest && (entry.source === "project" || !manifests.has(manifest.id))) {
+        manifests.set(manifest.id, manifest);
+      }
+      continue;
+    }
+
+    if (entry.installType !== "npm" || !entry.installedFrom) continue;
+    const npmRoot = entry.source === "project"
+      ? join(process.cwd(), ".gsd", "npm", "node_modules")
+      : join(gsdHome(), "agent", "npm", "node_modules");
+    const packageDir = resolve(npmRoot, npmPackageName(entry.installedFrom));
+    const resolvedRoot = resolve(npmRoot);
+    if (packageDir !== resolvedRoot && !packageDir.startsWith(resolvedRoot + sep)) {
+      continue;
+    }
+    const manifest = readManifest(packageDir);
     if (manifest && (entry.source === "project" || !manifests.has(manifest.id))) {
       manifests.set(manifest.id, manifest);
     }
-
   }
   return manifests;
 }
