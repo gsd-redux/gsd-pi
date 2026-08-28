@@ -516,7 +516,7 @@ export function findCheaperSameTierOption(
   ctx: ExtensionContext,
   snapshot: CopilotModelSnapshot | null,
 ): CheaperSameTierSuggestion | null {
-  const targetTier = MODEL_CAPABILITY_TIER[bareId];
+  const targetTier = MODEL_CAPABILITY_TIER[canonicalizeModelId(bareId)];
   if (!targetTier) return null;
 
   const targetLiveRecord = findLiveRecord(snapshot, bareId);
@@ -541,7 +541,7 @@ export function findCheaperSameTierOption(
   for (const candidateModel of sessionModels) {
     const candidateBareId = normalizeBareModelId(candidateModel.id);
     if (!candidateBareId || candidateBareId === bareId) continue;
-    if (MODEL_CAPABILITY_TIER[candidateBareId] !== targetTier) continue;
+    if (MODEL_CAPABILITY_TIER[canonicalizeModelId(candidateBareId)] !== targetTier) continue;
 
     const candidateConfidence = getModelProfileConfidence(candidateBareId);
     if (candidateConfidence === "unknown") continue;
