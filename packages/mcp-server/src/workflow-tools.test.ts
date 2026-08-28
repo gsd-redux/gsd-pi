@@ -3681,4 +3681,64 @@ describe("validateProjectDir", () => {
       /must be an absolute path/,
     );
   });
+
+  it("mirrors gsd_decision_list rows into structuredContent (details is stripped over the wire)", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_decision_list");
+      assert.ok(tool, "gsd_decision_list must be registered");
+
+      openDatabase(join(base, ".gsd", "gsd.db"));
+      createMemory({
+        category: "architecture",
+        content: "decision memory fixture",
+        scope: "global",
+        confidence: 0.85,
+        structuredFields: {
+          sourceDecisionId: "D001",
+          when_context: "test",
+          scope: "global",
+          decision: "Mirror read payloads over MCP",
+          choice: "structuredContent",
+          rationale: "the details field is dropped by the MCP transport",
+          made_by: "agent",
+          revisable: "yes",
+          superseded_by: null,
+        },
+      });
+
+      const result = await tool.handler({ projectDir: base }) as {
+        content?: Array<{ text?: string }>;
+        structuredContent?: { count?: number; decisions?: Array<{ id?: string }> };
+      };
+      assert.match(result.content?.[0]?.text ?? "", /Found 1 decision/);
+      assert.ok(result.structuredContent, "payload must ride on structuredContent");
+      assert.equal(result.structuredContent.count, 1);
+      assert.equal(result.structuredContent.decisions?.[0]?.id, "D001");
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("mirrors canonical read errors into structuredContent", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_decision_list");
+      assert.ok(tool, "gsd_decision_list must be registered");
+
+      const result = await tool.handler({ projectDir: base }) as {
+        content?: Array<{ text?: string }>;
+        structuredContent?: { error?: string };
+      };
+      assert.match(result.content?.[0]?.text ?? "", /Error/);
+      assert.ok(result.structuredContent, "error details must ride on structuredContent");
+      assert.equal(result.structuredContent.error, "db_unavailable");
+    } finally {
+      cleanup(base);
+    }
+  });
 });

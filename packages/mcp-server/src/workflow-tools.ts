@@ -1299,10 +1299,10 @@ async function runSerializedWorkflowDbOperation<T>(
   });
 }
 
-async function runSerializedCanonicalReadOperation<T>(
+async function runSerializedCanonicalReadOperation(
   projectDir: string,
-  fn: (adapter: { close(): void }) => Promise<T>,
-): Promise<T> {
+  fn: (adapter: { close(): void }) => Promise<unknown>,
+): Promise<unknown> {
   return runSerializedWorkflowOperation(async () => {
     const { resolveProjectRootDbPath, openWorkflowDatabaseIsolated } = await importWorkflowRuntimeModule<any>(
       "../../../src/resources/extensions/gsd/db-workspace.js",
@@ -1316,7 +1316,9 @@ async function runSerializedCanonicalReadOperation<T>(
       throw new Error("Database adapter not available (db_unavailable)");
     }
     try {
-      return await fn(adapter);
+      // Canonical read tools return their payload in `details`, which the MCP
+      // wire drops — mirror it into structuredContent like every other tool.
+      return adaptExecutorResult(await fn(adapter));
     } finally {
       adapter.close();
     }
@@ -1327,7 +1329,7 @@ function mapCanonicalReadError(
   operation: "list_decisions" | "get_decision" | "list_requirements" | "get_requirement",
   message: string,
   id?: string,
-): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+): unknown {
   const dbUnavailable = message.includes("db_unavailable") || message.includes("not available");
   const details: Record<string, unknown> = {
     operation,
@@ -1346,13 +1348,13 @@ function mapCanonicalReadError(
         ? "listing requirements"
         : "fetching requirement";
 
-  return {
+  return adaptExecutorResult({
     content: [{
       type: "text" as const,
       text: dbUnavailable ? "Error: GSD database is not available." : `Error ${actionLabel}: ${message}`,
     }],
     details,
-  };
+  });
 }
 
 async function enforceWorkflowWriteGate(
