@@ -26,7 +26,7 @@ import {
   resolveGsdModelsCatalogPath,
 } from "../../copilot-overlay-writer.js";
 import { resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
-import { getModelProfileConfidence, MODEL_CAPABILITY_TIER } from "../../model-router.js";
+import { canonicalizeModelId, getModelProfileConfidence, MODEL_CAPABILITY_TIER } from "../../model-router.js";
 
 interface CopilotCatalogDiffState {
   firstAccepted: boolean;
@@ -266,8 +266,8 @@ async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
   }
 }
 
-function describeCapabilityTier(bareModelId: string): string {
-  const tier = MODEL_CAPABILITY_TIER[bareModelId];
+function describeCapabilityTier(modelId: string): string {
+  const tier = MODEL_CAPABILITY_TIER[canonicalizeModelId(modelId)];
   return tier
     ? `known capability tier: ${tier}`
     : "no GSD capability profile yet — manual selection only, not auto-routed";
@@ -575,7 +575,7 @@ function buildWhyExplanation(
   const candidate = liveRecord
     ? computeCatalogRegistrationCandidates([liveRecord], localCopilotModels(ctx))[0]
     : undefined;
-  const tier = MODEL_CAPABILITY_TIER[bareId] ?? "unknown";
+  const tier = MODEL_CAPABILITY_TIER[canonicalizeModelId(bareId)] ?? "unknown";
   const confidence = getModelProfileConfidence(bareId);
   const economics = resolveEconomicsForModel(ctx, bareId, liveRecord, localModel);
 

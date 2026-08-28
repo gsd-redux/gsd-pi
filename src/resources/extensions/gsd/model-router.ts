@@ -357,7 +357,7 @@ export function getModelProfileConfidence(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): CapabilityProfileConfidence {
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
   if (MODEL_CAPABILITY_PROFILES[bareId] !== undefined) {
     return "curated";
   }
@@ -366,7 +366,7 @@ export function getModelProfileConfidence(
     return "inherited";
   }
 
-  const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
+  const override = findCapabilityOverride(modelId, capabilityOverrides);
   if (override && CAPABILITY_DIMENSIONS.every((dimension) => typeof override[dimension] === "number")) {
     return "provisional";
   }
@@ -374,8 +374,22 @@ export function getModelProfileConfidence(
   return "unknown";
 }
 
+function findCapabilityOverride(
+  modelId: string,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+): Partial<ModelCapabilities> | undefined {
+  if (!capabilityOverrides) return undefined;
+
+  const directOverride = capabilityOverrides[modelId];
+  if (directOverride) return directOverride;
+
+  const canonicalId = canonicalizeModelId(modelId);
+  return capabilityOverrides[canonicalId]
+    ?? Object.entries(capabilityOverrides).find(([id]) => canonicalizeModelId(id) === canonicalId)?.[1];
+}
+
 function findInheritedProfileBase(modelId: string): string | undefined {
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
   return Object.keys(MODEL_CAPABILITY_PROFILES)
     .sort((a, b) => b.length - a.length)
     .find((knownId) =>
@@ -405,11 +419,11 @@ function resolveCapabilityProfile(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): { profile: ModelCapabilities; confidence: CapabilityProfileConfidence } {
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
   const builtin = MODEL_CAPABILITY_PROFILES[bareId];
   const inheritedBase = builtin ? undefined : findInheritedProfileBase(bareId);
   const inherited = inheritedBase ? MODEL_CAPABILITY_PROFILES[inheritedBase] : undefined;
-  const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
+  const override = findCapabilityOverride(modelId, capabilityOverrides);
   const confidence = getModelProfileConfidence(modelId, capabilityOverrides);
 
   if (builtin) {
@@ -444,7 +458,7 @@ function sameProviderQualifiedModel(
   candidate: Pick<Model<Api>, "id" | "provider">,
 ): boolean {
   const provider = modelProvider(modelId)?.toLowerCase();
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
   const candidateProvider = candidate.provider?.toLowerCase();
   if (provider && candidateProvider && provider !== candidateProvider) return false;
   return bareId === candidate.id;
@@ -809,7 +823,7 @@ export function resolveModelForComplexity(
   // (cost-sorted) eligible list.
   const explicitTierPin = routingConfig.tier_models?.[requestedTier];
   const isExplicitTierPin = (modelId: string): boolean =>
-    !!explicitTierPin && (modelId === explicitTierPin || bareModelId(modelId) === bareModelId(explicitTierPin));
+    !!explicitTierPin && (modelId === explicitTierPin || canonicalizeModelId(modelId) === canonicalizeModelId(explicitTierPin));
 
   // getEligibleModels() honors an explicit tier_models pin unconditionally (its
   // own step 1, which always returns a single-element list for a pin), so a
@@ -1078,7 +1092,7 @@ function isKnownModel(modelId: string): boolean {
 
 function getModelCost(modelId: string, availableModels?: Array<Model<Api>>): number {
   const provider = modelProvider(modelId) ?? availableModels?.find((candidate) => sameProviderQualifiedModel(modelId, candidate))?.provider ?? "unknown";
-  const bareId = bareModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
 
   const runtimeModel = availableModels?.find((candidate) => sameProviderQualifiedModel(modelId, candidate));
   // All-zero cost is the registry's placeholder for "unknown", not a real free
