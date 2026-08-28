@@ -157,10 +157,16 @@ These top-level commands dispatch native GSD workflows against the milestone, sl
 
 | Command | Description |
 |---------|-------------|
-| `/gsd extensions list` | List all extensions |
+| `/gsd extensions list` | List extensions and status; package-managed entries show `[user]` or `[project]` (current project only) |
 | `/gsd extensions enable <id>` | Enable an extension |
 | `/gsd extensions disable <id>` | Disable an extension |
 | `/gsd extensions info <id>` | Show extension details |
+| `/gsd extensions install <spec>` | Install a user extension from npm, git, or a local path |
+| `/gsd extensions uninstall <id>` | Remove a user or current-project extension; package-managed entries remove their shell package |
+| `/gsd extensions update [id]` | Update user and current-project npm extensions; git/local entries must be reinstalled |
+| `/gsd extensions validate <path>` | Validate an extension package directory |
+
+Shell installs and removals synchronize the extension registry. `gsd install <source>` creates user entries, while `gsd install <source> --local` creates `[project]` entries for the current project; use the same scope with `gsd remove`. `gsd list` reports packages and separate user/project extension sections.
 
 ## GitHub Sync
 

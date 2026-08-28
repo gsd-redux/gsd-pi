@@ -40,6 +40,9 @@
 |---------|-------------|
 | `gsd config` | Set up global API keys |
 | `gsd update` | See the [authoritative CLI reference](../../docs/user-docs/commands.md#cli-flags) for update targets |
+| `gsd install <source> [-l\|--local]` | Install a package in user scope, or in the current project with `--local`; extension registry entries use the same scope |
+| `gsd remove <source> [-l\|--local]` | Remove a package and its registered extensions from the matching user or project scope |
+| `gsd list` | List user/project packages and separate user/project extension sections |
 
 ## Headless Mode
 

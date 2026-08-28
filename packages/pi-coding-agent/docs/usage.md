@@ -126,9 +126,9 @@ pi [options] [@files...] [messages...]
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
+pi install <source> [-l|--local]     # Install package; default user-wide, flag for project-local
+pi remove <source> [-l|--local]      # Remove from user scope, or project scope with the flag
+pi uninstall <source> [-l|--local]   # Alias for remove
 pi update [source|self|pi]   # Update pi and packages; reconcile pinned git refs
 pi update --extensions       # Update packages only; reconcile pinned git refs
 pi update --self             # Update pi only

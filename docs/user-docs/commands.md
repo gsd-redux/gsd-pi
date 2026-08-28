@@ -293,16 +293,18 @@ Plugins are plain YAML (`.yaml`) or markdown (`.md`) files. See
 
 | Command | Description |
 |---------|-------------|
-| `/gsd extensions list` | List all extensions and their status. User-installed entries show `[user]` plus the install source |
+| `/gsd extensions list` | List all extensions and their status. Installed entries show `[user]` or `[project]` plus the install source; project entries are limited to the current project. |
 | `/gsd extensions enable <id>` | Enable a disabled extension |
 | `/gsd extensions disable <id>` | Disable an extension |
 | `/gsd extensions info <id>` | Show extension details |
 | `/gsd extensions install <spec>` | Install a user extension. `<spec>` is an npm package, a git URL, or a local path. Restart GSD to activate. |
-| `/gsd extensions uninstall <id>` | Remove a user-installed extension. Warns if other extensions depend on it. |
-| `/gsd extensions update [id]` | Update a single user-installed npm extension to its latest version, or all of them when `id` is omitted. Git/local installs are skipped — reinstall to update. |
+| `/gsd extensions uninstall <id>` | Remove a user or current-project extension. Package-managed entries remove the underlying shell package; direct installs warn if other extensions depend on them. |
+| `/gsd extensions update [id]` | Update a single user or current-project npm extension to its latest version, or all applicable entries when `id` is omitted. Package-managed entries update through the shell package manager. Git/local installs are skipped — reinstall to update. |
 | `/gsd extensions validate <path>` | Validate an extension package directory against the manifest schema before publishing or installing. |
 
 Install sources are auto-detected: starts with `http(s)://` or ends with `.git` → git clone; contains `/` or `.` and exists on disk → local copy; otherwise → `npm pack`. Installed extensions land in `~/.gsd/extensions/<id>/` and the registry records the source so `update` can re-fetch.
+
+Shell package commands use the same extension registry. A successful `gsd install <source>` registers extension manifests from that package as user entries; adding `--local` registers them as project entries for the current project. `gsd remove` unregisters the matching entries from the same scope. This keeps `gsd list` and `/gsd extensions list` in sync regardless of which install route you use.
 
 ## cmux Integration
 
@@ -424,9 +426,9 @@ The following commands are sent directly in your **Telegram chat** to a configur
 | `gsd sessions` | Interactive session picker — list all saved sessions for the current directory and choose one to resume |
 | `gsd config` | Set up global API keys for search and docs tools (saved to `~/.gsd/agent/auth.json`, applies to all projects). See [Global API Keys](./configuration.md#global-api-keys-gsd-config). |
 | `gsd update` | Update GSD to the latest version (use `gsd update browser` to update the managed browser, or [`gsd update --models`](./custom-models.md#updating-the-model-catalog) to refresh the model catalog) |
-| `gsd install <source>` | Install an extension from npm, git, a URL, or a local path (e.g. `gsd install npm:@foo/bar`) |
-| `gsd remove <source>` | Remove a previously installed extension |
-| `gsd list` | List installed extensions |
+| `gsd install <source> [-l\|--local]` | Install a package from npm, git, a URL, or a local path (e.g. `gsd install npm:@foo/bar`). The default scope is user-wide; `--local` installs into the current project and registers its extensions as project entries. |
+| `gsd remove <source> [-l\|--local]` | Remove a package from the matching user or project scope and unregister its extensions. Use `--local` for a project-local install. |
+| `gsd list` | List installed user/project packages, followed by separate user/project extension sections. |
 | `gsd graph <subcommand>` | Build, query, status, or diff the project knowledge graph built from `.gsd/` artifacts |
 | `gsd quick <task>` | Execute a quick task without a TUI (alias for `gsd headless quick <task>`) |
 | `gsd headless --json` | Structured JSONL event stream to stdout for scripting, CI, and troubleshooting (alias: `--output-format stream-json`) |

@@ -121,16 +121,18 @@ See the [authoritative lifecycle safety contract](../../docs/user-docs/commands.
 
 | Command | Description |
 |---------|-------------|
-| `/gsd extensions list` | List all extensions and their status. User-installed entries show `[user]` plus the install source |
+| `/gsd extensions list` | List all extensions and their status. Installed entries show `[user]` or `[project]` plus the install source; project entries are limited to the current project. |
 | `/gsd extensions enable <id>` | Enable a disabled extension |
 | `/gsd extensions disable <id>` | Disable an extension |
 | `/gsd extensions info <id>` | Show extension details |
 | `/gsd extensions install <spec>` | Install a user extension. `<spec>` is an npm package, a git URL, or a local path. Restart GSD to activate. (v2.78) |
-| `/gsd extensions uninstall <id>` | Remove a user-installed extension. Warns if other extensions depend on it. (v2.78) |
-| `/gsd extensions update [id]` | Update a single user-installed npm extension to its latest version, or all of them when `id` is omitted. Git/local installs are skipped — reinstall to update. (v2.78) |
+| `/gsd extensions uninstall <id>` | Remove a user or current-project extension. Package-managed entries remove the underlying shell package; direct installs warn if other extensions depend on them. (v2.78) |
+| `/gsd extensions update [id]` | Update a single user or current-project npm extension to its latest version, or all applicable entries when `id` is omitted. Package-managed entries update through the shell package manager. Git/local installs are skipped — reinstall to update. (v2.78) |
 | `/gsd extensions validate <path>` | Validate an extension package directory against the manifest schema before publishing or installing. (v2.78) |
 
 Install sources are auto-detected: a `git`/`http(s)` URL or `.git` suffix triggers `git clone`; a path that exists on disk is copied locally; everything else is fetched via `npm pack`. Installed extensions land in `~/.gsd/extensions/<id>/` and the registry records the source so `update` can re-fetch.
+
+Shell package commands use the same extension registry. A successful `gsd install <source>` registers extension manifests from that package as user entries; adding `--local` registers them as project entries for the current project. `gsd remove` unregisters the matching entries from the same scope. This keeps `gsd list` and `/gsd extensions list` in sync regardless of which install route you use.
 
 ## Keyboard shortcuts
 
@@ -167,6 +169,9 @@ In terminals without Kitty keyboard protocol support (macOS Terminal.app, JetBra
 | `gsd sessions` | Interactive session picker |
 | `gsd config` | Set up global API keys |
 | `gsd update` | Update GSD to the latest version |
+| `gsd install <source> [-l\|--local]` | Install a package in user scope, or in the current project with `--local` |
+| `gsd remove <source> [-l\|--local]` | Remove a package from the matching user or project scope |
+| `gsd list` | List user/project packages and separate user/project extension sections |
 | `gsd quick <task>` | Execute a quick task without a TUI |
 
 ## Headless mode
