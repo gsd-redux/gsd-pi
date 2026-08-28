@@ -277,8 +277,8 @@ describe("createGridLayout", () => {
   });
 });
 
-describe("CmuxClient stdio isolation", () => {
-  test("runSync and runAsync execute the cmux CLI without inheriting test stdin", async () => {
+describe("CmuxClient CLI integration", () => {
+  test("uses current cmux split, send, and interrupt commands without inheriting test stdin", async () => {
     const binDir = fs.mkdtempSync(path.join(tmpdir(), "cmux-bin-"));
     const logPath = path.join(binDir, "calls.jsonl");
     const cmuxPath = path.join(binDir, "cmux");
@@ -288,8 +288,10 @@ describe("CmuxClient stdio isolation", () => {
       [
         "#!/usr/bin/env node",
         "const fs = require('node:fs');",
-        `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
-        "if (process.argv.includes('--json')) process.stdout.write(JSON.stringify({surfaces:[{id:'surface-1'}]}));",
+        "const args = process.argv.slice(2);",
+        `fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + '\\n');`,
+        "if (args[0] === 'tree') process.stdout.write('workspace:1\\n  pane:1\\n    surface:3\\n    surface:4\\n');",
+        "else if (args[0] === 'new-split') process.stdout.write('OK surface:17 workspace:1\\n');",
         "else process.stdout.write('ok');",
       ].join("\n"),
       "utf-8",
@@ -311,7 +313,12 @@ describe("CmuxClient stdio isolation", () => {
       });
 
       client.setStatus("M001", "executing");
-      await client.listSurfaceIds();
+      assert.deepEqual(await client.listSurfaceIds(), ["surface:3", "surface:4"]);
+      const surface = await client.createSplitFrom("surface:3", "right");
+      assert.equal(surface, "surface:17");
+      if (!surface) throw new Error("new-split did not return a surface ref");
+      assert.equal(await client.sendSurface(surface, "echo hello"), true);
+      assert.equal(await client.sendInterrupt(surface), true);
 
       const calls = fs.readFileSync(logPath, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
       const commandPrefixes = calls.map((call) => call.slice(0, 2));
@@ -319,10 +326,20 @@ describe("CmuxClient stdio isolation", () => {
         commandPrefixes.some((prefix) => JSON.stringify(prefix) === JSON.stringify(["set-status", "gsd"])),
         "set-status command should be invoked",
       );
-      assert.ok(
-        commandPrefixes.some((prefix) => JSON.stringify(prefix) === JSON.stringify(["list-surfaces", "--json"])),
-        "list-surfaces command should be invoked",
+      assert.deepEqual(
+        calls.find((call) => call[0] === "new-split"),
+        ["new-split", "right", "--workspace", "workspace-1", "--surface", "surface:3"],
       );
+      assert.deepEqual(
+        calls.find((call) => call[0] === "send"),
+        ["send", "--surface", "surface:17", "echo hello\n"],
+      );
+      assert.deepEqual(
+        calls.find((call) => call[0] === "send-key"),
+        ["send-key", "--surface", "surface:17", "ctrl+c"],
+      );
+      assert.equal(calls.some((call) => call[0] === "list-surfaces"), false);
+      assert.equal(calls.some((call) => call[0] === "send-surface"), false);
     } finally {
       process.env.PATH = originalPath;
       fs.rmSync(binDir, { recursive: true, force: true });

@@ -295,9 +295,10 @@ export class CmuxClient {
   }
 
   async listSurfaceIds(): Promise<string[]> {
-    const stdout = await this.runAsync(this.appendWorkspace(["list-surfaces", "--json", "--id-format", "both"]));
-    const parsed = stdout ? parseJson(stdout) : null;
-    return extractSurfaceIds(parsed);
+    // Current cmux no longer exposes `list-surfaces`. `tree` is workspace-scoped
+    // and includes every live surface ref, which is enough for this compatibility helper.
+    const stdout = await this.runAsync(this.appendWorkspace(["tree"]));
+    return extractSurfaceIds(stdout);
   }
 
   async createSplit(direction: "right" | "down" | "left" | "up"): Promise<string | null> {
@@ -309,15 +310,12 @@ export class CmuxClient {
     direction: "right" | "down" | "left" | "up",
   ): Promise<string | null> {
     if (!this.config.splits) return null;
-    const before = new Set(await this.listSurfaceIds());
     const args = ["new-split", direction];
     const scopedArgs = this.appendSurface(this.appendWorkspace(args), sourceSurfaceId);
-    await this.runAsync(scopedArgs);
-    const after = await this.listSurfaceIds();
-    for (const id of after) {
-      if (!before.has(id)) return id;
-    }
-    return null;
+    const stdout = await this.runAsync(scopedArgs);
+    // Current cmux prints e.g. `OK surface:17 workspace:2`. Use the returned
+    // surface directly instead of racing a before/after surface enumeration.
+    return extractSurfaceIds(stdout)[0] ?? null;
   }
 
   /**
@@ -371,13 +369,13 @@ export class CmuxClient {
 
   async sendSurface(surfaceId: string, text: string): Promise<boolean> {
     const payload = text.endsWith("\n") ? text : `${text}\n`;
-    const stdout = await this.runAsync(["send-surface", "--surface", surfaceId, payload]);
+    const stdout = await this.runAsync(["send", "--surface", surfaceId, payload]);
     return stdout !== null;
   }
 
-  // Send Ctrl-C (ETX) to a surface to interrupt the running command.
+  // Use cmux's key encoder instead of hand-encoding ETX for Ctrl-C.
   async sendInterrupt(surfaceId: string): Promise<boolean> {
-    const stdout = await this.runAsync(["send-surface", "--surface", surfaceId, "\x03"]);
+    const stdout = await this.runAsync(["send-key", "--surface", surfaceId, "ctrl+c"]);
     return stdout !== null;
   }
 }
@@ -432,29 +430,9 @@ function parseJson(text: string): unknown {
   }
 }
 
-function extractSurfaceIds(value: unknown): string[] {
-  const found = new Set<string>();
-
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const item of node) visit(item);
-      return;
-    }
-    if (!node || typeof node !== "object") return;
-
-    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
-      if (
-        typeof child === "string"
-        && (key === "surface_id" || key === "surface" || (key === "id" && child.includes("surface")))
-      ) {
-        found.add(child);
-      }
-      visit(child);
-    }
-  };
-
-  visit(value);
-  return Array.from(found);
+function extractSurfaceIds(text: string | null): string[] {
+  if (!text) return [];
+  return Array.from(new Set(text.match(/\bsurface:\d+\b/g) ?? []));
 }
 
 /**
