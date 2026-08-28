@@ -94,7 +94,10 @@ function saveRegistry(registry: ExtensionRegistry): void {
   const filePath = getRegistryPath();
   try {
     mkdirSync(dirname(filePath), { recursive: true });
-    const tmp = filePath + ".tmp";
+    // Unique staging name: a fixed ".tmp" name makes concurrent writers
+    // (a syncing session vs. a slash-command install) rename each other's
+    // half-written staging file out from under them.
+    const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
     writeFileSync(tmp, JSON.stringify(registry, null, 2), "utf-8");
     renameSync(tmp, filePath);
   } catch {

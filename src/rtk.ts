@@ -371,7 +371,9 @@ export async function ensureRtkAvailable(options: EnsureRtkOptions = {}): Promis
       reason: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    // best-effort: on Windows the extracted files can be held briefly by
+    // AV/indexers; EPERM here must not escape over the real result
+    try { rmSync(tempRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
 }
 

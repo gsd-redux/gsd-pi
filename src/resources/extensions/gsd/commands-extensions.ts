@@ -624,12 +624,15 @@ async function updateAllExtensions(
     }
 
     const current = entry.version ?? "0.0.0";
-    const packageName = entry.installedFrom;
-    if (!packageName) {
+    const installedFrom = entry.installedFrom;
+    if (!installedFrom) {
       ctx.ui.notify(`  ${entry.id}: no recorded install source — skip`, "info");
       skipped++;
       continue;
     }
+    // installedFrom may carry a version pin (pkg@1.2.3); the registry API
+    // needs the bare package name (same parse as updateSingleExtension).
+    const { name: packageName } = parseNpmSpecifier(installedFrom.replace(/^npm:/, ""));
 
     const latest = await getLatestNpmVersion(packageName);
     if (!latest) {
@@ -718,7 +721,9 @@ function installFromNpm(specifier: string, installedExtDir: string, ctx: Extensi
     if (extractDir && existsSync(extractDir)) {
       try { rmSync(extractDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
-    rmSync(packDir, { recursive: true, force: true });
+    // best-effort: Windows AV/indexers can hold the fresh .tgz briefly and
+    // EPERM here must not escape the finally over a successful install
+    try { rmSync(packDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
 }
 
