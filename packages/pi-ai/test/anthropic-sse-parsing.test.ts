@@ -517,4 +517,56 @@ describe("Anthropic raw SSE parsing", () => {
 			],
 		});
 	});
+
+	// A new/proxied stop reason used to throw mid-stream, aborting the turn and
+	// dropping partial output. It must map to the error terminal instead.
+	it.each(["some_new_stop_reason", "pause_turn"])("maps unknown stop reason %s to error with errorMessage instead of throwing", async (stopReason) => {
+		const model = getModel("anthropic", "claude-opus-4-8");
+		const context: Context = {
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			tools: [],
+		};
+
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: {
+						id: "msg_stop",
+						usage: { input_tokens: 1, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+					},
+				}),
+			},
+			{
+				event: "content_block_start",
+				data: JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } }),
+			},
+			{
+				event: "content_block_stop",
+				data: JSON.stringify({ type: "content_block_stop", index: 0 }),
+			},
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: stopReason },
+					usage: { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+				}),
+			},
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+
+		const stream = streamAnthropic(model, context, {
+			client: createFakeAnthropicClient(response),
+		});
+
+		const final = await stream.result();
+		expect(final.stopReason).toBe("error");
+		expect(final.errorMessage).toContain(stopReason);
+	});
 });

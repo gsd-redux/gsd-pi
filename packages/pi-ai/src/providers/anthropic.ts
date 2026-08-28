@@ -690,7 +690,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					}
 				} else if (event.type === "message_delta") {
 					if (event.delta.stop_reason) {
-						output.stopReason = mapStopReason(event.delta.stop_reason);
+						const mapped = mapStopReason(event.delta.stop_reason);
+						output.stopReason = mapped.stopReason;
+						if (mapped.errorMessage) {
+							output.errorMessage = mapped.errorMessage;
+						}
 					}
 					// Only update usage fields if present (not null).
 					// Preserves input_tokens from message_start when proxies omit it in message_delta.
@@ -718,7 +722,9 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			}
 
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unknown error occurred");
+				// Preserve the specific reason mapped by mapStopReason; the catch
+				// below copies this message into output.errorMessage.
+				throw new Error(output.errorMessage ?? "An unknown error occurred");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -1278,24 +1284,34 @@ function convertTools(
 	});
 }
 
-function mapStopReason(reason: Anthropic.Messages.StopReason | string): StopReason {
+function mapStopReason(reason: Anthropic.Messages.StopReason | string): {
+	stopReason: StopReason;
+	errorMessage?: string;
+} {
 	switch (reason) {
 		case "end_turn":
-			return "stop";
+			return { stopReason: "stop" };
 		case "max_tokens":
-			return "length";
+			return { stopReason: "length" };
 		case "tool_use":
-			return "toolUse";
+			return { stopReason: "toolUse" };
 		case "refusal":
-			return "error";
-		case "pause_turn": // Stop is good enough -> resubmit
-			return "stop";
+			return { stopReason: "error", errorMessage: "Provider stop_reason: refusal" };
+		case "pause_turn":
+			// Anthropic paused this long-running turn server-side; nothing here
+			// resubmits, so mapping it to "stop" would silently truncate the run.
+			return {
+				stopReason: "error",
+				errorMessage: "Provider stop_reason: pause_turn (turn paused by provider; resubmit to continue)",
+			};
 		case "stop_sequence":
-			return "stop"; // We don't supply stop sequences, so this should never happen
+			return { stopReason: "stop" }; // We don't supply stop sequences, so this should never happen
 		case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-			return "error";
+			return { stopReason: "error", errorMessage: "Provider stop_reason: sensitive" };
 		default:
-			// Handle unknown stop reasons gracefully (API may add new values)
-			throw new Error(`Unhandled stop reason: ${reason}`);
+			// Handle unknown stop reasons gracefully (API may add new values):
+			// map to the error terminal instead of throwing mid-stream, which
+			// aborted the turn and dropped any partial output on replay.
+			return { stopReason: "error", errorMessage: `Provider stop_reason: ${reason}` };
 	}
 }
