@@ -28,15 +28,41 @@ interface UpdateCheckCache {
 
 /**
  * Compares two semver strings. Returns 1 if a > b, -1 if a < b, 0 if equal.
+ * Prerelease suffixes sort below the same release (1.0.0-beta.1 < 1.0.0),
+ * per semver.
  */
 export function compareSemver(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const va = pa[i] || 0
-    const vb = pb[i] || 0
+  const parse = (v: string): { core: number[]; pre: string | null } => {
+    const idx = v.indexOf('-')
+    if (idx === -1) return { core: v.split('.').map(Number), pre: null }
+    return { core: v.slice(0, idx).split('.').map(Number), pre: v.slice(idx + 1) }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  for (let i = 0; i < Math.max(pa.core.length, pb.core.length); i++) {
+    const va = pa.core[i] || 0
+    const vb = pb.core[i] || 0
     if (va > vb) return 1
     if (va < vb) return -1
+  }
+  if (pa.pre === null && pb.pre === null) return 0
+  if (pa.pre === null) return 1
+  if (pb.pre === null) return -1
+  const idsA = pa.pre.split('.')
+  const idsB = pb.pre.split('.')
+  for (let i = 0; i < Math.max(idsA.length, idsB.length); i++) {
+    const x = idsA[i]
+    const y = idsB[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const nx = Number(x)
+    const ny = Number(y)
+    if (!Number.isNaN(nx) && !Number.isNaN(ny)) {
+      if (nx > ny) return 1
+      if (nx < ny) return -1
+    } else if (x !== y) {
+      return x > y ? 1 : -1
+    }
   }
   return 0
 }

@@ -572,3 +572,15 @@ test('fetchLatestVersionFromRegistry returns null for blank version strings', as
   const latest = await fetchLatestVersionFromRegistry(registry.url, 5000)
   assert.equal(latest, null)
 })
+
+test('compareSemver sorts prereleases below the same release', () => {
+  assert.equal(compareSemver('1.0.0-beta.1', '1.0.0'), -1)
+  assert.equal(compareSemver('1.0.0', '1.0.0-beta.1'), 1)
+  assert.equal(compareSemver('1.0.0-beta.1', '1.0.0-beta.2'), -1)
+  assert.equal(compareSemver('1.0.0-beta.2', '1.0.0-beta.10'), -1)
+  assert.equal(compareSemver('1.0.0-beta', '1.0.0-beta.1'), -1)
+  assert.equal(compareSemver('1.0.0-rc.1', '1.0.0'), -1)
+  // release components still dominate the prerelease comparison
+  assert.equal(compareSemver('1.0.1-beta.1', '1.0.0'), 1)
+  assert.equal(compareSemver('1.0.0-beta.1', '1.0.0-beta.1'), 0)
+})
