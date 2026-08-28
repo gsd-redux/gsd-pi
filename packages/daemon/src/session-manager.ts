@@ -13,8 +13,8 @@
  * - projectName field on ManagedSession
  */
 
-import { execSync } from 'node:child_process';
-import { basename, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, delimiter, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { RpcClient } from '@opengsd/rpc-client';
 import type { RpcCostUpdateEvent, RpcExtensionUIRequest, RpcInitResult, SdkAgentEvent } from '@opengsd/contracts';
@@ -46,6 +46,30 @@ const TERMINAL_PREFIXES = [
   'no active milestone',
   'auto-mode idle',
 ];
+
+function getPathEnvValue(env: NodeJS.ProcessEnv = process.env): string {
+  return env['PATH'] ?? env['Path'] ?? env['path'] ?? '';
+}
+
+// PATHEXT-aware PATH lookup; `which` does not exist on Windows. Mirrored from
+// packages/mcp-server/src/session-manager.ts — keep both copies in sync.
+function findExecutableOnPath(command: string): string | null {
+  const pathValue = getPathEnvValue();
+  if (!pathValue) return null;
+  const extensions = process.platform === 'win32'
+    ? ['', ...(process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+      .split(';')
+      .filter(Boolean)]
+    : [''];
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      const candidate = join(dir, `${command}${ext}`);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
 
 function isTerminalNotification(event: Record<string, unknown>): boolean {
   if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false;
@@ -223,8 +247,14 @@ export class SessionManager extends EventEmitter {
   /**
    * Look up a session by sessionId.
    * Linear scan is fine — we expect <10 concurrent sessions.
+   *
+   * Empty sessionId is rejected explicitly: in-progress sessions carry an
+   * empty sessionId until init() resolves, so an empty-string lookup would
+   * otherwise match the first in-flight session and silently target the
+   * wrong one (e.g. cancel a different caller's session).
    */
   getSession(sessionId: string): ManagedSession | undefined {
+    if (!sessionId) return undefined;
     for (const session of this.sessions.values()) {
       if (session.sessionId === sessionId) return session;
     }
@@ -424,12 +454,8 @@ export class SessionManager extends EventEmitter {
     const envPath = process.env['GSD_CLI_PATH'];
     if (envPath) return resolve(envPath);
 
-    try {
-      const gsdBin = execSync('which gsd', { encoding: 'utf-8' }).trim();
-      if (gsdBin) return resolve(gsdBin);
-    } catch {
-      // which failed
-    }
+    const gsdBin = findExecutableOnPath('gsd');
+    if (gsdBin) return resolve(gsdBin);
 
     throw new Error(
       'Cannot find GSD CLI. Set GSD_CLI_PATH environment variable or ensure `gsd` is in PATH.'

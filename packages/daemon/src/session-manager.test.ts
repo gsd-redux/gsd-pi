@@ -13,10 +13,10 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Logger } from './logger.js';
 import { SessionManager } from './session-manager.js';
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, PendingBlocker } from './types.js';
-import { Logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
 // Mock RpcClient (duck-typed to match RpcClient interface)
@@ -1095,5 +1095,46 @@ describe('SessionManager', () => {
     await manager.cleanup();
 
     assert.equal(manager.getAllSessions().length, 0);
+  });
+});
+
+describe('SessionManager parity guards', () => {
+  it('getSession rejects an empty sessionId instead of matching the first in-flight session', () => {
+    const manager = new SessionManager(new Logger({ filePath: join(tmpdir(), `sm-parity-${Date.now()}.log`), level: 'error' }));
+    // In-progress sessions carry an empty sessionId until init resolves; an
+    // empty lookup must not silently target them.
+    assert.equal(manager.getSession(''), undefined);
+    assert.equal(manager.getSession(undefined as unknown as string), undefined);
+  });
+
+  it('resolveCLIPath honors GSD_CLI_PATH', () => {
+    const fakeCli = join(tmpdir(), `gsd-cli-${Date.now()}`);
+    writeFileSync(fakeCli, '#!/bin/sh\n');
+    try {
+      const prev = process.env['GSD_CLI_PATH'];
+      process.env['GSD_CLI_PATH'] = fakeCli;
+      try {
+        assert.equal(resolve(SessionManager.resolveCLIPath()), resolve(fakeCli));
+      } finally {
+        if (prev === undefined) delete process.env['GSD_CLI_PATH'];
+        else process.env['GSD_CLI_PATH'] = prev;
+      }
+    } finally {
+      rmSync(fakeCli, { force: true });
+    }
+  });
+
+  it('resolveCLIPath finds an executable on PATH without relying on `which`', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsd-path-'));
+    const fakeCli = join(dir, process.platform === 'win32' ? 'gsd.cmd' : 'gsd');
+    writeFileSync(fakeCli, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+    const prevPath = process.env['PATH'];
+    process.env['PATH'] = dir;
+    try {
+      assert.equal(resolve(SessionManager.resolveCLIPath()), resolve(fakeCli));
+    } finally {
+      process.env['PATH'] = prevPath ?? '';
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
