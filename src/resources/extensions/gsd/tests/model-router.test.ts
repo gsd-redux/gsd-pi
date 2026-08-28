@@ -16,6 +16,7 @@ import {
   computeTaskRequirements,
   scoreEligibleModels,
   getEligibleModels,
+  canonicalizeModelId,
   MODEL_CAPABILITY_PROFILES,
   MODEL_CAPABILITY_TIER,
 } from "../model-router.js";
@@ -129,40 +130,73 @@ test("downgrades from opus to sonnet for standard tier", () => {
   assert.equal(result.wasDowngraded, true);
 });
 
-test("downgrades dotted GitHub Copilot Claude IDs by their canonical tier", () => {
+test("separator variants preserve GitHub Copilot downgrade and ceiling semantics", async (t) => {
   const config = { ...defaultRoutingConfig(), enabled: true };
-  const copilotModels = [
-    "github-copilot/claude-opus-4.6",
-    "github-copilot/claude-sonnet-4.6",
-    "github-copilot/claude-haiku-4.5",
+  const variants = [
+    ["dotted", "claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4.5"],
+    ["underscored", "claude_opus_4_6", "claude_sonnet_4_6", "claude_haiku_4_5"],
+    ["hyphenated", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
   ];
 
-  const standard = resolveModelForComplexity(
-    makeClassification("standard"),
-    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
-    config,
-    copilotModels,
-  );
-  assert.equal(standard.modelId, "github-copilot/claude-sonnet-4.6");
-  assert.equal(standard.wasDowngraded, true);
+  for (const [label, opus, sonnet, haiku] of variants) {
+    await t.test(label, () => {
+      const qualify = (id: string) => `github-copilot/${id}`;
+      const copilotModels = [qualify(opus), qualify(sonnet), qualify(haiku)];
 
-  const light = resolveModelForComplexity(
-    makeClassification("light"),
-    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
-    config,
-    copilotModels,
-  );
-  assert.equal(light.modelId, "github-copilot/claude-haiku-4.5");
-  assert.equal(light.wasDowngraded, true);
+      const standard = resolveModelForComplexity(
+        makeClassification("standard"),
+        { primary: qualify(opus), fallbacks: [] },
+        config,
+        copilotModels,
+      );
+      assert.equal(standard.modelId, qualify(sonnet));
+      assert.equal(standard.wasDowngraded, true);
 
-  const heavy = resolveModelForComplexity(
-    makeClassification("heavy"),
-    { primary: "github-copilot/claude-opus-4.6", fallbacks: [] },
-    config,
-    copilotModels,
-  );
-  assert.equal(heavy.modelId, "github-copilot/claude-opus-4.6");
-  assert.equal(heavy.wasDowngraded, false);
+      const light = resolveModelForComplexity(
+        makeClassification("light"),
+        { primary: qualify(opus), fallbacks: [] },
+        config,
+        copilotModels,
+      );
+      assert.equal(light.modelId, qualify(haiku));
+      assert.equal(light.wasDowngraded, true);
+
+      const heavy = resolveModelForComplexity(
+        makeClassification("heavy"),
+        { primary: qualify(opus), fallbacks: [] },
+        config,
+        copilotModels,
+      );
+      assert.equal(heavy.modelId, qualify(opus));
+      assert.equal(heavy.wasDowngraded, false);
+    });
+  }
+});
+
+test("canonicalizeModelId normalizes provider prefixes, whitespace, casing, and separators", () => {
+  const variants = [
+    "github-copilot/claude-sonnet-4.6",
+    "github-copilot/claude_sonnet_4_6",
+    "  GITHUB-COPILOT/CLAUDE-SONNET-4-6  ",
+    "openai/gpt_4.1-mini",
+    "google/gemini-flash-2.0",
+  ];
+  assert.deepEqual(variants.map(canonicalizeModelId), [
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+    "gpt-4-1-mini",
+    "gemini-2-0-flash",
+  ]);
+});
+
+test("routing registries store canonical keys only", () => {
+  for (const modelId of [
+    ...Object.keys(MODEL_CAPABILITY_TIER),
+    ...Object.keys(MODEL_CAPABILITY_PROFILES),
+  ]) {
+    assert.equal(modelId, canonicalizeModelId(modelId));
+  }
 });
 
 // ─── Explicit tier_models ────────────────────────────────────────────────────
@@ -267,8 +301,10 @@ test("falls back to configured model when no light-tier model available", () => 
 
 // ─── #2192: Unknown models honor explicit config ─────────────────────────────
 
-test("#2192: unknown model is not downgraded — respects user config", () => {
+test("#2192: unknown model warns and is not downgraded", (t) => {
   const config = { ...defaultRoutingConfig(), enabled: true };
+  const warnings: string[] = [];
+  t.mock.method(console, "warn", (message: string) => warnings.push(message));
   const result = resolveModelForComplexity(
     makeClassification("light"),
     { primary: "some-future-unknown-model-v9", fallbacks: [] },
@@ -278,6 +314,8 @@ test("#2192: unknown model is not downgraded — respects user config", () => {
   assert.equal(result.modelId, "some-future-unknown-model-v9", "unknown model should be used as-is");
   assert.equal(result.wasDowngraded, false, "should not be downgraded");
   assert.ok(result.reason.includes("not in the known tier map"), "reason should explain why");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] ?? "", /does not recognize.*honoring the configured model/i);
 });
 
 test("#2192: unknown model with provider prefix is not downgraded", () => {
@@ -1419,15 +1457,19 @@ describe("getModelTier unknown default", () => {
     assert.equal(result.modelId, "claude-sonnet-4-6");
   });
 
-  test("unknown model in getEligibleModels defaults to standard tier", () => {
+  test("unknown model in getEligibleModels warns and defaults to standard tier", (t) => {
     // Per D-15: getModelTier returns "standard" for unknown models
     const config: DynamicRoutingConfig = defaultRoutingConfig();
+    const warnings: string[] = [];
+    t.mock.method(console, "warn", (message: string) => warnings.push(message));
     const standardModels = getEligibleModels("standard", ["totally-unknown-model-abc"], config);
     const lightModels = getEligibleModels("light", ["totally-unknown-model-abc"], config);
     const heavyModels = getEligibleModels("heavy", ["totally-unknown-model-abc"], config);
     assert.ok(standardModels.includes("totally-unknown-model-abc"), "Unknown model should be in standard tier");
     assert.equal(lightModels.length, 0, "Unknown model should NOT be in light tier");
     assert.equal(heavyModels.length, 0, "Unknown model should NOT be in heavy tier");
+    assert.equal(warnings.length, 1, "unknown routing warnings should be deduplicated by canonical ID");
+    assert.match(warnings[0] ?? "", /safe defaults.*standard tier.*neutral capabilities.*expensive cost/i);
   });
 });
 

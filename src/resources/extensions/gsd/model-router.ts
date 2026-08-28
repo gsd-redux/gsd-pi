@@ -66,6 +66,50 @@ export interface ModelCapabilities {
   instruction: number;
 }
 
+/**
+ * Semantic aliases whose spelling differs by more than separator or casing.
+ * Both keys and values are canonical so formatting variants never need entries.
+ */
+const MODEL_ID_ALIASES: Readonly<Record<string, string>> = {
+  "gemini-flash-2-0": "gemini-2-0-flash",
+};
+
+const warnedUnknownConfiguredModelIds = new Set<string>();
+const warnedUnknownRoutingModelIds = new Set<string>();
+
+/**
+ * Return the provider-independent key used by all routing registries.
+ * Dispatch continues to use the original registry ID; this value is only for
+ * matching model identities across provider prefixes and formatting variants.
+ */
+export function canonicalizeModelId(modelId: string): string {
+  const trimmedId = modelId.trim();
+  const slash = trimmedId.lastIndexOf("/");
+  const bareId = slash >= 0 ? trimmedId.slice(slash + 1) : trimmedId;
+  const canonicalId = bareId.trim().toLowerCase().replace(/[._-]+/g, "-");
+  return MODEL_ID_ALIASES[canonicalId] ?? canonicalId;
+}
+
+function warnUnknownConfiguredModel(modelId: string): void {
+  const warningKey = canonicalizeModelId(modelId) || modelId;
+  if (warnedUnknownConfiguredModelIds.has(warningKey)) return;
+  warnedUnknownConfiguredModelIds.add(warningKey);
+  console.warn(
+    `[gsd] Dynamic routing does not recognize configured model "${modelId}"; ` +
+      "honoring the configured model without downgrade.",
+  );
+}
+
+function warnUnknownRoutingModel(modelId: string): void {
+  const warningKey = canonicalizeModelId(modelId) || modelId;
+  if (warnedUnknownRoutingModelIds.has(warningKey)) return;
+  warnedUnknownRoutingModelIds.add(warningKey);
+  console.warn(
+    `[gsd] Dynamic routing does not recognize model "${modelId}"; using safe defaults ` +
+      "(standard tier, neutral capabilities, and expensive cost).",
+  );
+}
+
 // ─── Known Model Tiers ───────────────────────────────────────────────────────
 // Maps known model IDs to their capability tier. Used when tier_models is not
 // explicitly configured to pick the best available model for each tier.
@@ -76,16 +120,15 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-3-5-haiku-latest": "light",
   "claude-3-haiku-20240307": "light",
   "gpt-4o-mini": "light",
-  "gpt-4.1-mini": "light",
-  "gpt-4.1-nano": "light",
+  "gpt-4-1-mini": "light",
+  "gpt-4-1-nano": "light",
   "gpt-5-mini": "light",
   "gpt-5-nano": "light",
-  "gpt-5.4-mini": "light",
-  "gpt-5.1-codex-mini": "light",
-  "gpt-5.3-codex-spark": "light",
-  "mai-code-1.1-flash": "light",
-  "gemini-2.0-flash": "light",
-  "gemini-flash-2.0": "light",
+  "gpt-5-4-mini": "light",
+  "gpt-5-1-codex-mini": "light",
+  "gpt-5-3-codex-spark": "light",
+  "mai-code-1-1-flash": "light",
+  "gemini-2-0-flash": "light",
 
   // Standard-tier models
   "claude-sonnet-4": "standard",
@@ -95,9 +138,9 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "claude-sonnet-4-5-20250514": "standard",
   "claude-3-5-sonnet-latest": "standard",
   "gpt-4o": "standard",
-  "gpt-4.1": "standard",
-  "gpt-5.1-codex-max": "standard",
-  "gemini-2.5-pro": "standard",
+  "gpt-4-1": "standard",
+  "gpt-5-1-codex-max": "standard",
+  "gemini-2-5-pro": "standard",
   "deepseek-chat": "standard",
 
   // Heavy-tier models (most capable)
@@ -111,20 +154,20 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-4-turbo": "heavy",
   "gpt-5": "heavy",
   "gpt-5-pro": "heavy",
-  "gpt-5.1": "heavy",
-  "gpt-5.2": "heavy",
-  "gpt-5.2-codex": "heavy",
-  "gpt-5.3-codex": "heavy",
-  "gpt-5.4": "heavy",
-  "gpt-5.5": "heavy",
-  "gpt-5.6-sol": "heavy",
-  "gpt-5.6-terra": "heavy",
-  "gpt-5.6-luna": "heavy",
+  "gpt-5-1": "heavy",
+  "gpt-5-2": "heavy",
+  "gpt-5-2-codex": "heavy",
+  "gpt-5-3-codex": "heavy",
+  "gpt-5-4": "heavy",
+  "gpt-5-5": "heavy",
+  "gpt-5-6-sol": "heavy",
+  "gpt-5-6-terra": "heavy",
+  "gpt-5-6-luna": "heavy",
   "o1": "heavy",
   "o3": "heavy",
   "o4-mini": "heavy",
   "o4-mini-deep-research": "heavy",
-  "grok-4.5": "heavy",
+  "grok-4-5": "heavy",
 };
 
 // ─── Cost Table (per 1K input tokens, approximate USD) ───────────────────────
@@ -147,33 +190,33 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-fable-5": 0.010,
   "gpt-4o-mini": 0.00015,
   "gpt-4o": 0.0025,
-  "gpt-4.1": 0.002,
-  "gpt-4.1-mini": 0.0004,
-  "gpt-4.1-nano": 0.0001,
+  "gpt-4-1": 0.002,
+  "gpt-4-1-mini": 0.0004,
+  "gpt-4-1-nano": 0.0001,
   "gpt-5": 0.01,
   "gpt-5-mini": 0.0003,
   "gpt-5-nano": 0.0001,
-  "gpt-5.4-mini": 0.00075,
+  "gpt-5-4-mini": 0.00075,
   "gpt-5-pro": 0.015,
-  "gpt-5.1": 0.005,
-  "gpt-5.1-codex-max": 0.003,
-  "gpt-5.1-codex-mini": 0.0003,
-  "gpt-5.2": 0.005,
-  "gpt-5.2-codex": 0.005,
-  "gpt-5.3-codex": 0.005,
-  "gpt-5.3-codex-spark": 0.0003,
-  "mai-code-1.1-flash": 0.0002,
-  "gpt-5.4": 0.005,
-  "gpt-5.5": 0.005,
-  "gpt-5.6-sol": 0.005,
-  "gpt-5.6-terra": 0.0025,
-  "gpt-5.6-luna": 0.001,
+  "gpt-5-1": 0.005,
+  "gpt-5-1-codex-max": 0.003,
+  "gpt-5-1-codex-mini": 0.0003,
+  "gpt-5-2": 0.005,
+  "gpt-5-2-codex": 0.005,
+  "gpt-5-3-codex": 0.005,
+  "gpt-5-3-codex-spark": 0.0003,
+  "mai-code-1-1-flash": 0.0002,
+  "gpt-5-4": 0.005,
+  "gpt-5-5": 0.005,
+  "gpt-5-6-sol": 0.005,
+  "gpt-5-6-terra": 0.0025,
+  "gpt-5-6-luna": 0.001,
   "o4-mini": 0.005,
   "o4-mini-deep-research": 0.005,
-  "gemini-2.0-flash": 0.0001,
-  "gemini-2.5-pro": 0.00125,
+  "gemini-2-0-flash": 0.0001,
+  "gemini-2-5-pro": 0.00125,
   "deepseek-chat": 0.00014,
-  "grok-4.5": 0.002,
+  "grok-4-5": 0.002,
 };
 
 // ─── Capability Profiles Data Table ──────────────────────────────────────────
@@ -203,31 +246,31 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "gpt-4o":                       { coding: 80, debugging: 75, research: 70, reasoning: 75, speed: 65, longContext: 70, instruction: 80 },
   "gpt-4o-mini":                  { coding: 55, debugging: 45, research: 40, reasoning: 45, speed: 90, longContext: 45, instruction: 70 },
   "gpt-4-turbo":                  { coding: 78, debugging: 72, research: 68, reasoning: 72, speed: 50, longContext: 65, instruction: 78 },
-  "gpt-4.1":                      { coding: 82, debugging: 78, research: 72, reasoning: 78, speed: 62, longContext: 72, instruction: 82 },
-  "gpt-4.1-mini":                 { coding: 58, debugging: 48, research: 42, reasoning: 48, speed: 88, longContext: 48, instruction: 72 },
-  "gpt-4.1-nano":                 { coding: 40, debugging: 30, research: 25, reasoning: 30, speed: 95, longContext: 30, instruction: 60 },
+  "gpt-4-1":                      { coding: 82, debugging: 78, research: 72, reasoning: 78, speed: 62, longContext: 72, instruction: 82 },
+  "gpt-4-1-mini":                 { coding: 58, debugging: 48, research: 42, reasoning: 48, speed: 88, longContext: 48, instruction: 72 },
+  "gpt-4-1-nano":                 { coding: 40, debugging: 30, research: 25, reasoning: 30, speed: 95, longContext: 30, instruction: 60 },
   "gpt-5":                        { coding: 92, debugging: 88, research: 85, reasoning: 92, speed: 40, longContext: 85, instruction: 90 },
   "gpt-5-mini":                   { coding: 62, debugging: 52, research: 48, reasoning: 52, speed: 88, longContext: 52, instruction: 74 },
   "gpt-5-nano":                   { coding: 42, debugging: 32, research: 28, reasoning: 32, speed: 95, longContext: 32, instruction: 62 },
-  "gpt-5.4-mini":                 { coding: 70, debugging: 60, research: 55, reasoning: 60, speed: 84, longContext: 60, instruction: 78 },
+  "gpt-5-4-mini":                 { coding: 70, debugging: 60, research: 55, reasoning: 60, speed: 84, longContext: 60, instruction: 78 },
   "gpt-5-pro":                    { coding: 94, debugging: 90, research: 88, reasoning: 94, speed: 35, longContext: 88, instruction: 92 },
-  "gpt-5.1":                      { coding: 93, debugging: 89, research: 86, reasoning: 93, speed: 42, longContext: 86, instruction: 91 },
-  "gpt-5.1-codex-max":            { coding: 90, debugging: 85, research: 70, reasoning: 85, speed: 55, longContext: 75, instruction: 85 },
-  "gpt-5.1-codex-mini":           { coding: 65, debugging: 55, research: 40, reasoning: 50, speed: 88, longContext: 48, instruction: 72 },
-  "gpt-5.2":                      { coding: 93, debugging: 90, research: 87, reasoning: 93, speed: 42, longContext: 87, instruction: 91 },
-  "gpt-5.2-codex":                { coding: 93, debugging: 90, research: 72, reasoning: 88, speed: 50, longContext: 78, instruction: 88 },
-  "gpt-5.3-codex":                { coding: 94, debugging: 91, research: 74, reasoning: 89, speed: 50, longContext: 80, instruction: 89 },
-  "gpt-5.3-codex-spark":          { coding: 68, debugging: 58, research: 42, reasoning: 52, speed: 90, longContext: 50, instruction: 74 },
-  "mai-code-1.1-flash":           { coding: 78, debugging: 68, research: 45, reasoning: 62, speed: 96, longContext: 70, instruction: 78 },
-  "gpt-5.4":                      { coding: 95, debugging: 92, research: 88, reasoning: 94, speed: 42, longContext: 88, instruction: 92 },
+  "gpt-5-1":                      { coding: 93, debugging: 89, research: 86, reasoning: 93, speed: 42, longContext: 86, instruction: 91 },
+  "gpt-5-1-codex-max":            { coding: 90, debugging: 85, research: 70, reasoning: 85, speed: 55, longContext: 75, instruction: 85 },
+  "gpt-5-1-codex-mini":           { coding: 65, debugging: 55, research: 40, reasoning: 50, speed: 88, longContext: 48, instruction: 72 },
+  "gpt-5-2":                      { coding: 93, debugging: 90, research: 87, reasoning: 93, speed: 42, longContext: 87, instruction: 91 },
+  "gpt-5-2-codex":                { coding: 93, debugging: 90, research: 72, reasoning: 88, speed: 50, longContext: 78, instruction: 88 },
+  "gpt-5-3-codex":                { coding: 94, debugging: 91, research: 74, reasoning: 89, speed: 50, longContext: 80, instruction: 89 },
+  "gpt-5-3-codex-spark":          { coding: 68, debugging: 58, research: 42, reasoning: 52, speed: 90, longContext: 50, instruction: 74 },
+  "mai-code-1-1-flash":           { coding: 78, debugging: 68, research: 45, reasoning: 62, speed: 96, longContext: 70, instruction: 78 },
+  "gpt-5-4":                      { coding: 95, debugging: 92, research: 88, reasoning: 94, speed: 42, longContext: 88, instruction: 92 },
   // GPT-5.5 scores are relative to the existing gpt-5.4 profile and backed by
   // OpenAI's 2026-04-23 published eval deltas across coding, tool use, and long context.
   // Source: https://openai.com/index/introducing-gpt-5-5/
-  "gpt-5.5":                      { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 42, longContext: 90, instruction: 93 },
+  "gpt-5-5":                      { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 42, longContext: 90, instruction: 93 },
   // GPT-5.6 profiles are provisional until official eval results are available.
-  "gpt-5.6-sol":                  { coding: 97, debugging: 94, research: 90, reasoning: 96, speed: 42, longContext: 91, instruction: 94 },
-  "gpt-5.6-terra":                { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 48, longContext: 91, instruction: 93 },
-  "gpt-5.6-luna":                 { coding: 92, debugging: 88, research: 84, reasoning: 91, speed: 72, longContext: 91, instruction: 90 },
+  "gpt-5-6-sol":                  { coding: 97, debugging: 94, research: 90, reasoning: 96, speed: 42, longContext: 91, instruction: 94 },
+  "gpt-5-6-terra":                { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 48, longContext: 91, instruction: 93 },
+  "gpt-5-6-luna":                 { coding: 92, debugging: 88, research: 84, reasoning: 91, speed: 72, longContext: 91, instruction: 90 },
 
   // ── OpenAI o-series (reasoning-first) ──────────────────────────────────────
   "o1":                           { coding: 78, debugging: 82, research: 78, reasoning: 90, speed: 20, longContext: 65, instruction: 82 },
@@ -236,9 +279,8 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "o4-mini-deep-research":        { coding: 75, debugging: 80, research: 85, reasoning: 88, speed: 30, longContext: 80, instruction: 80 },
 
   // ── Google ─────────────────────────────────────────────────────────────────
-  "gemini-2.5-pro":               { coding: 75, debugging: 70, research: 85, reasoning: 75, speed: 55, longContext: 90, instruction: 75 },
-  "gemini-2.0-flash":             { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
-  "gemini-flash-2.0":             { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
+  "gemini-2-5-pro":               { coding: 75, debugging: 70, research: 85, reasoning: 75, speed: 55, longContext: 90, instruction: 75 },
+  "gemini-2-0-flash":             { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
 
   // ── DeepSeek ───────────────────────────────────────────────────────────────
   "deepseek-chat":                { coding: 75, debugging: 65, research: 55, reasoning: 70, speed: 70, longContext: 55, instruction: 65 },
@@ -246,7 +288,7 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   // ── xAI ────────────────────────────────────────────────────────────────────
   // Grok 4.5 (2026-07): Opus-class frontier model tuned for coding and agentic
   // work; notably faster and more token-efficient than peer heavy models.
-  "grok-4.5":                     { coding: 95, debugging: 90, research: 82, reasoning: 93, speed: 55, longContext: 80, instruction: 90 },
+  "grok-4-5":                     { coding: 95, debugging: 90, research: 82, reasoning: 93, speed: 55, longContext: 80, instruction: 90 },
 };
 
 // ─── Base Task Requirements Data Table ───────────────────────────────────────
@@ -288,6 +330,21 @@ export function scoreModel(
   return weightSum > 0 ? weightedSum / weightSum : 50;
 }
 
+function findCapabilityOverride(
+  modelId: string,
+  capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
+): Partial<ModelCapabilities> | undefined {
+  if (!capabilityOverrides) return undefined;
+
+  const bareId = modelId.split("/").pop() ?? modelId;
+  const directOverride = capabilityOverrides[modelId] ?? capabilityOverrides[bareId];
+  if (directOverride) return directOverride;
+
+  const canonicalId = canonicalizeModelId(modelId);
+  return capabilityOverrides[canonicalId]
+    ?? Object.entries(capabilityOverrides).find(([id]) => canonicalizeModelId(id) === canonicalId)?.[1];
+}
+
 /**
  * Compute dynamic task requirements from unit type and optional task metadata.
  * Returns a requirement vector refined by task-specific signals.
@@ -325,12 +382,10 @@ export function scoreEligibleModels(
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): Array<{ modelId: string; score: number }> {
   const scored = eligibleModelIds.map(modelId => {
-    const bareId = modelId.split("/").pop() ?? modelId;
-    const canonicalId = canonicalModelId(modelId);
+    const canonicalId = canonicalizeModelId(modelId);
     const builtin = MODEL_CAPABILITY_PROFILES[canonicalId];
-    const override = capabilityOverrides?.[modelId]
-      ?? capabilityOverrides?.[bareId]
-      ?? capabilityOverrides?.[canonicalId];
+    if (!builtin) warnUnknownRoutingModel(modelId);
+    const override = findCapabilityOverride(modelId, capabilityOverrides);
     const profile: ModelCapabilities = builtin
       ? override ? { ...builtin, ...override } : builtin
       : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
@@ -366,8 +421,8 @@ export function getEligibleModels(
     // Exact match
     if (availableModelIds.includes(explicitModel)) return [explicitModel];
     // Provider-prefix-stripped match
-    const bareExplicit = canonicalModelId(explicitModel);
-    const match = availableModelIds.find(id => canonicalModelId(id) === bareExplicit);
+    const canonicalExplicitModelId = canonicalizeModelId(explicitModel);
+    const match = availableModelIds.find(id => canonicalizeModelId(id) === canonicalExplicitModelId);
     if (match) return [match];
   }
 
@@ -409,7 +464,8 @@ export function loadCapabilityOverrides(
   if (!prefs.modelOverrides) return result;
   for (const [modelId, overrideEntry] of Object.entries(prefs.modelOverrides)) {
     if (overrideEntry.capabilities) {
-      result[modelId] = overrideEntry.capabilities;
+      const canonicalId = canonicalizeModelId(modelId);
+      if (canonicalId) result[canonicalId] = overrideEntry.capabilities;
     }
   }
   return result;
@@ -457,7 +513,6 @@ export function resolveModelForComplexity(
   }
 
   const configuredPrimary = phaseConfig.primary;
-  const configuredTier = getModelTier(configuredPrimary);
   const requestedTier = classification.tier;
 
   // If the configured model is unknown (not in MODEL_CAPABILITY_TIER),
@@ -466,6 +521,7 @@ export function resolveModelForComplexity(
   // standard/light unit get downgraded to tier_models, silently ignoring
   // the user's configuration. (#2192)
   if (!isKnownModel(configuredPrimary)) {
+    warnUnknownConfiguredModel(configuredPrimary);
     return {
       modelId: configuredPrimary,
       fallbacks: phaseConfig.fallbacks,
@@ -475,6 +531,8 @@ export function resolveModelForComplexity(
       selectionMethod: "tier-only",
     };
   }
+
+  const configuredTier = getModelTier(configuredPrimary);
 
   // Downgrade-only: if requested tier >= configured tier, no change
   if (tierOrdinal(requestedTier) >= tierOrdinal(configuredTier)) {
@@ -658,7 +716,7 @@ function findModelForTier(
   // Same-provider only: keep models whose bare ID matches a canonical
   // Anthropic ID at this tier (i.e., a claude-* model in the tier map).
   const sameProvider = eligible.filter(id => {
-    const bare = canonicalModelId(id);
+    const bare = canonicalizeModelId(id);
     return MODEL_CAPABILITY_TIER[bare] === tier && bare.startsWith("claude-");
   });
 
@@ -742,8 +800,9 @@ export function resolveModelForTier(
 // ─── Internal ────────────────────────────────────────────────────────────────
 
 function modelProvider(modelId: string): string | undefined {
-  const slash = modelId.indexOf("/");
-  return slash > 0 ? modelId.slice(0, slash) : undefined;
+  const trimmedId = modelId.trim();
+  const slash = trimmedId.indexOf("/");
+  return slash > 0 ? trimmedId.slice(0, slash).trim() : undefined;
 }
 
 function findAvailableModelId(
@@ -753,17 +812,17 @@ function findAvailableModelId(
   if (!preferredModelId) return undefined;
   if (availableModelIds.includes(preferredModelId)) return preferredModelId;
 
-  const preferredBare = canonicalModelId(preferredModelId);
+  const preferredBare = canonicalizeModelId(preferredModelId);
   if (!preferredBare) return undefined;
   const preferredProvider = modelProvider(preferredModelId)?.toLowerCase();
   if (preferredProvider) {
     const providerMatch = availableModelIds.find(id =>
-      modelProvider(id)?.toLowerCase() === preferredProvider && canonicalModelId(id) === preferredBare
+      modelProvider(id)?.toLowerCase() === preferredProvider && canonicalizeModelId(id) === preferredBare
     );
     if (providerMatch) return providerMatch;
   }
 
-  return availableModelIds.find(id => canonicalModelId(id) === preferredBare);
+  return availableModelIds.find(id => canonicalizeModelId(id) === preferredBare);
 }
 
 function modelSatisfiesTier(modelId: string, tier: ComplexityTier): boolean {
@@ -782,57 +841,41 @@ function findPreferredModelForTier(
 
 /**
  * Check whether a model ID is present in the available models list.
- * Handles provider prefixes and dotted/hyphenated aliases.
+ * Handles provider prefixes plus casing and separator variants.
  */
 function isModelAvailable(modelId: string, availableModelIds: string[]): boolean {
   if (availableModelIds.includes(modelId)) return true;
-  // Canonicalize provider prefixes and aliases for comparison. Treat
+  // Canonicalize provider prefixes and formatting variants for comparison. Treat
   // trailing-slash IDs ("provider/") as no-bare-ID rather than empty-string
   // match (which would erroneously match any other "provider/" ID).
-  const bare = canonicalModelId(modelId);
+  const bare = canonicalizeModelId(modelId);
   if (!bare) return false;
-  return availableModelIds.some(id => canonicalModelId(id) === bare);
+  return availableModelIds.some(id => canonicalizeModelId(id) === bare);
 }
 
 function getModelTier(modelId: string): ComplexityTier {
-  // Normalize provider prefixes and dotted aliases before lookup.
-  const bareId = canonicalModelId(modelId);
-
-  // Check exact match first
+  // Normalize provider prefixes, casing, and separators before lookup.
+  const bareId = canonicalizeModelId(modelId);
   if (MODEL_CAPABILITY_TIER[bareId]) return MODEL_CAPABILITY_TIER[bareId];
 
-  // Check if any known model ID is a prefix/suffix match
-  for (const [knownId, tier] of Object.entries(MODEL_CAPABILITY_TIER)) {
-    if (bareId.includes(knownId) || knownId.includes(bareId)) return tier;
-  }
-
   // Unknown models are assumed standard (per D-15: avoids silently ignoring user config)
+  warnUnknownRoutingModel(modelId);
   return "standard";
 }
 
 /** Check if a model ID has a known capability tier mapping. (#2192) */
 function isKnownModel(modelId: string): boolean {
-  const bareId = canonicalModelId(modelId);
-  if (MODEL_CAPABILITY_TIER[bareId]) return true;
-  for (const knownId of Object.keys(MODEL_CAPABILITY_TIER)) {
-    if (bareId.includes(knownId) || knownId.includes(bareId)) return true;
-  }
-  return false;
+  const bareId = canonicalizeModelId(modelId);
+  return Boolean(bareId && MODEL_CAPABILITY_TIER[bareId]);
 }
 
 function getModelCost(modelId: string): number {
-  const bareId = canonicalModelId(modelId);
+  const bareId = canonicalizeModelId(modelId);
 
-  if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
-    return MODEL_COST_PER_1K_INPUT[bareId];
-  }
-
-  // Check partial matches
-  for (const [knownId, cost] of Object.entries(MODEL_COST_PER_1K_INPUT)) {
-    if (bareId.includes(knownId) || knownId.includes(bareId)) return cost;
-  }
+  if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) return MODEL_COST_PER_1K_INPUT[bareId];
 
   // Unknown cost — assume expensive to avoid routing to unknown cheap models
+  warnUnknownRoutingModel(modelId);
   return 999;
 }
 
@@ -846,23 +889,9 @@ function normalizeResolvedTierModelId(
     return modelId;
   }
 
-  const canonicalId = canonicalModelId(modelId);
+  const canonicalId = canonicalizeModelId(modelId);
   if (!MODEL_CAPABILITY_TIER[canonicalId]) return modelId;
   return modelId.split("/").pop() ?? modelId;
-}
-
-function canonicalModelId(modelId: string): string {
-  const bareId = modelId.includes("/")
-    // .pop() never returns undefined on a non-empty string but ?? guards future
-    // refactors and avoids the misleading non-null assertion.
-    ? modelId.split("/").pop() ?? modelId
-    : modelId;
-
-  // GitHub Copilot dispatches Claude versions with dots while the shared
-  // router registries use hyphens (for example, 4.6 vs 4-6).
-  return bareId.startsWith("claude-")
-    ? bareId.replace(/(\d)\.(?=\d)/g, "$1-")
-    : bareId;
 }
 
 // ─── Provider-specific Tool Limits ─────────────────────────────────────────
