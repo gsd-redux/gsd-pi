@@ -684,6 +684,7 @@ export function resolveModelForComplexity(
       routingConfig.cross_provider !== false,
       preferredModelId,
       availableModels,
+      { overrides: capabilityOverrides },
     );
 
     return {
@@ -926,12 +927,24 @@ function findModelForTier(
   crossProvider: boolean,
   preferredModelId?: string,
   availableModels?: Array<Model<Api>>,
+  capabilityGate?: { overrides?: Record<string, Partial<ModelCapabilities>> },
 ): string | undefined {
   const eligible = getEligibleModels(tier, availableModelIds, routingConfig, preferredModelId, availableModels);
   if (eligible.length === 0) return undefined;
 
   if (crossProvider) {
-    return eligible[0];
+    if (!capabilityGate) return eligible[0];
+
+    // Fail-closed, mirroring resolveModelForComplexity's own STEP 3 gate: an
+    // automatic cross-provider substitution must never itself be an
+    // unknown-confidence model, though an explicit tier_models pin is always
+    // honored regardless of profile.
+    const explicitTierPin = routingConfig.tier_models?.[tier];
+    const isExplicitTierPin = (modelId: string): boolean =>
+      !!explicitTierPin && (modelId === explicitTierPin || canonicalizeModelId(modelId) === canonicalizeModelId(explicitTierPin));
+    return eligible.find(
+      (modelId) => isExplicitTierPin(modelId) || getModelProfileConfidence(modelId, capabilityGate.overrides) !== "unknown",
+    );
   }
 
   // Same-provider only: keep models whose bare ID matches a canonical
@@ -1140,13 +1153,22 @@ function getModelCost(modelId: string, availableModels?: Array<Model<Api>>): num
     if (runtimeCost !== undefined) return runtimeCost;
   }
 
-  if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
-    return MODEL_COST_PER_1K_INPUT[bareId];
-  }
+  // A provider-qualified runtime model was matched but carries no meaningful
+  // price (the registry's all-zero "unknown" placeholder). That is itself an
+  // answer -- this specific provider/model pairing is unpriced -- so it must
+  // not fall through to the shared bare-ID cost table, which is keyed only by
+  // bare model ID and can otherwise silently inherit another provider's price
+  // for the same-named model (e.g. github-copilot/gpt-5.5 picking up the
+  // OpenAI/Codex entry).
+  if (!runtimeModel) {
+    if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
+      return MODEL_COST_PER_1K_INPUT[bareId];
+    }
 
-  // Check partial matches
-  for (const [knownId, cost] of Object.entries(MODEL_COST_PER_1K_INPUT)) {
-    if (bareId.includes(knownId) || knownId.includes(bareId)) return cost;
+    // Check partial matches
+    for (const [knownId, cost] of Object.entries(MODEL_COST_PER_1K_INPUT)) {
+      if (bareId.includes(knownId) || knownId.includes(bareId)) return cost;
+    }
   }
 
   // Unknown cost — assume expensive to avoid routing to unknown cheap models

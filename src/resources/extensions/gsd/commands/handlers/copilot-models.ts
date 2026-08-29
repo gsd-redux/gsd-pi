@@ -76,19 +76,22 @@ function hasRegisterFlag(args: string): boolean {
   return (args ?? "").split(/\s+/).includes("--register");
 }
 
-type CopilotModelsCommand = "sync" | "changes" | "pricing" | "promos" | "doctor" | "why";
+type CopilotModelsCommand = "sync" | "changes" | "pricing" | "promos" | "doctor" | "why" | "unknown";
 
 function parseCommand(args: string): CopilotModelsCommand {
   const trimmed = (args ?? "").trim();
   if (!trimmed) return "sync";
   const firstToken = trimmed.split(/\s+/)[0] ?? "";
+  // A flags-only invocation (e.g. bare "--register") is the documented sync
+  // shorthand, not a subcommand of its own.
+  if (firstToken.startsWith("--")) return "sync";
   if (firstToken === "sync") return "sync";
   if (firstToken === "changes") return "changes";
   if (firstToken === "pricing") return "pricing";
   if (firstToken === "promos") return "promos";
   if (firstToken === "doctor") return "doctor";
   if (firstToken === "why") return "why";
-  return "sync";
+  return "unknown";
 }
 
 interface ParsedModelArgument {
@@ -213,9 +216,7 @@ async function resolveCurrentAccountView(ctx: ExtensionCommandContext): Promise<
 }
 
 function localCopilotModels(ctx: ExtensionCommandContext): Model<Api>[] {
-  const getAll = (ctx.modelRegistry as { getAll?: () => Model<Api>[] }).getAll;
-  const all = typeof getAll === "function" ? getAll() : ctx.modelRegistry.getAvailable();
-  return all.filter((model) => model.provider === "github-copilot");
+  return ctx.modelRegistry.getAll().filter((model) => model.provider === "github-copilot");
 }
 
 async function resolveCopilotAuth(ctx: ExtensionCommandContext): Promise<{
@@ -274,6 +275,13 @@ function describeCapabilityTier(modelId: string): string {
 }
 
 function buildLiveEconomics(record: CopilotModelRecord): Partial<RuntimeModelEconomics> | undefined {
+  // normalizeRemoteCopilotModel can fill billing.tokenPrices from the
+  // provider-static fallback model when the live response omitted pricing.
+  // Only genuinely provider-live pricing may be reported as fresh/live here
+  // -- a static-filled value must fall through to staticEconomics instead,
+  // or `pricing`/`why` would claim a bundled price is fresh live data.
+  const tokenPricesAreLive = record.provenance.tokenPrices.source === "provider-live";
+
   const longContextTiers = record.billing.longContextTiers
     ?.filter(
       (tier): tier is typeof tier & { inputPer1k: number; outputPer1k: number } =>
@@ -287,11 +295,12 @@ function buildLiveEconomics(record: CopilotModelRecord): Partial<RuntimeModelEco
       ...(tier.cacheWritePer1k !== undefined ? { cachedOutputPer1k: tier.cacheWritePer1k } : {}),
     }));
 
+  const hasLiveTokenPrices = tokenPricesAreLive
+    && record.billing.inputPer1k !== undefined
+    && record.billing.outputPer1k !== undefined;
+
   if (
-    record.billing.inputPer1k === undefined
-    && record.billing.outputPer1k === undefined
-    && record.billing.cacheReadPer1k === undefined
-    && record.billing.cacheWritePer1k === undefined
+    !hasLiveTokenPrices
     && record.billing.requestMultiplier === undefined
     && !record.billing.promotion
   ) {
@@ -301,11 +310,11 @@ function buildLiveEconomics(record: CopilotModelRecord): Partial<RuntimeModelEco
   return {
     billingUnit: record.billing.billingUnit,
     stale: false,
-    tokenPrices: record.billing.inputPer1k !== undefined && record.billing.outputPer1k !== undefined
+    tokenPrices: hasLiveTokenPrices
       ? {
           default: {
-            inputPer1k: record.billing.inputPer1k,
-            outputPer1k: record.billing.outputPer1k,
+            inputPer1k: record.billing.inputPer1k as number,
+            outputPer1k: record.billing.outputPer1k as number,
             ...(record.billing.cacheReadPer1k !== undefined ? { cachedInputPer1k: record.billing.cacheReadPer1k } : {}),
             ...(record.billing.cacheWritePer1k !== undefined ? { cachedOutputPer1k: record.billing.cacheWritePer1k } : {}),
           },
@@ -874,6 +883,15 @@ export async function handleCopilotModels(
   options: HandleCopilotModelsOptions = {},
 ): Promise<void> {
   const command = parseCommand(args);
+
+  if (command === "unknown") {
+    const firstToken = (args ?? "").trim().split(/\s+/)[0] ?? "";
+    ctx.ui.notify(
+      `Unknown /gsd copilot-models subcommand "${firstToken}". Usage: sync|changes|pricing [model]|promos|doctor|why <model> [--register]`,
+      "warning",
+    );
+    return;
+  }
 
   if (command === "why") {
     const parsed = parseProviderModelArgument("why", args, true);

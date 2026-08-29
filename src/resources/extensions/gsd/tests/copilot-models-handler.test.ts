@@ -365,11 +365,44 @@ test("handleCopilotModels: 'whywhatever' and 'why-gpt-5.4' are not recognized as
   await handleCopilotModels("whywhatever", ctx, {});
   await handleCopilotModels("why-gpt-5.4", ctx, {});
 
-  // Both fall through to the normal sync path (no configured Copilot model
-  // here), proving neither string was strictly parsed as "why".
+  // Both are rejected as unknown subcommands rather than silently falling
+  // through to sync -- a typo must never trigger authenticated network I/O.
   assert.equal(notifications.length, 2);
-  assert.match(notifications[0].message, /not configured/);
-  assert.match(notifications[1].message, /not configured/);
+  assert.match(notifications[0].message, /Unknown \/gsd copilot-models subcommand "whywhatever"/);
+  assert.match(notifications[1].message, /Unknown \/gsd copilot-models subcommand "why-gpt-5\.4"/);
+});
+
+test("handleCopilotModels: unrecognized subcommand is rejected without any network request", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  let fetchCalled = false;
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("anything --register", ctx, {
+    fetchImpl: (async () => {
+      fetchCalled = true;
+      throw new Error("must not be called");
+    }) as unknown as typeof fetch,
+  });
+
+  assert.equal(fetchCalled, false, "an unrecognized subcommand must never reach the overlay-writing sync path");
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /Unknown \/gsd copilot-models subcommand "anything"/);
+});
+
+test("handleCopilotModels: a bare --register flag still defaults to sync", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: undefined,
+  });
+
+  await handleCopilotModels("--register", ctx, {});
+
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].message, /no access token/);
 });
 
 test("handleCopilotModels: why accepts a bare Copilot model ID", async () => {

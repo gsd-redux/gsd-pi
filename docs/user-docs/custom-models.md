@@ -359,7 +359,7 @@ Request multipliers and promotions are tracked separately from token prices. Pro
 Live Copilot discovery does **not** mean every new model is automatically routed.
 
 - Unprofiled or unknown-confidence models remain manual-only by default.
-- Preview models remain manual-only unless future routing policy explicitly opts into them.
+- Preview and policy-restricted state is reported as an advisory caveat by `why`, not enforced by the router itself — the router's automatic-routing gate is capability-confidence only. A locally profiled preview or policy-restricted model can still be auto-selected; treat the preview/policy caveat as a warning, not a routing guarantee.
 - Wrong-provider model IDs are rejected locally by `why` before any auth or network path is touched.
 
 `/gsd copilot-models why <model>` reports whether a model is merely visible in the live catalog, present in the effective local catalog, available in the current session, or actually eligible for automatic routing under the current confidence and policy rules.
