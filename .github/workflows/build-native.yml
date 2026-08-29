@@ -111,6 +111,7 @@ jobs:
 
       - name: Prepare artifact (Windows)
         if: runner.os == 'Windows'
+        shell: cmd
         run: |
           mkdir artifacts
           copy native\target\${{ matrix.target }}\release\gsd_engine.dll artifacts\gsd_engine.node

@@ -257,7 +257,8 @@ jobs:
           GSD_NATIVE_PREFER_LOCAL: '1'
         run: |
           chmod +x dist/loader.js
-          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          export GSD_SMOKE_BINARY
           pnpm run test:e2e
 
       - name: Run docker e2e suite
@@ -369,7 +370,8 @@ jobs:
         shell: bash
         continue-on-error: true
         run: |
-          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          export GSD_SMOKE_BINARY
           pnpm run test:e2e:windows-smoke
 
       - name: Flag Windows e2e smoke failure
@@ -443,7 +445,8 @@ jobs:
           GSD_NATIVE_PREFER_LOCAL: '1'
         run: |
           chmod +x dist/loader.js
-          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          export GSD_SMOKE_BINARY
           pnpm run test:smoke
 
       - name: Verify SQLite close behavior on Node 22

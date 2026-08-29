@@ -44,12 +44,14 @@ jobs:
       - name: Run risk check
         id: risk
         run: |
-          REPORT=$(cat /tmp/changed-files.txt | node scripts/pr-risk-check.mjs --github || true)
-          echo "report<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$REPORT" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          REPORT=$(node scripts/pr-risk-check.mjs --github < /tmp/changed-files.txt || true)
+          {
+            echo "report<<EOF"
+            echo "$REPORT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-          RISK_LEVEL=$(cat /tmp/changed-files.txt | node scripts/pr-risk-check.mjs --json 2>/dev/null \
+          RISK_LEVEL=$(node scripts/pr-risk-check.mjs --json < /tmp/changed-files.txt 2>/dev/null \
             | node -e "let d=''; process.stdin.on('data',c=>d+=c); process.stdin.on('end',()=>{ try { console.log(JSON.parse(d).risk) } catch { console.log('low') } })" \
             || echo "low")
           echo "level=$RISK_LEVEL" >> "$GITHUB_OUTPUT"
