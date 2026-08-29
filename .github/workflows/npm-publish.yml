@@ -646,7 +646,42 @@ jobs:
           # now, so regenerate the lockfile and fold it back into the release commit
           # (and move the tag) before either is pushed. Without this every post-release
           # `pnpm install --frozen-lockfile` on main fails with ERR_PNPM_OUTDATED_LOCKFILE.
-          pnpm install --lockfile-only
+          #
+          # The verify step above polls `npm view`, which bypasses pnpm's registry
+          # metadata cache; pnpm does not. If a packument cached earlier in this job
+          # (from before the engines were published) is still fresh, the fold silently
+          # drops that engine — observed on 1.17.0, where win32-x64-msvc was dropped
+          # and the auto-opened release PR failed frozen-lockfile in every CI job.
+          # So: retry the fold until the lockfile names every engine, and fail loudly
+          # instead of committing a lockfile that breaks every downstream install.
+          EXPECTED_ENGINES="darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu win32-x64-msvc"
+          LOCKFILE_ALL_ENGINES=0
+          DELAY=45
+          for attempt in $(seq 1 6); do
+            pnpm install --lockfile-only
+            MISSING=()
+            for platform in ${EXPECTED_ENGINES}; do
+              grep -q "'@opengsd/engine-${platform}@${RELEASE_VERSION}':" pnpm-lock.yaml || MISSING+=("${platform}")
+            done
+            if [ "${#MISSING[@]}" = "0" ]; then
+              echo "Lockfile resolves all native platform packages (attempt ${attempt})."
+              LOCKFILE_ALL_ENGINES=1
+              break
+            fi
+            if [ "${attempt}" = "6" ]; then
+              echo "::error::Release lockfile is still missing native packages after 6 fold attempts:"
+              for platform in "${MISSING[@]}"; do
+                echo "::error::  - @opengsd/engine-${platform}@${RELEASE_VERSION}"
+              done
+              echo "::error::Refusing to fold an incomplete lockfile — every downstream frozen-lockfile install would fail."
+              exit 1
+            fi
+            echo "  Attempt ${attempt}: lockfile missing engines (${MISSING[*]}), retrying in ${DELAY}s..."
+            sleep "${DELAY}"
+          done
+          if [ "${LOCKFILE_ALL_ENGINES}" != "1" ]; then
+            exit 1
+          fi
           if git diff --quiet -- pnpm-lock.yaml; then
             echo "pnpm-lock.yaml already resolves the native packages — nothing to fold in."
             exit 0
