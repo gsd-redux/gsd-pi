@@ -76,12 +76,13 @@ function hasRegisterFlag(args: string): boolean {
   return (args ?? "").split(/\s+/).includes("--register");
 }
 
-type CopilotModelsCommand = "sync" | "changes" | "pricing" | "promos" | "doctor" | "why" | "unknown";
+type CopilotModelsCommand = "sync" | "changes" | "pricing" | "promos" | "doctor" | "why" | "help" | "unknown";
 
 function parseCommand(args: string): CopilotModelsCommand {
   const trimmed = (args ?? "").trim();
   if (!trimmed) return "sync";
   const firstToken = trimmed.split(/\s+/)[0] ?? "";
+  if (firstToken === "help" || firstToken === "-h" || firstToken === "--help") return "help";
   // A flags-only invocation (e.g. bare "--register") is the documented sync
   // shorthand, not a subcommand of its own.
   if (firstToken.startsWith("--")) return "sync";
@@ -93,6 +94,18 @@ function parseCommand(args: string): CopilotModelsCommand {
   if (firstToken === "why") return "why";
   return "unknown";
 }
+
+const COPILOT_MODELS_USAGE = [
+  "GitHub Copilot model catalog — usage:",
+  "  /gsd copilot-models sync              Refresh the accepted live catalog snapshot",
+  "  /gsd copilot-models sync --register   Register complete remote-only models into the local overlay",
+  "  /gsd copilot-models changes           Show the last accepted catalog diff",
+  "  /gsd copilot-models pricing [model]   Show provider-aware pricing with source/freshness",
+  "  /gsd copilot-models promos            Show active, future, and expired promotions",
+  "  /gsd copilot-models doctor           Local-only auth/cache/policy/quarantine diagnostics",
+  "  /gsd copilot-models why <model>       Explain a model's local status/routing/economics",
+  "  /gsd copilot-models help              Show this usage message",
+].join("\n");
 
 interface ParsedModelArgument {
   target?: string;
@@ -884,10 +897,15 @@ export async function handleCopilotModels(
 ): Promise<void> {
   const command = parseCommand(args);
 
+  if (command === "help") {
+    ctx.ui.notify(COPILOT_MODELS_USAGE, "info");
+    return;
+  }
+
   if (command === "unknown") {
     const firstToken = (args ?? "").trim().split(/\s+/)[0] ?? "";
     ctx.ui.notify(
-      `Unknown /gsd copilot-models subcommand "${firstToken}". Usage: sync|changes|pricing [model]|promos|doctor|why <model> [--register]`,
+      `Unknown /gsd copilot-models subcommand "${firstToken}".\n\n${COPILOT_MODELS_USAGE}`,
       "warning",
     );
     return;

@@ -358,6 +358,47 @@ test("handleCopilotModels: why with no model argument reports usage and never to
   assert.equal(notifications[1].message, "Usage: /gsd copilot-models why <model>");
 });
 
+test("handleCopilotModels: help subcommand prints usage without auth or network", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
+  let fetchCalled = false;
+  let apiKeyCalled = false;
+  ctx.modelRegistry.getApiKey = async () => { apiKeyCalled = true; return "token-abc"; };
+
+  await handleCopilotModels("help", ctx, {
+    fetchImpl: (async () => { fetchCalled = true; throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("--help", ctx, {
+    fetchImpl: (async () => { fetchCalled = true; throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("-h", ctx, {
+    fetchImpl: (async () => { fetchCalled = true; throw new Error("must not be called"); }) as unknown as typeof fetch,
+  });
+
+  assert.equal(fetchCalled, false);
+  assert.equal(apiKeyCalled, false);
+  assert.equal(notifications.length, 3);
+  for (const notification of notifications) {
+    assert.equal(notification.level, "info");
+    assert.match(notification.message, /GitHub Copilot model catalog/);
+    assert.match(notification.message, /sync/);
+    assert.match(notification.message, /why/);
+  }
+});
+
+test("handleCopilotModels: unknown subcommand now includes full usage in warning", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
+
+  await handleCopilotModels("unknown", ctx, {});
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].level, "warning");
+  assert.match(notifications[0].message, /Unknown \/gsd copilot-models subcommand "unknown"/);
+  assert.match(notifications[0].message, /sync/);
+  assert.match(notifications[0].message, /why/);
+});
+
 test("handleCopilotModels: 'whywhatever' and 'why-gpt-5.4' are not recognized as the why command", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
