@@ -8,7 +8,7 @@ import test from "node:test";
 
 const baselinePath = join(process.cwd(), "scripts/workflow-authority-baseline.mjs");
 const baseline = await import(pathToFileURL(baselinePath).href);
-const BASELINE_SPAWN_TIMEOUT_MS = 255_000;
+const BASELINE_SPAWN_TIMEOUT_MS = 375_000; // 4 x 90s invariant budget + headroom
 const BASELINE_TEST_TIMEOUT_MS = 270_000;
 
 test("workflow authority baseline reports four fixed invariants in stable order", () => {

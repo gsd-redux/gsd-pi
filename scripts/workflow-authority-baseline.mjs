@@ -62,13 +62,14 @@ function commandForInvariant(invariant) {
   };
 }
 
-// Per-invariant hang watchdog. The default is the historical 60s; slower
-// machines can raise it via the env var (fault-boundary-matrix alone has been
-// measured at 67-85s). Four invariants run sequentially, so 4 x this value must
-// stay under BASELINE_SPAWN_TIMEOUT_MS in src/tests/workflow-authority-baseline.test.ts,
+// Per-invariant hang watchdog. The default covers fault-boundary-matrix on
+// slower machines, where it has been measured at 67-85s against the
+// historical 60s cap (that cap turned a slow machine into a false timeout).
+// Four invariants run sequentially, so 4 x this value must stay under
+// BASELINE_SPAWN_TIMEOUT_MS in src/tests/workflow-authority-baseline.test.ts,
 // which wraps the whole CLI run.
 export const INVARIANT_TIMEOUT_ENV = "GSD_BASELINE_INVARIANT_TIMEOUT_MS";
-const DEFAULT_INVARIANT_TIMEOUT_MS = 60_000;
+const DEFAULT_INVARIANT_TIMEOUT_MS = 90_000;
 
 export function invariantTimeoutMs(env = process.env) {
   return Number(env[INVARIANT_TIMEOUT_ENV]) || DEFAULT_INVARIANT_TIMEOUT_MS;
