@@ -13,6 +13,7 @@ import {
 } from "../lifecycle-shadow-comparison.js";
 import { getDb } from "../engine.js";
 import {
+  adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
   readLifecycleShadowComparison,
   requireActiveDomainOperationContext,
@@ -539,6 +540,19 @@ export function completeMilestoneHierarchy(
     );
   }
 
+  // Closeout is the compatibility adoption path for work completed before
+  // canonical lifecycle authority existed. Existing lifecycles are preserved,
+  // and every non-completed or mismatched descendant still fails below.
+  for (const row of [...loadSlices(context, milestoneId), ...loadTasks(context, milestoneId)]) {
+    if (row.lifecycleId || normalizeLegacyLifecycleStatus(row.legacyStatus) !== "completed") continue;
+    adoptLifecycleIfMissing(context, {
+      itemKind: row.itemKind,
+      milestoneId,
+      ...(row.sliceId ? { sliceId: row.sliceId } : {}),
+      ...(row.taskId ? { taskId: row.taskId } : {}),
+      lifecycleStatus: "completed",
+    });
+  }
   const slices = loadSlices(context, milestoneId);
   if (slices.length === 0) {
     throw new MilestoneLifecycleValidationError(`no slices found for Milestone ${milestoneId}`);

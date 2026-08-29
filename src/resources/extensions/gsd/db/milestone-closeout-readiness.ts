@@ -647,16 +647,7 @@ export function readMilestoneCloseoutReadiness(
     });
   }
 
-  const descendant = getDb().prepare(`
-    SELECT COALESCE(MAX(lifecycle.last_project_revision), 0) AS revision
-    FROM workflow_item_lifecycles lifecycle
-    JOIN project_authority authority
-      ON authority.project_id = lifecycle.project_id
-     AND authority.singleton = 1
-    WHERE lifecycle.milestone_id = :milestone_id
-      AND lifecycle.item_kind IN ('slice', 'task')
-  `).get({ ":milestone_id": input.milestoneId });
-  const descendantRevision = Number(descendant?.["revision"] ?? 0);
+  const descendantRevision = closeoutRelevantDescendantRevision(input.milestoneId);
   if (descendantRevision >= validation.project_revision) {
     blockers.push({
       kind: "validation-stale",
@@ -756,15 +747,26 @@ function waiverSourceRevision(payloadJson: string): string | null {
   }
 }
 
-function descendantRevision(milestoneId: string): number {
+// milestone.complete may adopt legacy completed descendants after authorizing
+// validation. Those state-version-zero rows record compatibility, not newer
+// work; any later lifecycle transition increments the version and counts again.
+function closeoutRelevantDescendantRevision(milestoneId: string): number {
   const descendant = getDb().prepare(`
     SELECT COALESCE(MAX(lifecycle.last_project_revision), 0) AS revision
     FROM workflow_item_lifecycles lifecycle
     JOIN project_authority authority
       ON authority.project_id = lifecycle.project_id
      AND authority.singleton = 1
+    LEFT JOIN workflow_operations lifecycle_operation
+      ON lifecycle_operation.project_id = lifecycle.project_id
+     AND lifecycle_operation.operation_id = lifecycle.last_operation_id
     WHERE lifecycle.milestone_id = :milestone_id
       AND lifecycle.item_kind IN ('slice', 'task')
+      AND NOT (
+        lifecycle.lifecycle_status = 'completed'
+        AND lifecycle.state_version = 0
+        AND COALESCE(lifecycle_operation.operation_type, '') = 'milestone.complete'
+      )
   `).get({ ":milestone_id": milestoneId });
   return Number(descendant?.["revision"] ?? 0);
 }
@@ -822,7 +824,7 @@ export function readMilestoneCloseoutAuthorization(
         }],
       };
     }
-    const currentDescendantRevision = descendantRevision(input.milestoneId);
+    const currentDescendantRevision = closeoutRelevantDescendantRevision(input.milestoneId);
     if (currentDescendantRevision >= waiver.project_revision) {
       return {
         authorized: false,
