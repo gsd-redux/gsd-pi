@@ -11,6 +11,7 @@
 - [Model 配置](#model-configuration)
 - [覆盖内置 Providers](#overriding-built-in-providers)
 - [按 model 覆盖](#per-model-overrides)
+- [更新 Model 目录](#updating-the-model-catalog)
 - [OpenAI 兼容性](#openai-compatibility)
 
 <a id="minimal-example"></a>
@@ -277,6 +278,123 @@ export GSD_ALLOWED_COMMAND_PREFIXES="pass,op,sops,doppler"
 - 未知的 model ID 会被忽略
 - 可以把 provider 级别的 `baseUrl` / `headers` 与 `modelOverrides` 组合使用
 - 如果某个 provider 同时定义了 `models`，那么自定义 models 会在应用完内置覆盖后再合并；如果它的 `id` 与已覆盖的内置 model 相同，最终会以自定义 model 为准
+
+<a id="updating-the-model-catalog"></a>
+## 更新 Model 目录
+
+运行 `gsd update --models` 即可在不进行完整 npm 升级的情况下获取最新发布的 model 目录：
+
+```bash
+gsd update --models
+```
+
+该命令会从 gsd-pi 仓库的 `main` 分支下载当前生成的目录快照，并将其存储为一个带版本号的 JSON 覆盖文件，位于 `~/.gsd/agent/models-catalog.json`。该参数是独立的，不接受附加值。
+
+启动时，models 按以下优先级解析（从低到高）：
+
+1. **内置目录**：随所安装的 GSD 版本一同提供。
+2. **覆盖文件**：来自 `~/.gsd/agent/models-catalog.json`——会用相同 provider + model `id` 的条目替换内置条目，并新增 models 和 providers。
+3. **`models.json`**（本文件）——自定义 providers、自定义 models 和 `modelOverrides` 始终具有最高优先级，且更新过程永远不会修改它。
+
+这样就能在不升级 GSD 本身的情况下，随着新 model、定价和上下文窗口更新的发布而获得它们。只有在完整目录通过校验之后，覆盖文件才会被原子替换，因此下载、校验或写入失败都不会影响现有的覆盖文件。如果覆盖文件缺失或格式错误，会被忽略，启动过程会继续使用内置目录和 `models.json`。
+
+## GitHub Copilot 实时目录同步
+
+除了 `gsd update --models` 之外，GitHub Copilot 现在还有一套独立的实时目录（live-catalog）工作流程。
+
+旧的工作流程：
+
+1. GitHub Copilot 上线或变更了某个 model。
+2. 下一次发布的内置/生成目录最终会获知这一变化。
+3. `gsd update --models` 或未来的 GSD 版本会将其纳入生效的本地目录。
+
+新的工作流程：
+
+1. `/gsd copilot-models sync` 会获取当前已认证账号的实时 Copilot `/models` 目录。
+2. 响应会被规范化为一个不含密钥的本地快照，并具备“最后已知良好状态”保护。
+3. `/gsd copilot-models changes`、`pricing`、`promos`、`doctor` 和 `why` 都会在本地检查该已接受的快照。
+4. `/gsd copilot-models sync --register` 可以立即将**完整的**、仅存在于远端的 GitHub Copilot models 添加到 `~/.gsd/agent/models-catalog.json`，无需等待内置目录的发布更新。
+
+注册 model 会立即重新加载内存中的 model registry，因此新注册的 model 在同一会话中即可通过 `/gsd model` 选中（也可用于 `tier_models` 固定配置）——无需重启。
+
+该工作流程有意做成以 extension 优先、且仅针对特定 provider：
+
+- 非 Copilot provider 不会产生 Copilot 的网络请求；
+- 一旦已存在被接受的快照，`why`、`changes`、`pricing`、`promos` 和 `doctor` 就不需要再发起新的网络请求；
+- models 永远不会因为一次可疑或失败的同步而被自动注册。
+
+### 生效本地目录的优先级
+
+对于 GitHub Copilot，生效的本地目录仍然遵循与其他所有 provider 相同的优先级顺序：
+
+1. **内置目录**：随所安装的 GSD 版本一同提供。
+2. **覆盖文件**：来自 `~/.gsd/agent/models-catalog.json`。
+3. **`models.json`**：用户覆盖配置和自定义 models。
+
+这意味着 `/gsd copilot-models sync` 默认只是观察性的，而 `sync --register` 只会写入 `gsd update --models` 已经在使用的同一层覆盖文件。它永远不会编辑 `models.json`，不会重写用户的覆盖配置，也不会影响无关的 provider。
+
+### 完整 model 与隔离（quarantined）model
+
+仅存在于远端的 Copilot models，会在任何写入操作发生之前先被分类。
+
+- **完整（Complete）**：远端 provider 的响应，加上现有的 provider 静态兼容性数据，两者共同证明了一个可用的运行时 API / endpoint 映射、工具调用（tool-call）支持、上下文/输出限制，以及具备 provider 感知能力的 token 定价。这些 models 可以被安全地注册进本地覆盖文件。
+- **隔离（Quarantined）**：只要存在缺失、冲突、预览版被禁用、策略被阻止，或可疑的元数据，该 model 就会被排除在生效的本地目录之外。该 model 仍然会在 `changes`、`doctor` 和 `why` 中可见，并附带具体的阻塞原因。
+
+被隔离的 models 不会被写入带有虚构的零定价、虚构的限制或猜测协议的占位条目——这是有意为之的设计。
+
+### provider 感知的定价优先级
+
+Copilot 的定价按 provider + model 身份进行解析，优先级如下：
+
+1. 来自 `models.json` 的明确用户覆盖（完整的自定义 model 定义，或针对 `github-copilot` 的 `modelOverrides` 条目）；
+2. 来自已接受的 Copilot 快照的最新 provider 实时定价；
+3. 来自当前内置 GitHub Copilot 目录条目的 provider 静态定价；
+4. 未知。
+
+Copilot 有意不使用通用的跨 provider 内置回退定价档位：共享的内置成本表仅按裸 model ID 建立索引，因此一个复用了其他 provider ID 的 Copilot model（例如 `gpt-5.5`）原本可能会悄悄地报告出那个其他 provider 的价格。未匹配的 models 会报告为 `unknown` 定价，而不是一个可能有误的猜测值。
+
+`/gsd copilot-models pricing` 和 `/gsd copilot-models why <model>` 会同时显示解析出的值及其来源/新鲜度。未知值会保持为 `unknown`；它们永远不会被悄悄改写为 `$0.0000`。
+
+请求倍率（multiplier）和促销信息会与 token 定价分开跟踪。促销信息属于生命周期元数据，而不是对已生效的实时价格进行二次折扣的指令。
+
+### 路由置信度安全性
+
+实时发现 Copilot models 并**不**意味着每一个新 model 都会被自动路由。
+
+- 未分析或置信度未知的 models 默认仍然只能手动选择。
+- 预览版 models 默认仍然只能手动选择，除非未来的路由策略明确将其纳入。
+- 错误 provider 的 model ID 会在触发任何认证或网络路径之前，由 `why` 在本地拒绝。
+
+`/gsd copilot-models why <model>` 会报告某个 model 是仅在实时目录中可见、已存在于生效的本地目录中、在当前会话中可用，还是在当前置信度和策略规则下真正符合自动路由资格。
+
+### 命令示例
+
+```bash
+/gsd copilot-models sync
+/gsd copilot-models sync --register
+/gsd copilot-models changes
+/gsd copilot-models pricing
+/gsd copilot-models pricing github-copilot/mai-code-1.1-flash
+/gsd copilot-models promos
+/gsd copilot-models doctor
+/gsd copilot-models why github-copilot/gpt-5.4
+```
+
+### 失败与“最后已知良好状态”行为
+
+实时 Copilot 快照受以下故障安全（fail-closed）规则保护：
+
+- 认证失败、网络失败、JSON 格式错误或 provider 错误都不会覆盖已知良好的快照；
+- 可疑的收缩（例如一个已知良好的目录突然坍缩为零个 models）会被拒绝，而不是被盲目接受；
+- `doctor` 会报告已接受的快照是缓存的、过期的、可疑的，还是不存在的；
+- 密钥永远不会被写入快照、覆盖文件或诊断信息中。
+
+### 当前限制
+
+- 实时目录路径目前仅针对 GitHub Copilot；其他 provider 仍然依赖各自现有的目录/发现路径。
+- 自动路由仍然需要可信的 GSD 能力画像（capability profile）；仅靠实时发现是不够的。
+- 配额感知优化尚不属于当前功能的一部分。
+- 规划文档中讨论的、更长远的“provider 自持”实时目录架构仍是未来方向；当前实现在 GSD 的内置 extension 层内安全地交付。
 
 <a id="openai-compatibility"></a>
 ## OpenAI 兼容性
