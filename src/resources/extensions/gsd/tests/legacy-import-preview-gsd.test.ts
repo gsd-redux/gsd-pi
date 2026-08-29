@@ -612,14 +612,9 @@ describe("legacy .gsd captured-byte interpretation", () => {
       interpretation.candidates
         .filter((candidate) => candidate.target.kind === "task")
         .map((candidate) => [candidate.target.key, candidate.target.field, candidate.normalized]),
+      // Candidate order follows the interpreter's emission order: flat task
+      // PLAN rows, then SUMMARY field refinements, then slice-plan embedded tasks.
       [
-        ["M009-rfuh2h/S02/T01", undefined, {
-          id: "T01",
-          milestone_id: "M009-rfuh2h",
-          slice_id: "S02",
-          status: "pending",
-          title: "Recover embedded task",
-        }],
         ["M009-rfuh2h/S01/T01", undefined, {
           id: "T01",
           milestone_id: "M009-rfuh2h",
@@ -628,6 +623,13 @@ describe("legacy .gsd captured-byte interpretation", () => {
           title: "Recover current task plan",
         }],
         ["M009-rfuh2h/S01/T01", "status", "complete"],
+        ["M009-rfuh2h/S02/T01", undefined, {
+          id: "T01",
+          milestone_id: "M009-rfuh2h",
+          slice_id: "S02",
+          status: "pending",
+          title: "Recover embedded task",
+        }],
       ],
     );
     assert.deepEqual(interpretation.diagnoses, []);
