@@ -22,8 +22,10 @@ async function importValidatePackWithRootPackage(rootPackageJson) {
       buildApi.onLoad({ filter: /.*/, namespace: "validate-pack-stub" }, (args) => {
         const stubs = {
           "node:child_process": `
-            export function execFileSync() {
-              throw new Error("npm commands must not run after an early package guard failure");
+            export function execFileSync(command, args) {
+              globalThis.__validatePackStubCalls = globalThis.__validatePackStubCalls || [];
+              globalThis.__validatePackStubCalls.push(String(args?.[1] ?? command));
+              return "";
             }
           `,
           "node:fs": `
@@ -83,18 +85,24 @@ async function importValidatePackWithRootPackage(rootPackageJson) {
   } finally {
     console.log = originalLog;
     process.exit = originalExit;
+    delete globalThis.__validatePackStubCalls;
   }
 }
 
-test("validate-pack fails before npm pack when publishable dependencies contain workspace ranges", async () => {
+test("validate-pack resolves workspace ranges first, then fails when they survive the rewrite", async () => {
+  // The stubbed readFileSync always returns the same manifest, simulating a
+  // prepack resolve that failed to rewrite the workspace range.
   const logs = await importValidatePackWithRootPackage({
     dependencies: {
       "@gsd/pi-ai": "workspace:*",
     },
   });
   const output = logs.join("\n");
-  assert.match(output, /Checking for workspace: protocol leaks/);
-  assert.match(output, /dependencies\.@gsd\/pi-ai=workspace:\*/);
-  assert.match(output, /Remove internal workspace packages/);
+  // The resolve must run BEFORE the leak guard (publish snapshot order).
+  assert.match(output, /Resolving workspace:\* ranges for publishable manifest/);
+  const resolveAt = output.indexOf("Resolving workspace:");
+  const leakAt = output.indexOf("dependencies.@gsd/pi-ai=workspace:*");
+  assert.ok(resolveAt !== -1 && leakAt > resolveAt, "leak check must observe the resolved state");
+  assert.match(output, /check prepack-resolve-workspace\.cjs/);
   assert.doesNotMatch(output, /Packing tarball/);
 });

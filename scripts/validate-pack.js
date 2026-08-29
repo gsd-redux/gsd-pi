@@ -135,20 +135,29 @@ try {
   npmCacheDir = mkdtempSync(join(tmpdir(), 'validate-pack-npm-cache-'));
   mkdirSync(npmCacheDir, { recursive: true });
 
-  const rootPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  let rootPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
   function isInternalWorkspaceDep(dep) {
     return dep.startsWith('@gsd/') || dep.startsWith('@opengsd/') || dep.startsWith('@earendil-works/');
   }
 
+  // Resolve workspace:* ranges FIRST: the publish flow rewrites them before
+  // `npm publish` snapshots the registry manifest, so this check must observe
+  // the same post-rewrite state (and the pack below reuses it).
+  console.log('==> Resolving workspace:* ranges for publishable manifest...');
+  execFileSync(process.execPath, [join(__dirname, 'prepack-resolve-workspace.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  rootPkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+
   // --- Guard: no `workspace:` protocol in the published dependency fields ---
-  // `npm publish` builds the registry manifest (packument) from package.json read
-  // BEFORE the `prepack` hook runs, so a `prepack`-time rewrite/strip lands in the
-  // TARBALL but NOT in the published metadata that consumers resolve against. Any
-  // `workspace:` range left in dependencies/optionalDependencies/peerDependencies
-  // therefore leaks to the registry and breaks `npm install` with EUNSUPPORTEDPROTOCOL.
-  // Internal @gsd/@opengsd packages must NOT appear in these fields at all — they ship
-  // under packages/*/dist and are symlinked at postinstall (link-workspace-packages.cjs).
+  // The published manifest is snapshotted from the rewritten package.json, and
+  // internal @gsd/* deps now ship as bundledDependencies copies under
+  // node_modules/@gsd (satisfying their ^version ranges without registry
+  // access, including for --ignore-scripts installs). Any leftover
+  // `workspace:` range would leak to the registry and break `npm install`
+  // with EUNSUPPORTEDPROTOCOL.
   console.log('==> Checking for workspace: protocol leaks in published dependency fields...');
   const workspaceLeaks = [];
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
@@ -159,7 +168,7 @@ try {
   if (workspaceLeaks.length) {
     console.log('ERROR: root package.json has workspace: ranges that will leak to the published registry manifest:');
     for (const leak of workspaceLeaks) console.log(`    ${leak}`);
-    console.log('    Remove internal workspace packages from these fields (they ship via files + postinstall link).');
+    console.log('    The prepack resolve should have rewritten these — check prepack-resolve-workspace.cjs.');
     process.exit(1);
   }
   console.log('    No workspace: protocol leaks in published dependency fields.');
@@ -218,11 +227,8 @@ try {
   console.log('    Packaged workspace external dependency coverage is complete.');
 
   // --- Pack tarball ---
-  // npm pack --ignore-scripts skips prepack; resolve workspace:* for publishable tarballs.
-  execFileSync(process.execPath, [join(__dirname, 'prepack-resolve-workspace.cjs')], {
-    cwd: ROOT,
-    stdio: 'inherit',
-  });
+  // (workspace:* ranges were resolved above, before the manifest guards, so the
+  // published metadata and the tarball see the same state.)
 
   console.log('==> Packing tarball...');
   const packOutput = runNpm(['pack', '--json', '--ignore-scripts']);
@@ -298,6 +304,11 @@ try {
   }
   console.log(`    Size guard OK: ${entryCount} entries, ${formatBytes(unpackedSize)} unpacked, ${pnpmStorePaths.length} .pnpm entries.`);
 
+  // --- Guard: bundled @gsd/* workspace packages must be in the tarball ---
+  // Compiled dist code statically imports @gsd/*; installs with
+  // --ignore-scripts never run the postinstall link step, so resolution
+  // depends entirely on these bundled copies (#2061).
+
   // npm install can consume/delete a cwd-local tarball; keep a temp copy for later smoke tests.
   const packedTarballPath = tarball;
   tarball = join(mkdtempSync(join(tmpdir(), 'validate-pack-tarball-')), tarballName);
@@ -310,8 +321,26 @@ try {
   });
 
   // --- Check critical files using npm pack metadata ---
-  console.log('==> Checking critical files...');
+  console.log('==> Checking critical files using npm pack metadata...');
   const packedFiles = new Set(packEntry.files.map((entry) => entry.path));
+
+  const missingBundled = [];
+  for (const platform of [
+    'agent-core', 'agent-modes', 'native', 'pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui',
+  ]) {
+    for (const required of [
+      `node_modules/@gsd/${platform}/package.json`,
+      `node_modules/@gsd/${platform}/dist/index.js`,
+    ]) {
+      if (!packedFiles.has(required)) missingBundled.push(required);
+    }
+  }
+  if (missingBundled.length > 0) {
+    console.log('ERROR: bundled @gsd/* copies missing from the tarball — --ignore-scripts installs would break (#2061):');
+    for (const required of missingBundled) console.log(`    ${required}`);
+    process.exit(1);
+  }
+  console.log('    Bundled @gsd/* copies present for --ignore-scripts installs.');
 
   const requiredFiles = [
     'dist/loader.js',

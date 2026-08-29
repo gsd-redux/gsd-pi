@@ -4,6 +4,10 @@ packages:
   - 'web'
 
 autoInstallPeers: true
+# Root declares @gsd/* internal packages with real ranges so the published
+# manifest lists them (satisfied by bundledDependencies in the tarball).
+# pnpm links them to the workspace copies instead of hitting the registry.
+linkWorkspacePackages: true
 strictPeerDependencies: false
 engineStrict: true
 

@@ -37,6 +37,27 @@ importers:
       '@google/genai':
         specifier: ^1.40.0
         version: 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+      '@gsd/agent-core':
+        specifier: workspace:*
+        version: link:packages/gsd-agent-core
+      '@gsd/agent-modes':
+        specifier: workspace:*
+        version: link:packages/gsd-agent-modes
+      '@gsd/native':
+        specifier: workspace:*
+        version: link:packages/native
+      '@gsd/pi-agent-core':
+        specifier: workspace:*
+        version: link:packages/pi-agent-core
+      '@gsd/pi-ai':
+        specifier: workspace:*
+        version: link:packages/pi-ai
+      '@gsd/pi-coding-agent':
+        specifier: workspace:*
+        version: link:packages/pi-coding-agent
+      '@gsd/pi-tui':
+        specifier: workspace:*
+        version: link:packages/pi-tui
       '@mariozechner/jiti':
         specifier: ^2.6.2
         version: 2.6.5
