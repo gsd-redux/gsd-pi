@@ -30,6 +30,10 @@ test('isClosedStatus: "closed" returns true', () => {
   assert.equal(isClosedStatus('closed'), true);
 });
 
+test('isClosedStatus: "cancelled" returns true', () => {
+  assert.equal(isClosedStatus('cancelled'), true);
+});
+
 test('isClosedStatus: "pending" returns false', () => {
   assert.equal(isClosedStatus('pending'), false);
 });
@@ -70,7 +74,7 @@ test('isDeferredStatus is true only for "deferred"', () => {
 // ─── isInactiveStatus (closed OR deferred) ─────────────────────────────────
 
 test('isInactiveStatus covers every closed status', () => {
-  for (const s of ['complete', 'done', 'skipped', 'closed']) {
+  for (const s of RAW_CLOSED_STATUSES) {
     assert.equal(isInactiveStatus(s), true, `${s} should count as inactive`);
   }
 });
@@ -88,7 +92,7 @@ test('isInactiveStatus excludes runnable statuses', () => {
 // ─── isSkippedForDispatch (closed, parked, or deferred) ────────────────────
 
 test('isSkippedForDispatch covers closed, parked, and deferred', () => {
-  for (const s of ['complete', 'done', 'skipped', 'closed', 'parked', 'deferred']) {
+  for (const s of [...RAW_CLOSED_STATUSES, 'parked', 'deferred']) {
     assert.equal(isSkippedForDispatch(s), true, `${s} should be skipped for dispatch ordering`);
   }
 });
@@ -110,6 +114,7 @@ test('toStatus passes canonical values through unchanged', () => {
 test('toStatus maps known aliases to canonical', () => {
   assert.equal(toStatus('done'), 'complete');
   assert.equal(toStatus('closed'), 'complete');
+  assert.equal(toStatus('cancelled'), 'skipped');
   assert.equal(toStatus('planned'), 'pending');
   assert.equal(toStatus('in-progress'), 'in_progress');
 });
@@ -130,6 +135,6 @@ test('RAW_CLOSED_STATUSES is the single source: every member is closed', () => {
 });
 
 test('TERMINAL_STATUS_SQL is derived from RAW_CLOSED_STATUSES and renders identically', () => {
-  assert.equal(TERMINAL_STATUS_SQL, "'complete', 'done', 'skipped', 'closed'");
+  assert.equal(TERMINAL_STATUS_SQL, "'complete', 'done', 'skipped', 'closed', 'cancelled'");
   assert.equal(TERMINAL_STATUS_SQL, RAW_CLOSED_STATUSES.map((s) => `'${s}'`).join(', '));
 });

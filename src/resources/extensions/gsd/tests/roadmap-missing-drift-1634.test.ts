@@ -145,7 +145,7 @@ test("#1634 (b): missing ROADMAP.md with DB planning rows emits roadmap-missing 
   );
 });
 
-test("#1634: unplanned bare milestone rows and closed milestones do not emit roadmap-missing drift", async (t) => {
+test("#1634/#2063: unplanned bare milestone rows and closed milestones do not emit roadmap-missing drift", async (t) => {
   const base = makeBase("gsd-1634-unplanned-");
   t.after(() => cleanup(base));
 
@@ -162,6 +162,15 @@ test("#1634: unplanned bare milestone rows and closed milestones do not emit roa
     status: "complete",
     planning: { vision: "Already shipped." },
   });
+  // Cancelled milestone: imported/externally-written terminal rows must stay
+  // out of reconciliation even when vision would otherwise make them renderable.
+  insertMilestone({
+    id: "M004",
+    title: "Cancelled",
+    status: "cancelled",
+    planning: { vision: "No longer planned." },
+  });
+  insertMilestone({ id: "M005", title: "Cancelled placeholder", status: "cancelled" });
 
   const records = detectRoadmapMissingDrift(makeState(), { basePath: base, state: makeState() });
   assert.equal(records.length, 0, "neither bare nor closed milestones may be flagged");

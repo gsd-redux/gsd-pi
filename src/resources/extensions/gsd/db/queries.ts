@@ -842,7 +842,7 @@ export function getTasksBySliceIds(
 export interface MilestoneSliceSummary {
   id: string;
   title: string;
-  /** Closed per the canonical status vocabulary (complete/done/skipped/closed). */
+  /** Closed per the canonical status vocabulary (complete/done/skipped/closed/cancelled). */
   done: boolean;
   depends: string[];
 }

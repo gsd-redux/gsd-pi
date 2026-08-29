@@ -2,10 +2,9 @@
  * Status predicates and the canonical status vocabulary for GSD state-machine
  * guards (ADR-030).
  *
- * The DB column is free-form `string` so legacy/imported rows still load. Three
- * raw values besides canonical "complete"/"skipped" indicate "closed": "done"
- * (legacy alias), "closed" (legacy/imported), and "skipped" (user-directed skip
- * via rethink or backtrack). `RAW_CLOSED_STATUSES` is the single source for both
+ * The DB column is free-form `string` so legacy/imported rows still load.
+ * Canonical "complete"/"skipped" and legacy/imported "done", "closed", and
+ * "cancelled" indicate closure. `RAW_CLOSED_STATUSES` is the single source for both
  * `isClosedStatus()` and the SQL terminal-status fragment
  * (`db/sql-constants.ts` derives `TERMINAL_STATUS_SQL` from it), replacing the
  * prior independent definitions.
@@ -29,28 +28,30 @@ const CANONICAL_STATUS_SET: ReadonlySet<string> = new Set(CANONICAL_STATUSES);
 
 /**
  * Raw status values that mean a unit is closed — the single source of truth.
- * Includes legacy/imported aliases ("done", "closed") alongside canonical
- * "complete"/"skipped" because the DB column is free-form and older rows /
- * imports still carry them. Order matters: `TERMINAL_STATUS_SQL` is derived
- * from this array verbatim.
+ * Includes legacy/imported aliases ("done", "closed", "cancelled") alongside
+ * canonical "complete"/"skipped" because the DB column is free-form and older
+ * rows / imports still carry them. Order matters: `TERMINAL_STATUS_SQL` is
+ * derived from this array verbatim.
  */
-export const RAW_CLOSED_STATUSES = ["complete", "done", "skipped", "closed"] as const;
+export const RAW_CLOSED_STATUSES = ["complete", "done", "skipped", "closed", "cancelled"] as const;
 const RAW_CLOSED_SET: ReadonlySet<string> = new Set(RAW_CLOSED_STATUSES);
 
 /** Free-form aliases mapped to their canonical Status on read. */
 const ALIAS_TO_CANONICAL: Readonly<Record<string, Status>> = {
   done: "complete",
   closed: "complete",
+  cancelled: "skipped",
   planned: "pending",
   "in-progress": "in_progress",
 };
 
 /**
  * Normalize a free-form DB status string into the canonical `Status`
- * vocabulary. Maps known aliases (done/closed → complete, planned → pending,
- * in-progress → in_progress). An unrecognized/legacy value is **quarantined** —
- * preserved verbatim rather than silently remapped to a wrong canonical state —
- * so reads never fail and reconciliation/telemetry can surface it.
+ * vocabulary. Maps known aliases (done/closed → complete, cancelled → skipped,
+ * planned → pending, in-progress → in_progress). An unrecognized/legacy value
+ * is **quarantined** — preserved verbatim rather than silently remapped to a
+ * wrong canonical state — so reads never fail and reconciliation/telemetry can
+ * surface it.
  */
 export function toStatus(raw: string): Status {
   const value = raw.trim();
