@@ -654,30 +654,24 @@ jobs:
           # and the auto-opened release PR failed frozen-lockfile in every CI job.
           # So: retry the fold until the lockfile names every engine, and fail loudly
           # instead of committing a lockfile that breaks every downstream install.
-          EXPECTED_ENGINES="darwin-arm64 darwin-x64 linux-arm64-gnu linux-x64-gnu win32-x64-msvc"
+          # The check lives in scripts/release-lockfile-guard.mjs so the platform
+          # list and pnpm key format are unit-tested in
+          # src/tests/release-lockfile-guard.test.ts instead of only being
+          # exercised at release time.
           LOCKFILE_ALL_ENGINES=0
-          DELAY=45
           for attempt in $(seq 1 6); do
             pnpm install --lockfile-only
-            MISSING=()
-            for platform in ${EXPECTED_ENGINES}; do
-              grep -q "'@opengsd/engine-${platform}@${RELEASE_VERSION}':" pnpm-lock.yaml || MISSING+=("${platform}")
-            done
-            if [ "${#MISSING[@]}" = "0" ]; then
+            if node scripts/release-lockfile-guard.mjs verify-lockfile --version "${RELEASE_VERSION}"; then
               echo "Lockfile resolves all native platform packages (attempt ${attempt})."
               LOCKFILE_ALL_ENGINES=1
               break
             fi
             if [ "${attempt}" = "6" ]; then
-              echo "::error::Release lockfile is still missing native packages after 6 fold attempts:"
-              for platform in "${MISSING[@]}"; do
-                echo "::error::  - @opengsd/engine-${platform}@${RELEASE_VERSION}"
-              done
-              echo "::error::Refusing to fold an incomplete lockfile — every downstream frozen-lockfile install would fail."
+              echo "::error::Release lockfile is still missing engine packages after 6 fold attempts (missing list above) — refusing to fold an incomplete lockfile."
               exit 1
             fi
-            echo "  Attempt ${attempt}: lockfile missing engines (${MISSING[*]}), retrying in ${DELAY}s..."
-            sleep "${DELAY}"
+            echo "  Attempt ${attempt}: engines missing from lockfile, retrying in 45s..."
+            sleep 45
           done
           if [ "${LOCKFILE_ALL_ENGINES}" != "1" ]; then
             exit 1

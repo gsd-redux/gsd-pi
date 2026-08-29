@@ -1,0 +1,8 @@
+# Config for actionlint (workflow static analysis, run in the ci.yml
+# workflow-lint job). Declares Blacksmith's GitHub Actions-compatible runner
+# labels so `runs-on:` doesn't trip actionlint's unknown-runner check.
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-ubuntu-2404
+    - blacksmith-4vcpu-windows-2025
+    - blacksmith-4vcpu-ubuntu-2404-arm
