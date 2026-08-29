@@ -14,9 +14,9 @@ import type { AutoSupervisorConfig, GSDPreferences } from "./preferences.js";
 import { computeBudgets, resolveExecutorContextWindow } from "./context-budget.js";
 import {
   getInFlightToolCount,
-  getOldestInFlightToolStart,
   clearInFlightTools,
   hasInteractiveToolInFlight,
+  getOldestStallDetectableToolStart,
 } from "./auto-tool-tracking.js";
 import { detectWorkingTreeActivity } from "./auto-supervisor.js";
 import { applySupervisorModelIfConfigured } from "./auto-model-selection.js";
@@ -220,7 +220,17 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           });
           return;
         }
-        const oldestStart = getOldestInFlightToolStart()!;
+        // Subagent coordinators can legitimately run for many minutes while
+        // bounded child work completes. Leave genuinely hung coordination to
+        // the unit-level hard timeout instead of aborting on wall-clock age.
+        const oldestStart = getOldestStallDetectableToolStart();
+        if (oldestStart === undefined) {
+          writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
+            lastProgressAt: Date.now(),
+            lastProgressKind: "coordination-tool-in-flight",
+          });
+          return;
+        }
         const toolAgeMs = Date.now() - oldestStart;
         if (toolAgeMs < stalledToolTimeoutMs) {
           writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {

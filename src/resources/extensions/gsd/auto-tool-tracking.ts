@@ -21,6 +21,12 @@ const inFlightTools = new Map<string, InFlightTool>();
 const INTERACTIVE_TOOLS = new Set(["ask_user_questions", "secure_env_collect"]);
 
 /**
+ * Coordination tools that can legitimately run until their child work finishes.
+ * The idle watchdog must leave these to the unit-level hard timeout.
+ */
+const LONG_RUNNING_COORDINATION_TOOLS = new Set(["subagent", "Task"]);
+
+/**
  * Mode-agnostic refcount of in-flight interactive elicitations that are an
  * active human boundary (the model ASKED via ask_user_questions). Unlike the
  * `inFlightTools` Map, this is NOT gated by auto-session.active, so it is true
@@ -112,6 +118,18 @@ export function hasInteractiveToolInFlight(): boolean {
     if (INTERACTIVE_TOOLS.has(toolName)) return true;
   }
   return false;
+}
+
+/**
+ * Returns the oldest start time among tools eligible for idle stall detection.
+ * Long-running coordination tools are excluded, but remain hard-timeout bound.
+ */
+export function getOldestStallDetectableToolStart(): number | undefined {
+  let oldest = Infinity;
+  for (const { startedAt, toolName } of inFlightTools.values()) {
+    if (!LONG_RUNNING_COORDINATION_TOOLS.has(toolName) && startedAt < oldest) oldest = startedAt;
+  }
+  return oldest === Infinity ? undefined : oldest;
 }
 
 /**
