@@ -254,32 +254,7 @@ interface RepairEvidenceFacts {
 }
 
 function isPassingVerificationResult(verificationResult: string): boolean {
-  const normalized = verificationResult.trim().toLowerCase();
-  if (normalized.length === 0) return false;
-  
-  // Single-token results must be explicit pass tokens
-  if (!/\s/.test(normalized)) {
-    return (
-      normalized === "passed" ||
-      normalized === "pass" ||
-      normalized === "success" ||
-      normalized === "succeeded"
-    );
-  }
-
-  // Multi-word narrative verification results (commands, test output, summaries)
-  // are passing unless they explicitly indicate failure or inconclusive status.
-  if (
-    normalized.startsWith("failed") ||
-    normalized.startsWith("fail") ||
-    normalized.startsWith("error") ||
-    normalized.startsWith("inconclusive") ||
-    normalized.startsWith("needs-attention") ||
-    normalized.startsWith("rejected")
-  ) {
-    return false;
-  }
-  return true;
+  return verificationResult.trim().toLowerCase() === "passed";
 }
 
 function taskCompletionFacts(row: Record<string, unknown>): RepairEvidenceFacts {

@@ -381,25 +381,6 @@ for (const variant of ["failed", "inconclusive", "needs-attention", "true", "ban
   });
 }
 
-for (const narrative of [
-  "pnpm --filter @edelman-studio/web exec prisma generate — exit 0",
-  "Targeted ProjectMember auth tests pass 19/19",
-  "build and tests succeeded with 0 errors",
-]) {
-  test(`a multi-word narrative "${narrative}" verification_result is accepted as passing evidence`, (t) => {
-    openFixture(t);
-    insertNonPassingVerificationTask(t, narrative);
-
-    const receipt = repairLifecycleShadowForward({
-      invocation: invocation(`shadow-repair/narrative-passing/T04/${narrative}`),
-      item: isolatedTask("T04"),
-    });
-
-    assert.equal(receipt.disposition, "repaired");
-    assert.equal(receipt.afterStatus, "completed");
-  });
-}
-
 test("records an extra canonical shadow as unresolved when its legacy row is missing", (t) => {
   openFixture(t);
   adoptReadyItem(task("T03"));
