@@ -381,6 +381,25 @@ for (const variant of ["failed", "inconclusive", "needs-attention", "true", "ban
   });
 }
 
+for (const narrative of [
+  "pnpm --filter @edelman-studio/web exec prisma generate — exit 0",
+  "Targeted ProjectMember auth tests pass 19/19",
+  "build and tests succeeded with 0 errors",
+]) {
+  test(`a multi-word narrative "${narrative}" verification_result is accepted as passing evidence`, (t) => {
+    openFixture(t);
+    insertNonPassingVerificationTask(t, narrative);
+
+    const receipt = repairLifecycleShadowForward({
+      invocation: invocation(`shadow-repair/narrative-passing/T04/${narrative}`),
+      item: isolatedTask("T04"),
+    });
+
+    assert.equal(receipt.disposition, "repaired");
+    assert.equal(receipt.afterStatus, "completed");
+  });
+}
+
 test("records an extra canonical shadow as unresolved when its legacy row is missing", (t) => {
   openFixture(t);
   adoptReadyItem(task("T03"));
@@ -681,23 +700,24 @@ test("repairMilestoneLifecycleShadowsForward skips completed or cancelled milest
   openFixture(t);
   db().exec(`
     INSERT INTO milestones (id, title, status, created_at)
-    VALUES ('M010', 'Completed milestone', 'completed', '2026-07-01T00:00:00.000Z');
-    INSERT INTO workflow_item_lifecycles (
-      lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id, lifecycle_status,
-      created_at, updated_at, last_operation_id,
-      last_project_revision, last_authority_epoch
-    ) VALUES (
-      'lc-m10', 'p-test', 'milestone', 'M010', NULL, NULL, 'completed',
-      '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z', 'op-m10', 1, 1
-    );
+    VALUES
+      ('M010', 'Completed milestone', 'completed', '2026-07-01T00:00:00.000Z'),
+      ('M010C', 'Cancelled milestone', 'cancelled', '2026-07-01T00:00:00.000Z');
   `);
+  seedLifecycle({ itemKind: "milestone", milestoneId: "M010" }, "completed", "test/seed/m010");
+  seedLifecycle({ itemKind: "milestone", milestoneId: "M010C" }, "cancelled", "test/seed/m010c");
 
-  const result = repairMilestoneLifecycleShadowsForward({
+  const resultCompleted = repairMilestoneLifecycleShadowsForward({
     invocation: invocation("shadow-repair/completed-milestone/M010"),
     milestoneId: "M010",
   });
+  const resultCancelled = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/cancelled-milestone/M010C"),
+    milestoneId: "M010C",
+  });
 
-  assert.deepEqual(result, { repaired: [], unresolved: [] });
+  assert.deepEqual(resultCompleted, { repaired: [], unresolved: [] });
+  assert.deepEqual(resultCancelled, { repaired: [], unresolved: [] });
 });
 
 test("repairMilestoneLifecycleShadowsForward runs task repairs before slice repairs", (t) => {

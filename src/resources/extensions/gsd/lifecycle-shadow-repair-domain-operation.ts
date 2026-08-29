@@ -356,14 +356,13 @@ interface MilestoneRepairEntry {
 function executeMilestoneSingleStepRepairBatch(
   invocation: ExecutionInvocation,
   milestoneId: string,
-  category: "tasks" | "slices",
   entries: MilestoneRepairEntry[],
 ): string[] {
   const batchDigest = createHash("sha256")
     .update(entries.map((entry) => entityId(entry.item)).sort().join(","))
     .digest("hex")
     .slice(0, 12);
-  const idempotencyKey = `${invocation.idempotencyKey}:lifecycle-shadow-repair:milestone/${milestoneId}/batch/${category}/${batchDigest}`;
+  const idempotencyKey = `${invocation.idempotencyKey}:lifecycle-shadow-repair:milestone/${milestoneId}/batch/${batchDigest}`;
   const fence = readDomainOperationFence(idempotencyKey);
   beforeCommitHook?.();
   executeDomainOperation({
@@ -501,10 +500,6 @@ export function repairMilestoneLifecycleShadowsForward(input: {
   const twoPhaseTaskEntries = taskEntries.filter((entry) => entry.kind === "two-phase-task");
   const singleStepSliceEntries = sliceEntries.filter((entry) => entry.kind === "single-step");
 
-  if (singleStepTaskEntries.length > 0) {
-    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, "tasks", singleStepTaskEntries));
-  }
-
   for (const entry of twoPhaseTaskEntries) {
     let receipt = repairLifecycleShadowForward({
       invocation: childRepairInvocation(input.invocation, entry.item, "advance"),
@@ -526,8 +521,9 @@ export function repairMilestoneLifecycleShadowsForward(input: {
     }
   }
 
-  if (singleStepSliceEntries.length > 0) {
-    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, "slices", singleStepSliceEntries));
+  const singleStepEntries = [...singleStepTaskEntries, ...singleStepSliceEntries];
+  if (singleStepEntries.length > 0) {
+    repaired.push(...executeMilestoneSingleStepRepairBatch(input.invocation, milestoneId, singleStepEntries));
   }
 
   return { repaired, unresolved: [] };
