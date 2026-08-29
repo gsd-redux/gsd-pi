@@ -32,9 +32,10 @@ function createFakeCtx(options: {
   /** Simulate auth resolved outside authStorage (e.g. an env var or a models.json provider key). */
   credentialOutsideAuthStorage?: boolean;
   modelsJsonPath?: string;
-}): { ctx: ExtensionCommandContext; notifications: Array<{ message: string; level: string }> } {
+}): { ctx: ExtensionCommandContext; notifications: Array<{ message: string; level: string }>; refreshCallCount: () => number } {
   const notifications: Array<{ message: string; level: string }> = [];
   const models = options.models ?? [];
+  let refreshCalls = 0;
   const ctx = {
     modelRegistry: {
       getAll: () => models.map((model) => ({ ...model, api: "openai-completions", name: model.id, baseUrl: "https://example.test", provider: model.provider, reasoning: false, input: ["text"], cost: model.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 4096, compat: {} })),
@@ -52,7 +53,9 @@ function createFakeCtx(options: {
             ? { type: "api_key" as const, key: options.apiKey }
             : undefined,
       },
-      refresh: () => {},
+      refresh: () => {
+        refreshCalls += 1;
+      },
       modelsJsonPath: options.modelsJsonPath,
     },
     ui: {
@@ -61,7 +64,7 @@ function createFakeCtx(options: {
       },
     },
   };
-  return { ctx: ctx as unknown as ExtensionCommandContext, notifications };
+  return { ctx: ctx as unknown as ExtensionCommandContext, notifications, refreshCallCount: () => refreshCalls };
 }
 
 function jsonResponse(data: Array<Record<string, unknown>>) {
@@ -1244,6 +1247,59 @@ test("handleCopilotModels: --register on a first run writes complete remote-only
   const onDisk = readModelsCatalogOverlay(overlayPath);
   assert.ok(onDisk?.models["github-copilot"]?.["brand-new-complete"]);
   assert.match(notifications[0].message, /= github-copilot\/brand-new-complete registered into/);
+});
+
+test("handleCopilotModels: --register calls modelRegistry.refresh() so newly-registered models are immediately selectable in /gsd model", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-register-refresh-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+  const { ctx, refreshCallCount } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("sync --register", ctx, {
+    fetchImpl: jsonResponse([
+      { id: "gpt-5.4", name: "GPT-5.4", tool_call: true },
+      {
+        id: "brand-new-complete",
+        name: "Brand New Complete",
+        tool_call: true,
+        supported_endpoints: ["/responses"],
+        reasoning: true,
+        limit: { context: 400000, output: 128000 },
+        cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
+      },
+    ]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  assert.equal(
+    refreshCallCount(),
+    1,
+    "ctx.modelRegistry.refresh() must run after a successful registration, or the newly-registered model stays unavailable to /gsd model for the rest of the session",
+  );
+});
+
+test("handleCopilotModels: --register does not call modelRegistry.refresh() when nothing new was registered", async (t) => {
+  _resetCopilotModelsSessionStateForTests();
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-copilot-register-no-refresh-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const overlayPath = join(tmp, "models-catalog.json");
+  const { ctx, refreshCallCount } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  // Already-local model only -- registerCopilotModelsInOverlay has nothing
+  // remote-only to add, so registeredIds stays empty.
+  await handleCopilotModels("sync --register", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4", tool_call: true }]) as unknown as typeof fetch,
+    overlayPath,
+  });
+
+  assert.equal(refreshCallCount(), 0, "refresh() is an avoidable no-op reload when there is nothing new to pick up");
 });
 
 test("getGsdArgumentCompletions: /gsd copilot-models completions include the expanded subcommand surface", () => {

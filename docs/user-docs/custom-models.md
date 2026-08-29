@@ -312,6 +312,8 @@ New workflow:
 3. `/gsd copilot-models changes`, `pricing`, `promos`, `doctor`, and `why` inspect that accepted snapshot locally.
 4. `/gsd copilot-models sync --register` can add **complete** remote-only GitHub Copilot models to `~/.gsd/agent/models-catalog.json` immediately, without waiting for a published bundled catalog refresh.
 
+Registering a model reloads the in-memory model registry right away, so a newly-registered model is selectable via `/gsd model` (and usable for `tier_models` pins) in the same session — no restart required.
+
 This workflow is intentionally extension-first and provider-specific:
 
 - non-Copilot providers do not incur Copilot network traffic;
