@@ -212,6 +212,13 @@ export interface LifecycleShadowRepairCandidate extends LifecycleShadowRepairIde
   targetStatus: "completed" | null;
   evidence: LifecycleShadowRepairEvidence | null;
   reason: string | null;
+  /**
+   * Raw legacy verification_result for tasks (null for slices/milestones or
+   * when unrecorded). Distinguishes "never verified" bare legacy completions —
+   * completion's adoption territory (#2070) — from rows with a recorded failed
+   * verification, which the shadow gate must never silently repair (#2002).
+   */
+  legacyVerificationResult: string | null;
 }
 
 function validCompletedAt(value: unknown): string | null {
@@ -253,7 +260,7 @@ interface RepairEvidenceFacts {
   digestFacts: unknown;
 }
 
-function isPassingVerificationResult(verificationResult: string): boolean {
+export function isPassingVerificationResult(verificationResult: string): boolean {
   return verificationResult.trim().toLowerCase() === "passed";
 }
 
@@ -381,6 +388,7 @@ export function getLifecycleShadowRepairCandidate(
         comparison: compareLifecycleShadow(null, canonicalStatus),
         targetStatus: null,
         evidence: null,
+        legacyVerificationResult: null,
         reason: "legacy hierarchy row is missing; extra canonical shadow remains unresolved",
       };
     }
@@ -420,6 +428,7 @@ export function getLifecycleShadowRepairCandidate(
     return {
       ...identity,
       legacyStatus,
+      legacyVerificationResult: identity.itemKind === "task" ? (verificationResult || null) : null,
       canonicalStatus,
       canonicalLastOperationId,
       comparison: compareLifecycleShadow(legacyStatus, canonicalStatus),

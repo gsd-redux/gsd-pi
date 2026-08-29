@@ -12,6 +12,7 @@ import {
 import { getDb } from "./db/engine.js";
 import {
   getLifecycleShadowRepairCandidate,
+  isPassingVerificationResult,
   type LifecycleShadowRepairCandidate,
   type LifecycleShadowRepairEvidence,
   type LifecycleShadowRepairIdentity,
@@ -461,6 +462,25 @@ export function repairMilestoneLifecycleShadowsForward(input: {
     if (!candidate || candidate.canonicalStatus === "completed") continue;
     const legacyComplete = candidate.comparison.normalizedLegacyStatus === "completed";
     if (!legacyComplete) continue;
+
+    // Tri-state rule for pure legacy-complete descendants with no canonical
+    // lifecycle row (#2002 x #2070):
+    //   - recorded failed verification  → unresolved (never silently repair)
+    //   - no verification recorded      → completion's adoption territory:
+    //     skip it here and let milestone completion adopt it (#2070)
+    //   - recorded passing verification → falls through: the shadow repair
+    //     adopts it now (#2002)
+    if (candidate.canonicalStatus === null) {
+      const failedVerification =
+        typeof candidate.legacyVerificationResult === "string" &&
+        candidate.legacyVerificationResult !== "" &&
+        !isPassingVerificationResult(candidate.legacyVerificationResult);
+      if (failedVerification) {
+        unresolved.push(entityId(item));
+        continue;
+      }
+      if (!candidate.evidence) continue;
+    }
 
     const identity = entityId(item);
     if (candidate.targetStatus !== "completed" || !candidate.evidence) {
