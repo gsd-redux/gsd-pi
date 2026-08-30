@@ -13,8 +13,8 @@
   },
   "type": "module",
   "bin": {
-    "gsd": "dist/loader.js",
-    "gsd-cli": "dist/loader.js",
+    "gsd": "dist/bootstrap.js",
+    "gsd-cli": "dist/bootstrap.js",
     "gsd-pi": "scripts/install.js"
   },
   "files": [
