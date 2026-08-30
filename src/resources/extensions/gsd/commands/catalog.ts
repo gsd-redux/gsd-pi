@@ -171,10 +171,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
   "copilot-models": [
     { cmd: "sync", desc: "Refresh the normalized GitHub Copilot live catalog and record a new accepted snapshot" },
     { cmd: "changes", desc: "Show the last accepted normalized Copilot catalog diff without another network request" },
-    { cmd: "pricing [model]", desc: "Explain provider-aware Copilot economics and source/freshness for one model or the accepted snapshot" },
+    { cmd: "pricing", desc: "Explain provider-aware Copilot economics and source/freshness for one model or the accepted snapshot" },
     { cmd: "promos", desc: "Show active, future, and expired Copilot promotions from the accepted live snapshot" },
     { cmd: "doctor", desc: "Local-only Copilot auth/cache/policy/quarantine diagnostics with no network request" },
-    { cmd: "why <model>", desc: "Explain a Copilot model's local status, routing eligibility, and economics without network access" },
+    { cmd: "why", desc: "Explain a Copilot model's local status, routing eligibility, and economics without network access" },
     { cmd: "--register", desc: "With sync, write only complete remote-only Copilot models into the local models-catalog.json overlay" },
   ],
   logs: [

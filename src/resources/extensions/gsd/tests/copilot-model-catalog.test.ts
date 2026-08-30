@@ -230,6 +230,27 @@ test("sanitizeGitHubCopilotModels drops invalid and duplicate rows but keeps non
   assert.equal(sanitized.find((model) => model.id === "gpt-5.4")?.execution.toolCalls, false);
 });
 
+test("sanitizeGitHubCopilotModels preserves missing tool-call metadata as unknown", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [{ id: "unknown-tool-support", name: "Unknown Tool Support" }],
+  })[0]!;
+
+  assert.equal(record.execution.toolCalls, undefined);
+});
+
+test("sanitizeGitHubCopilotModels uses provider-qualified compatibility to resolve endpoint alternatives", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [{
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      supported_endpoints: ["/chat/completions", "/responses"],
+    }],
+  })[0]!;
+
+  assert.equal(record.execution.api, "openai-responses");
+  assert.deepEqual(record.conflicts, []);
+});
+
 test("applyLastKnownGood preserves the prior valid snapshot on failure", () => {
   const previous = {
     generatedAt: "2026-08-14T00:00:00Z",

@@ -62,7 +62,7 @@ export interface CopilotModelRecord {
   execution: {
     api?: Api;
     supportedEndpoints: string[];
-    toolCalls: boolean;
+    toolCalls?: boolean;
     parallelToolCalls?: boolean;
     streaming?: boolean;
     vision?: boolean;
@@ -432,14 +432,17 @@ function normalizeSupportedEndpoints(
   const liveApis = [...new Set(uniqueLiveEndpoints.map((endpoint) => mapEndpointToApi(endpoint)).filter((api): api is Api => !!api))];
   const staticEndpoints = staticModel ? endpointsFromApi(staticModel.api) : [];
   const staticApi = staticModel?.api;
-  const chosenApi = liveApis[0] ?? staticApi;
+  const chosenApi = staticApi && liveApis.includes(staticApi)
+    ? staticApi
+    : liveApis.length === 1
+      ? liveApis[0]
+      : liveApis.length === 0
+        ? staticApi
+        : undefined;
   const conflicts: string[] = [];
 
-  if (liveApis.length > 1) {
-    conflicts.push(`multiple live endpoint families declared: ${liveApis.join(", ")}`);
-  }
-  if (liveApis[0] && staticApi && liveApis[0] !== staticApi) {
-    conflicts.push(`live endpoints map to ${liveApis[0]} but provider-static compatibility uses ${staticApi}`);
+  if (liveApis.length > 1 && !chosenApi) {
+    conflicts.push(`no canonical transport can be determined from endpoint alternatives: ${liveApis.join(", ")}`);
   }
 
   return {
@@ -481,7 +484,7 @@ function normalizeGitHubCopilotModel(
       ? (record.capabilities as Record<string, unknown>).tool_calls
       : undefined),
   );
-  const toolCalls = liveToolCalls ?? !!staticModel;
+  const toolCalls = liveToolCalls;
   const liveReasoning = toBoolean(record.reasoning ?? record.thinking ?? record.supports_reasoning);
   const liveReasoningLevels = [
     ...normalizeStringArray(record.reasoning_levels),
@@ -566,7 +569,7 @@ function normalizeGitHubCopilotModel(
     execution: {
       ...(endpoints.api ? { api: endpoints.api } : {}),
       supportedEndpoints: endpoints.supportedEndpoints,
-      toolCalls: toolCalls ?? false,
+      ...(toolCalls !== undefined ? { toolCalls } : {}),
       ...(toBoolean(record.parallel_tool_calls ?? record.parallelToolCalls) !== undefined
         ? { parallelToolCalls: toBoolean(record.parallel_tool_calls ?? record.parallelToolCalls) }
         : {}),

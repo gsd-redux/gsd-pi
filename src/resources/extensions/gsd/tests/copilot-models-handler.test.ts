@@ -358,6 +358,27 @@ test("handleCopilotModels: why with no model argument reports usage and never to
   assert.equal(notifications[1].message, "Usage: /gsd copilot-models why <model>");
 });
 
+test("handleCopilotModels: placeholder syntax is never completed or accepted as a model ID", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
+
+  const completions = getGsdArgumentCompletions("copilot-models ");
+  assert.ok(completions.some((entry) => entry.label === "pricing" && entry.value === "copilot-models pricing"));
+  assert.ok(completions.some((entry) => entry.label === "why" && entry.value === "copilot-models why"));
+  assert.ok(completions.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+
+  await handleCopilotModels("pricing [model]", ctx, {});
+  await handleCopilotModels("why <model>", ctx, {});
+
+  assert.deepEqual(
+    notifications.map((notification) => notification.message),
+    [
+      "Usage: /gsd copilot-models pricing <model>",
+      "Usage: /gsd copilot-models why <model>",
+    ],
+  );
+});
+
 test("handleCopilotModels: help subcommand prints usage without auth or network", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
@@ -1417,11 +1438,12 @@ test("getGsdArgumentCompletions: /gsd copilot-models completions include the exp
   const labels = completions.map((entry) => entry.label);
   assert.ok(labels.includes("sync"));
   assert.ok(labels.includes("changes"));
-  assert.ok(labels.includes("pricing [model]"));
+  assert.ok(labels.includes("pricing"));
   assert.ok(labels.includes("promos"));
   assert.ok(labels.includes("doctor"));
-  assert.ok(labels.includes("why <model>"));
+  assert.ok(labels.includes("why"));
   assert.ok(labels.includes("--register"));
+  assert.ok(completions.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
 });
 
 test("showHelp: full help lists the expanded copilot-models subcommands", () => {
