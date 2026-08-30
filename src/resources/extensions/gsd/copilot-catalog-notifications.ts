@@ -32,33 +32,21 @@ function bareModelId(modelId: string): string {
 	return modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
 }
 
-/** Average of the 7 capability dimensions. */
-function averageCapabilityScore(profile: ModelCapabilities): number {
-	const values = Object.values(profile);
-	return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-/**
- * Pure comparison of two capability profiles. A small margin (avoids noise
- * from rounding-equivalent profiles) is required before calling the
- * candidate "higher" — anything else (including missing data) resolves to
- * "equal-or-lower", the safer default for messaging purposes.
- */
+/** Compare every required capability dimension without averaging away a regression. */
 export function compareCapabilityScores(
 	selected: ModelCapabilities | undefined,
 	candidate: ModelCapabilities | undefined,
-): "higher" | "equal-or-lower" {
-	if (!selected || !candidate) return "equal-or-lower";
-	return averageCapabilityScore(candidate) > averageCapabilityScore(selected) + 1 ? "higher" : "equal-or-lower";
+): "higher" | "equivalent" | "incomparable" {
+	if (!selected || !candidate) return "incomparable";
+	const dimensions = Object.keys(selected) as Array<keyof ModelCapabilities>;
+	if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
+	return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
 }
 
-function isHigherCapability(selectedBareId: string, candidateBareId: string): boolean {
-	return (
-		compareCapabilityScores(
-			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(selectedBareId)],
-			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
-		)
-		=== "higher"
+function compareModelCapabilities(selectedBareId: string, candidateBareId: string): ReturnType<typeof compareCapabilityScores> {
+	return compareCapabilityScores(
+		MODEL_CAPABILITY_PROFILES[canonicalizeModelId(selectedBareId)],
+		MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
 	);
 }
 
@@ -122,12 +110,13 @@ export function maybeNotifyCheaperAlternative(options: NotifyCheaperAlternativeO
 
 	const suggestion = findCheaperSameTierOption(bareId, ctx, snapshot);
 	if (!suggestion) return false;
+	const capabilityComparison = compareModelCapabilities(bareId, suggestion.modelId);
+	if (capabilityComparison === "incomparable") return false;
 
 	const fingerprint = buildFingerprint(accountScope, bareId, suggestion, snapshot);
 	if (notifiedFingerprints.has(fingerprint)) return false;
 	notifiedFingerprints.add(fingerprint);
 
-	const higherCapability = isHigherCapability(bareId, suggestion.modelId);
-	ctx.ui.notify(formatNotificationMessage(bareId, suggestion, higherCapability), "info");
+	ctx.ui.notify(formatNotificationMessage(bareId, suggestion, capabilityComparison === "higher"), "info");
 	return true;
 }

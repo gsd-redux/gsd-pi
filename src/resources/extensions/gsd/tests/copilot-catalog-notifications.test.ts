@@ -45,25 +45,26 @@ const SAME_TIER_SESSION: FakeModel[] = [
 
 // ─── compareCapabilityScores (pure) ─────────────────────────────────────────
 
-test("compareCapabilityScores: higher when candidate average exceeds selected by more than the margin", () => {
+test("compareCapabilityScores: higher only when every required dimension is equal or higher and one is higher", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
   const candidate = { coding: 60, debugging: 60, research: 60, reasoning: 60, speed: 60, longContext: 60, instruction: 60 };
   assert.equal(compareCapabilityScores(selected, candidate), "higher");
 });
 
-test("compareCapabilityScores: equal-or-lower when within the noise margin or candidate is lower", () => {
+test("compareCapabilityScores: equivalent only for verified equality and incomparable when any dimension is lower", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
   const closeCandidate = { ...selected, coding: 50.5 };
-  assert.equal(compareCapabilityScores(selected, closeCandidate), "equal-or-lower");
+  assert.equal(compareCapabilityScores(selected, closeCandidate), "higher");
 
   const lowerCandidate = { ...selected, coding: 10 };
-  assert.equal(compareCapabilityScores(selected, lowerCandidate), "equal-or-lower");
+  assert.equal(compareCapabilityScores(selected, lowerCandidate), "incomparable");
+  assert.equal(compareCapabilityScores(selected, selected), "equivalent");
 });
 
-test("compareCapabilityScores: equal-or-lower when either profile is missing (never guesses)", () => {
+test("compareCapabilityScores: incomparable when either profile is missing (never guesses)", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
-  assert.equal(compareCapabilityScores(undefined, selected), "equal-or-lower");
-  assert.equal(compareCapabilityScores(selected, undefined), "equal-or-lower");
+  assert.equal(compareCapabilityScores(undefined, selected), "incomparable");
+  assert.equal(compareCapabilityScores(selected, undefined), "incomparable");
 });
 
 // ─── maybeNotifyCheaperAlternative ──────────────────────────────────────────
