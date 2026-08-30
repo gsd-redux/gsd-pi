@@ -978,6 +978,14 @@ test("ADR-047: a rejected unit-run claim blocks with a stable identity, not back
   assert.equal(wedge.ok, true);
   assert.equal(wedge.ok ? wedge.wedge?.guardId : null, "unit-run-claim");
   assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
+  // ADR-047 §5: the wedge MUST carry an actionable recovery instruction, not
+  // just the raw claim reason. Guards against regressing to the
+  // `sanctionedExit ?? inputPayload` fallback (which would only store
+  // `missing-worker`).
+  const sanctionedExit = wedge.ok ? wedge.wedge?.sanctionedExit ?? "" : "";
+  assert.notEqual(sanctionedExit, "missing-worker");
+  assert.match(sanctionedExit, /could not claim a unit-run/i);
+  assert.match(sanctionedExit, /\/gsd status/);
 });
 
 test("completeActiveUnit allows a different next unit to advance", async (t) => {

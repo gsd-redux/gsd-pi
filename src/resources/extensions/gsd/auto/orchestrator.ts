@@ -1552,11 +1552,22 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           });
         }
         this.postAdvanceRecord(dispatchId);
+        const claimInputPayload = dispatchId.kind === "blocked"
+          ? dispatchId.reason
+          : buildDispatchKey(decision.unitType, decision.unitId);
         return this.withLivenessInput(dispatchId, {
           guardId: "unit-run-claim",
-          inputPayload: dispatchId.kind === "blocked"
-            ? dispatchId.reason
-            : buildDispatchKey(decision.unitType, decision.unitId),
+          inputPayload: claimInputPayload,
+          // ADR-047 §5: a tripped wedge MUST carry a reachable recovery
+          // instruction. Without an explicit sanctionedExit the ledger falls
+          // back to the raw claim reason (e.g. `missing-worker`), which tells
+          // the operator nothing about how to clear the claim blocker.
+          sanctionedExit:
+            `Auto-mode could not claim a unit-run for ${decision.unitType} ${decision.unitId} ` +
+            `(${claimInputPayload}). Another live worker may hold the milestone lease, or the ` +
+            `owning worker is shutting down mid-retry. Inspect \`/gsd status\` for the active ` +
+            `UnitRun and lease holder, then re-run once the lease is released (or run ` +
+            `\`/gsd doctor\` if no worker is live).`,
         });
       }
 
