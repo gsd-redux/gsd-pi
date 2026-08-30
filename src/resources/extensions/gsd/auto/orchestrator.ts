@@ -66,6 +66,7 @@ import { normalizeRealPath } from "../paths.js";
 import { preserveProjectionChanges } from "../projection-worker.js";
 import { throwIfTransientProjectionLockError } from "../projection-root-errors.js";
 import { buildDispatchKey } from "./dispatch-key.js";
+import { stableClaimSignature } from "./lease-conflict-notice.js";
 import {
   COMPLETED_NO_ADVANCE_GUARD_ID,
   formatWedgeRefusalNotice,
@@ -1552,8 +1553,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           });
         }
         this.postAdvanceRecord(dispatchId);
+        // Use a stable signature payload: lease-held reasons embed a volatile
+        // `until <expiresAt>` timestamp that advances on every holder
+        // heartbeat, which would defeat the ADR-047 occurrence-2 wedge trip.
         const claimInputPayload = dispatchId.kind === "blocked"
-          ? dispatchId.reason
+          ? stableClaimSignature(dispatchId.reason)
           : buildDispatchKey(decision.unitType, decision.unitId);
         return this.withLivenessInput(dispatchId, {
           guardId: "unit-run-claim",
