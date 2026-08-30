@@ -724,3 +724,76 @@ test("repairMilestoneLifecycleShadowsForward runs task repairs before slice repa
 
   assert.deepEqual(result.repaired, ["M011/S01/T01", "M011/S01"]);
 });
+
+// ── Tri-state rule for pure legacy-complete descendants with no canonical
+// row (#2002 x #2070 reconciliation): recorded failed verification blocks,
+// nothing recorded is left to milestone completion's adoption, recorded
+// passed is repaired here. ──
+
+function insertLegacyCompleteTask(t: import("node:test").TestContext, opts: {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  verificationResult: string | null;
+}): void {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('${opts.milestoneId}', 'Tri-state milestone', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('${opts.milestoneId}', '${opts.sliceId}', 'Tri-state slice', 'active', '2026-07-01T00:00:00.000Z');
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      '${opts.milestoneId}', '${opts.sliceId}', '${opts.taskId}', 'Tri-state task', 'complete',
+      '2026-07-02T00:00:00.000Z', 'Finished', 'Historical completion',
+      '${opts.verificationResult ?? ""}', '# Task summary'
+    );
+  `);
+}
+
+test("a recorded failed verification on a canonical-less legacy task blocks repair as unresolved", (t) => {
+  insertLegacyCompleteTask(t, {
+    milestoneId: "M010", sliceId: "S01", taskId: "T01", verificationResult: "failed",
+  });
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/tri-state/failed"),
+    milestoneId: "M010",
+  });
+  assert.deepEqual(result.repaired, []);
+  assert.deepEqual(result.unresolved, ["M010/S01/T01"]);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M010'
+  `).get()?.["count"], 0);
+});
+
+test("an unverified canonical-less legacy task is left for milestone completion to adopt", (t) => {
+  insertLegacyCompleteTask(t, {
+    milestoneId: "M011", sliceId: "S01", taskId: "T01", verificationResult: null,
+  });
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/tri-state/unverified"),
+    milestoneId: "M011",
+  });
+  assert.deepEqual(result.repaired, []);
+  assert.deepEqual(result.unresolved, []);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M011'
+  `).get()?.["count"], 0, "the shadow gate must not adopt — milestone completion does");
+});
+
+test("a passing-verified canonical-less legacy task is repaired by the shadow gate", (t) => {
+  insertLegacyCompleteTask(t, {
+    milestoneId: "M012", sliceId: "S01", taskId: "T01", verificationResult: "passed",
+  });
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/tri-state/passed"),
+    milestoneId: "M012",
+  });
+  assert.deepEqual(result.unresolved, []);
+  assert.deepEqual(result.repaired, ["M012/S01/T01"]);
+  assert.equal(db().prepare(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles WHERE milestone_id = 'M012'
+  `).get()?.["lifecycle_status"], "completed");
+});
