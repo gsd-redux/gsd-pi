@@ -647,13 +647,43 @@ function resolveGsdBrowserPathVersionForCommand(env: NodeJS.ProcessEnv = process
   }
 }
 
+// In-session counterpart of `gsd update --models`: refresh the
+// models-catalog.json overlay from the published catalog, then reload the
+// registry so the new models/pricing are active without a restart (same
+// seam as `copilot-models sync --register`).
+async function updateModelsCatalogInSession(ctx: ExtensionCommandContext): Promise<void> {
+  const { refreshModelsCatalogOverlay } = await import("./models-catalog-refresh.js");
+  ctx.ui.notify("Fetching model catalog...", "info");
+  const result = await refreshModelsCatalogOverlay();
+  if (!result.ok) {
+    ctx.ui.notify(result.message, "error");
+    return;
+  }
+  ctx.modelRegistry.refresh();
+  const previous = result.previous
+    ? ` (was ${result.previous.providers} providers, ${result.previous.models} models)`
+    : "";
+  ctx.ui.notify(
+    `Updated model catalog: ${result.providers} providers, ${result.models} models${previous}. Model registry refreshed.`,
+    "info",
+  );
+}
+
 export async function handleUpdate(ctx: ExtensionCommandContext, args = ""): Promise<void> {
   const { execSync } = await import("node:child_process");
 
   const target = args.trim();
+  if (target === "--models") {
+    await updateModelsCatalogInSession(ctx);
+    return;
+  }
+  if (target.includes("--models")) {
+    ctx.ui.notify("Usage: /gsd update [browser] [--models] — --models does not take a value", "warning");
+    return;
+  }
   const browserUpdate = target === "browser" || target === "gsd-browser";
   if (target && !browserUpdate) {
-    ctx.ui.notify("Usage: /gsd update [browser]", "warning");
+    ctx.ui.notify("Usage: /gsd update [browser] [--models]", "warning");
     return;
   }
 

@@ -83,7 +83,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "park", desc: "Park a milestone — skip without deleting" },
   { cmd: "unpark", desc: "Reactivate a parked milestone" },
   { cmd: "discard", desc: "Permanently discard one milestone (with confirmation)" },
-  { cmd: "update", desc: "Update GSD to the latest version" },
+  { cmd: "update", desc: "Update GSD to the latest version; --models refreshes the model catalog" },
   { cmd: "upgrade", desc: "Alias for update; installs the latest @opengsd package" },
   { cmd: "start", desc: "Start a workflow template (bugfix, spike, feature, etc.)" },
   { cmd: "templates", desc: "List available workflow templates" },
