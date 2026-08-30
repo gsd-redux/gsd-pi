@@ -944,6 +944,42 @@ test("ADR-047: unavailable liveness storage fails the advance boundary closed", 
   assert.match(result.reason, /liveness backstop unavailable/i);
 });
 
+test("ADR-047: a rejected unit-run claim blocks with a stable identity, not backstop-unavailable", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  // Force the unit-run claim (openUnitRun -> claimUnitRun) to be rejected:
+  // clearing the session worker id yields a "degraded: missing-worker" claim,
+  // which openUnitRun maps to a blocked AutoAdvanceResult before any dispatch
+  // opens. This is the #2097 shape: the claim-block path used to return without
+  // registering a liveness identity, degrading into "semantic guard did not
+  // provide a stable identity" backstop-unavailable — an unrecoverable stop
+  // that no DB repair (/gsd doctor --fix) could clear.
+  f.session.workerId = null;
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "blocked");
+  if (first.kind !== "blocked") throw new Error("expected a blocked claim");
+  assert.equal(first.action, "stop");
+  // The block carries the real claim reason and a stable identity ...
+  assert.match(first.reason, /missing-worker/);
+  // ... and MUST NOT degrade into the no-stable-identity backstop failure.
+  assert.doesNotMatch(first.reason, /semantic guard did not provide a stable identity/);
+  assert.doesNotMatch(first.reason, /liveness backstop unavailable/i);
+
+  // Because the claim block now registers a stable "unit-run-claim" signature,
+  // a second identical rejection trips the liveness wedge (threshold 2) instead
+  // of hard-failing the backstop boundary.
+  const second = await f.orchestrator.advance();
+  assert.equal(second.kind, "blocked");
+  if (second.kind !== "blocked") throw new Error("expected a second blocked claim");
+  assert.match(second.reason, /liveness backstop tripped/);
+  const wedge = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(wedge.ok, true);
+  assert.equal(wedge.ok ? wedge.wedge?.guardId : null, "unit-run-claim");
+  assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
+});
+
 test("completeActiveUnit allows a different next unit to advance", async (t) => {
   let nextTaskId = "M001/S01/T01";
   const f = makeFixture({

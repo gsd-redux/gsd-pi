@@ -1535,8 +1535,29 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         : this.openUnitRun(decision.unitType, decision.unitId, reconciliation.stateSnapshot);
       if (typeof dispatchId !== "number") {
         this.clearPendingDispatch();
+        // ADR-047 (#2097): a rejected unit-run claim (lease held/blocked,
+        // degraded, or skip) is a non-advancing guard block just like every
+        // other blocked path above. It MUST register a stable liveness identity
+        // so adjudicateLiveness can record/trip the signature ledger. Without
+        // this, the blocked result reaches adjudicateLiveness with no
+        // pendingLivenessInput and degrades into the "semantic guard did not
+        // provide a stable identity" backstop-unavailable hard-stop — which
+        // /gsd doctor --fix cannot repair because nothing is corrupt.
+        if (dispatchId.kind === "blocked") {
+          this.journalTransition({
+            name: "advance-blocked",
+            reason: dispatchId.reason,
+            unitType: decision.unitType,
+            unitId: decision.unitId,
+          });
+        }
         this.postAdvanceRecord(dispatchId);
-        return dispatchId;
+        return this.withLivenessInput(dispatchId, {
+          guardId: "unit-run-claim",
+          inputPayload: dispatchId.kind === "blocked"
+            ? dispatchId.reason
+            : buildDispatchKey(decision.unitType, decision.unitId),
+        });
       }
 
       this.status.phase = "running";
