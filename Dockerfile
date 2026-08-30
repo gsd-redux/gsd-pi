@@ -68,7 +68,7 @@ COPY ${TARBALL} /tmp/gsd-pi.tgz
 # state visible in CI logs (instead of silently producing an image that
 # fails at run time with exit 127 / command not found).
 #
-# Verify the loader is invokable. We pin to `node /path/to/loader.js`
+# Verify the bootstrap is invokable. We pin to `node /path/to/bootstrap.js`
 # (not the bin shim) because the npm bin shim is fragile against npm
 # prefix drift inside slim images; running the loader directly always
 # works as long as dist/ is in the tarball.
@@ -78,13 +78,13 @@ RUN npm install -g --ignore-scripts /tmp/gsd-pi.tgz \
     && ls -la /usr/local/bin | grep -i gsd || echo "(no gsd entries in /usr/local/bin)" \
     && echo "--- /usr/local/lib/node_modules/@opengsd/gsd-pi ---" \
     && ls -la /usr/local/lib/node_modules/@opengsd/gsd-pi 2>/dev/null | head -10 \
-    && test -f /usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js \
-    && node /usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js --version
+    && test -f /usr/local/lib/node_modules/@opengsd/gsd-pi/dist/bootstrap.js \
+    && node /usr/local/lib/node_modules/@opengsd/gsd-pi/dist/bootstrap.js --version
 
 WORKDIR /workspace
 
 # Invoke the loader directly. Avoids any dependency on the npm bin shim
 # being placed correctly in /usr/local/bin (which is platform/prefix
 # dependent and has been the source of spurious exit-127 failures).
-ENTRYPOINT ["node", "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js"]
+ENTRYPOINT ["node", "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/bootstrap.js"]
 CMD ["--help"]
