@@ -31,7 +31,7 @@
 | `/gsd brief <mode> [topic] [--slides]` | 生成自包含的可视化 HTML 简报。模式：`diagram`、`plan`、`diff`、`recap`、`table`、`slides`。 |
 | `/gsd export --html` | 为当前或已完成的 milestone 生成自包含 HTML 报告 |
 | `/gsd export --html --all` | 一次性为所有 milestones 生成回顾报告 |
-| `/gsd update` | 在会话内更新到最新版本 |
+| `/gsd update` | 在会话内更新 GSD；`--models` 可刷新 models 和定价且无需重启 |
 | `/gsd knowledge` | 添加持久化项目知识。Rules 仍手动维护在 `KNOWLEDGE.md` 中；patterns 和 lessons 由 memories 承载，并投影回文件。 |
 | `/gsd fast` | 为支持的模型切换 service tier（优先级 API 路由） |
 | `/gsd rate` | 评价上一个单元所用模型层级（over / ok / under），帮助改进自适应路由 |
@@ -392,6 +392,8 @@ MCP 模式也会暴露供 headless 和 MCP 客户端使用的 GSD workflow adapt
 ```
 
 如果已经是最新版本，它会给出提示且不做任何操作。
+
+运行 `/gsd update --models` 可获取已发布的全 provider model 目录，以原子方式替换 `~/.gsd/agent/models-catalog.json`，并重新加载当前会话中的 model registry。新的 models 和定价无需 npm 升级或重启即可使用。该命令不需要 provider 认证，`/gsd upgrade --models` 是它的别名。关于校验、优先级和失败行为，请参阅[更新 Model 目录](./custom-models.md#updating-the-model-catalog)。
 
 ## 导出
 

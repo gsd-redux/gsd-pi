@@ -39,7 +39,7 @@
 | `/gsd report` | Generate HTML reports for all milestones and open the reports index in a browser |
 | `/gsd report --html` | Generate self-contained HTML report for current or completed milestone |
 | `/gsd report --html --all` | Generate retrospective reports for all milestones at once |
-| `/gsd update` | Update GSD to the latest version in-session |
+| `/gsd update` | Update GSD in-session; `--models` refreshes models and pricing without a restart |
 | `/gsd upgrade` | Alias for `/gsd update` |
 | `/gsd knowledge` | Add persistent project knowledge. Rules remain manually maintained in `KNOWLEDGE.md`; patterns and lessons are memory-backed and projected into the file on the next session start. |
 | `/gsd memory` | Query and forget project memories |
@@ -589,6 +589,8 @@ When the `claude-code` provider is configured, update may also warn if the local
 ```
 
 If already up to date, it reports so and takes no action.
+
+Use `/gsd update --models` to fetch the published all-provider model catalog, atomically replace `~/.gsd/agent/models-catalog.json`, and reload the model registry in the current session. New models and pricing become available without an npm upgrade or restart. The command does not require provider authentication, and `/gsd upgrade --models` is an alias. See [Updating the Model Catalog](./custom-models.md#updating-the-model-catalog) for validation, precedence, and failure behavior.
 
 ## Report
 

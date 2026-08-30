@@ -282,13 +282,15 @@ export GSD_ALLOWED_COMMAND_PREFIXES="pass,op,sops,doppler"
 <a id="updating-the-model-catalog"></a>
 ## 更新 Model 目录
 
-运行 `gsd update --models` 即可在不进行完整 npm 升级的情况下获取最新发布的 model 目录：
+在 shell 中运行 `gsd update --models`，或在 GSD 会话中运行 `/gsd update --models`，即可在不进行完整 npm 升级的情况下获取最新发布的 model 目录：
 
 ```bash
 gsd update --models
+# 在正在运行的 GSD 会话中：
+/gsd update --models
 ```
 
-该命令会从 gsd-pi 仓库的 `main` 分支下载当前生成的目录快照，并将其存储为一个带版本号的 JSON 覆盖文件，位于 `~/.gsd/agent/models-catalog.json`。该参数是独立的，不接受附加值。
+该命令会从 gsd-pi 仓库的 `main` 分支下载当前生成的目录快照，并将其存储为一个带版本号的 JSON 覆盖文件，位于 `~/.gsd/agent/models-catalog.json`。获取过程无需认证，只使用已发布的全 provider 目录，超时时间为 15 秒。该参数是独立的；如果附加值，命令会在发起请求前拒绝执行。`/gsd upgrade --models` 是会话内命令的别名。
 
 启动时，models 按以下优先级解析（从低到高）：
 
@@ -296,7 +298,7 @@ gsd update --models
 2. **覆盖文件**：来自 `~/.gsd/agent/models-catalog.json`——会用相同 provider + model `id` 的条目替换内置条目，并新增 models 和 providers。
 3. **`models.json`**（本文件）——自定义 providers、自定义 models 和 `modelOverrides` 始终具有最高优先级，且更新过程永远不会修改它。
 
-这样就能在不升级 GSD 本身的情况下，随着新 model、定价和上下文窗口更新的发布而获得它们。只有在完整目录通过校验之后，覆盖文件才会被原子替换，因此下载、校验或写入失败都不会影响现有的覆盖文件。如果覆盖文件缺失或格式错误，会被忽略，启动过程会继续使用内置目录和 `models.json`。
+这样就能在不升级 GSD 本身的情况下，随着新 model、定价和上下文窗口更新的发布而获得它们。会话内命令成功后会重新加载 model registry，因此新目录会立即生效，无需重启。只有在完整目录通过校验之后，覆盖文件才会被原子替换，因此下载、HTTP、校验或写入失败都不会影响现有的覆盖文件。如果覆盖文件缺失或格式错误，会被忽略，启动过程会继续使用内置目录和 `models.json`。
 
 ## GitHub Copilot 实时目录同步
 

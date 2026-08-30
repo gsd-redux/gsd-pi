@@ -279,13 +279,15 @@ Behavior notes:
 
 ## Updating the Model Catalog
 
-Run `gsd update --models` to fetch the latest published model catalog without a full npm upgrade:
+Run `gsd update --models` from the shell, or `/gsd update --models` in a running session, to fetch the latest published model catalog without a full npm upgrade:
 
 ```bash
 gsd update --models
+# In a running GSD session:
+/gsd update --models
 ```
 
-The command downloads the current generated catalog snapshot from the gsd-pi repository's `main` branch and stores it as a versioned JSON overlay at `~/.gsd/agent/models-catalog.json`. The flag is standalone; a trailing value is rejected.
+The command downloads the current generated catalog snapshot from the gsd-pi repository's `main` branch and stores it as a versioned JSON overlay at `~/.gsd/agent/models-catalog.json`. The fetch is auth-free, uses only the published all-provider catalog, and is bounded by a 15-second timeout. The flag is standalone; a trailing value is rejected before any fetch. `/gsd upgrade --models` is an alias for the in-session form.
 
 At startup, models resolve in precedence order (lowest to highest):
 
@@ -293,7 +295,7 @@ At startup, models resolve in precedence order (lowest to highest):
 2. **Overlay** from `~/.gsd/agent/models-catalog.json` — replaces bundled entries with the same provider + model `id` and adds new models and providers.
 3. **`models.json`** (this file) — custom providers, custom models, and `modelOverrides` always take highest precedence and are never modified by the update.
 
-This delivers new models, pricing, and context-window updates as they are published, without upgrading GSD itself. The overlay is replaced atomically only after a complete catalog passes validation, so a download, validation, or write failure leaves an existing overlay unchanged. If the overlay is missing or malformed, it is ignored and startup continues with the bundled catalog and `models.json`.
+This delivers new models, pricing, and context-window updates as they are published, without upgrading GSD itself. The in-session form reloads the model registry after a successful update, so the new catalog is active immediately without a restart. The overlay is replaced atomically only after a complete catalog passes validation, so a download, HTTP, validation, or write failure leaves an existing overlay unchanged. If the overlay is missing or malformed, it is ignored and startup continues with the bundled catalog and `models.json`.
 
 ## GitHub Copilot Live Catalog Sync
 
