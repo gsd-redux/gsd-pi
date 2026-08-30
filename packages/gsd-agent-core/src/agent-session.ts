@@ -477,8 +477,8 @@ export class AgentSession implements AgentSessionHost {
 		this._prompt.abortRetry();
 	}
 
-	setModel(model: Model<any>): Promise<void> {
-		return this._model.setModel(model);
+	setModel(model: Model<any>, options?: { persist?: boolean }): Promise<void> {
+		return this._model.setModel(model, options);
 	}
 
 	cycleModel(direction?: "forward" | "backward"): Promise<ModelCycleResult | undefined> {

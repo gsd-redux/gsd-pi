@@ -62,7 +62,7 @@ export class AgentSessionModelModule {
 		});
 	}
 
-	async setModel(model: Model<any>): Promise<void> {
+	async setModel(model: Model<any>, options?: { persist?: boolean }): Promise<void> {
 		if (!this.host.modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -71,7 +71,9 @@ export class AgentSessionModelModule {
 		const thinkingLevel = this.getThinkingLevelForModelSwitch();
 		this.host.agent.state.model = model;
 		this.host.sessionManager.appendModelChange(model.provider, model.id);
-		this.host.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		if (options?.persist !== false) {
+			this.host.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		}
 
 		// Re-clamp thinking level for new model's capabilities
 		this.host.setThinkingLevel(thinkingLevel);

@@ -183,6 +183,6 @@ export interface AgentSessionHost {
 	createReplacedSessionContext(): ReplacedSessionContext;
 
 	// Public methods modules delegate to
-	setModel(model: Model<any>): Promise<void>;
+	setModel(model: Model<any>, options?: { persist?: boolean }): Promise<void>;
 	cycleModel(direction?: "forward" | "backward"): Promise<ModelCycleResult | undefined>;
 }

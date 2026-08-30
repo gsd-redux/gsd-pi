@@ -4,6 +4,7 @@ import { SessionManager } from "@gsd/pi-coding-agent/core/session-manager.js";
 import { resolvePath } from "@gsd/pi-coding-agent/utils/paths.js";
 import { parseSkillBlock } from "./agent-session.ts";
 import { AgentSessionExtensionsModule } from "./session/agent-session-extensions.ts";
+import { AgentSessionModelModule } from "./session/agent-session-model.ts";
 import { AgentSessionNavigationModule } from "./session/agent-session-navigation.ts";
 import { AgentSessionPromptModule } from "./session/agent-session-prompt.ts";
 
@@ -85,6 +86,52 @@ describe("AgentSessionExtensionsModule", () => {
     assert.doesNotMatch(prompt, /<name>Review-Skill<\/name>/);
     assert.doesNotMatch(prompt, /<name>other-skill<\/name>/);
     assert.doesNotMatch(prompt, /<available_skills>/);
+  });
+
+  test("forwards setModel persistence options to the session", async () => {
+    const model = { provider: "test-provider", id: "test-model" };
+    let receivedOptions: { persist?: boolean } | undefined;
+    let boundSetModel:
+      | ((selectedModel: typeof model, options?: { persist?: boolean }) => Promise<boolean>)
+      | undefined;
+    const host = {
+      modelRegistry: { hasConfiguredAuth: () => true },
+      setModel: async (_selectedModel: typeof model, options?: { persist?: boolean }) => {
+        receivedOptions = options;
+      },
+      promptTemplates: [],
+      resourceLoader: { getSkills: () => ({ skills: [] }) },
+    };
+    const runner = {
+      bindCore: (actions: { setModel: typeof boundSetModel }) => {
+        boundSetModel = actions.setModel;
+      },
+    };
+
+    new AgentSessionExtensionsModule(host as any).bindExtensionCore(runner as any);
+    assert.ok(boundSetModel);
+    assert.equal(await boundSetModel(model, { persist: false }), true);
+    assert.deepEqual(receivedOptions, { persist: false });
+  });
+});
+
+describe("AgentSessionModelModule", () => {
+  test("switches models without changing the default when persist is false", async () => {
+    const { host, model, persistedModels, sessionModels } = makeModelModuleHost();
+
+    await new AgentSessionModelModule(host as any).setModel(model as any, { persist: false });
+
+    assert.equal(host.agent.state.model, model);
+    assert.deepEqual(sessionModels, [[model.provider, model.id]]);
+    assert.deepEqual(persistedModels, []);
+  });
+
+  test("persists the default model when persistence options are omitted", async () => {
+    const { host, model, persistedModels } = makeModelModuleHost();
+
+    await new AgentSessionModelModule(host as any).setModel(model as any);
+
+    assert.deepEqual(persistedModels, [[model.provider, model.id]]);
   });
 });
 
@@ -193,6 +240,29 @@ function makeSkill(name: string) {
     source: "test",
     disableModelInvocation: false,
   };
+}
+
+function makeModelModuleHost() {
+  const model = { provider: "test-provider", id: "test-model", reasoning: false };
+  const persistedModels: string[][] = [];
+  const sessionModels: string[][] = [];
+  const host = {
+    model: undefined,
+    thinkingLevel: "off",
+    agent: { state: { model: undefined, thinkingLevel: "off" } },
+    modelRegistry: { hasConfiguredAuth: () => true },
+    sessionManager: {
+      appendModelChange: (provider: string, id: string) => sessionModels.push([provider, id]),
+    },
+    settingsManager: {
+      getDefaultThinkingLevel: () => "off",
+      setDefaultModelAndProvider: (provider: string, id: string) => persistedModels.push([provider, id]),
+    },
+    setThinkingLevel: () => {},
+    _extensionRunner: { emit: async () => {} },
+  };
+
+  return { host, model, persistedModels, sessionModels };
 }
 
 function makeAssistantError(errorMessage: string) {

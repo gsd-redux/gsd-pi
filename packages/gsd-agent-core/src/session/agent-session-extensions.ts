@@ -262,8 +262,7 @@ export class AgentSessionExtensionsModule {
 				getCommands,
 				setModel: async (model, options) => {
 					if (!this.host.modelRegistry.hasConfiguredAuth(model)) return false;
-					await this.host.setModel(model);
-					if (options?.persist === false) return true;
+					await this.host.setModel(model, options);
 					return true;
 				},
 				getThinkingLevel: () => this.host.thinkingLevel,
