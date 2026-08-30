@@ -279,6 +279,12 @@ jobs:
     # Raised from 25: this job now compiles the native engine addon from source
     # (a cold Rust build) before running the native-backed portability tests.
     timeout-minutes: 45
+    env:
+      # Same heterogeneous-runner guard as the build job: without a portable
+      # target-cpu baseline, rustc artifacts built on one fleet member crash
+      # rustc on another with STATUS_ILLEGAL_INSTRUCTION (observed expanding
+      # gsd_ast on #2066's run and once on main).
+      RUSTFLAGS: '-C target-cpu=x86-64'
     needs: [fast-gates, build]
     if: >-
       needs.fast-gates.outputs.heavy-code-changed == 'true' &&
