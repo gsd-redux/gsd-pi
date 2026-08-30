@@ -70,6 +70,17 @@ export interface ModelCapabilities {
   instruction: number;
 }
 
+/** Compare all required dimensions without allowing averages to hide regressions. */
+export function compareCapabilityDominance(
+  selected: ModelCapabilities | undefined,
+  candidate: ModelCapabilities | undefined,
+): "higher" | "equivalent" | "incomparable" {
+  if (!selected || !candidate) return "incomparable";
+  const dimensions = Object.keys(selected) as Array<keyof ModelCapabilities>;
+  if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
+  return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
+}
+
 /**
  * Semantic aliases whose spelling differs by more than separator or casing.
  * Both keys and values are canonical so formatting variants never need entries.

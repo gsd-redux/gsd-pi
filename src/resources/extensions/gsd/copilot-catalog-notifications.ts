@@ -17,7 +17,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { findCheaperSameTierOption, type CheaperSameTierSuggestion } from "./commands/handlers/copilot-models.js";
 import type { CopilotModelSnapshot } from "./copilot-model-catalog.js";
-import { canonicalizeModelId, MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
+import { canonicalizeModelId, compareCapabilityDominance, MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
 
 // Session-scoped only — never persisted to disk, mirrors the existing
 // per-account notification dedup pattern in commands/handlers/copilot-models.ts.
@@ -32,15 +32,11 @@ function bareModelId(modelId: string): string {
 	return modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
 }
 
-/** Compare every required capability dimension without averaging away a regression. */
 export function compareCapabilityScores(
 	selected: ModelCapabilities | undefined,
 	candidate: ModelCapabilities | undefined,
 ): "higher" | "equivalent" | "incomparable" {
-	if (!selected || !candidate) return "incomparable";
-	const dimensions = Object.keys(selected) as Array<keyof ModelCapabilities>;
-	if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
-	return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
+	return compareCapabilityDominance(selected, candidate);
 }
 
 function compareModelCapabilities(selectedBareId: string, candidateBareId: string): ReturnType<typeof compareCapabilityScores> {

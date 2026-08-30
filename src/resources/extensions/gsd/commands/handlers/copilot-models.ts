@@ -28,7 +28,9 @@ import {
 import { lookupModelCost, resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
 import {
   canonicalizeModelId,
+  compareCapabilityDominance,
   getModelProfileConfidence,
+  MODEL_CAPABILITY_PROFILES,
   MODEL_CAPABILITY_TIER,
   PROFILE_CONFIDENCE_ORDINAL,
 } from "../../model-router.js";
@@ -558,6 +560,12 @@ export function findCheaperSameTierOption(
 
     const candidateConfidence = getModelProfileConfidence(candidateBareId);
     if (candidateConfidence === "unknown") continue;
+    if (
+      compareCapabilityDominance(
+        MODEL_CAPABILITY_PROFILES[canonicalizeModelId(bareId)],
+        MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
+      ) === "incomparable"
+    ) continue;
 
     const candidateLiveRecord = findLiveRecord(snapshot, candidateBareId);
     if (isBlockedForAutomaticRouting(candidateLiveRecord)) continue;

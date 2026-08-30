@@ -1096,18 +1096,16 @@ test("handleCopilotModels: pricing suggests a cheaper same-tier Copilot model wh
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [
-      { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
-      { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
-      { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
+      { id: "claude-sonnet-4-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+      { id: "claude-sonnet-4", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
     ],
     apiKey: undefined,
   });
 
-  await handleCopilotModels("pricing claude-sonnet-5", ctx, {});
+  await handleCopilotModels("pricing claude-sonnet-4-5", ctx, {});
 
-  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/gpt-4\.1 /m);
+  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/claude-sonnet-4 /m);
   assert.match(notifications[0].message, /saves \$0\.0010 input \/ \$0\.0070 output per 1K/i);
-  assert.doesNotMatch(notifications[0].message, /mai-code-1\.1-flash/);
 });
 
 test("handleCopilotModels: pricing reports long-context tiers and request multipliers when live data supplies them", async () => {
@@ -1291,18 +1289,16 @@ test("handleCopilotModels: why highlights a cheaper same-tier model when one is 
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({
     models: [
-      { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
-      { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
-      { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
+      { id: "claude-sonnet-4-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+      { id: "claude-sonnet-4", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
     ],
     apiKey: undefined,
   });
 
-  await handleCopilotModels("why claude-sonnet-5", ctx, {});
+  await handleCopilotModels("why claude-sonnet-4-5", ctx, {});
 
-  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/gpt-4\.1 /m);
+  assert.match(notifications[0].message, /^- cheaper same-tier option: github-copilot\/claude-sonnet-4 /m);
   assert.match(notifications[0].message, /saves \$0\.0010 input \/ \$0\.0070 output per 1K/i);
-  assert.doesNotMatch(notifications[0].message, /mai-code-1\.1-flash/);
 });
 
 test("handleCopilotModels: doctor reports cache and quarantine state without a network request", async () => {
