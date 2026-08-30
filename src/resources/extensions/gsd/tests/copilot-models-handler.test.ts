@@ -625,6 +625,21 @@ test("handleCopilotModels: why reports last known live catalog as unknown when n
   assert.match(notifications[0].message, /^- last known live catalog: unknown$/m);
 });
 
+test("handleCopilotModels: why preserves unknown live tool-call support", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4" }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[1].message, /^- tool calls: unknown$/m);
+});
+
 test("handleCopilotModels: why marks an unknown capability tier/confidence as not routing-eligible", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({

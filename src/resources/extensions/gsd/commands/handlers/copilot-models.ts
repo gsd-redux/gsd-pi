@@ -804,7 +804,7 @@ function buildWhyExplanation(
     `- preview: ${liveRecord?.availability.preview === true ? "yes" : liveRecord?.availability.preview === false ? "no" : "unknown"}`,
     `- runtime API: ${liveRecord?.execution.api ?? localModel?.api ?? "unknown"}`,
     `- supported endpoints: ${(liveRecord?.execution.supportedEndpoints ?? []).join(", ") || "unknown"}`,
-    `- tool calls: ${(liveRecord?.execution.toolCalls ?? true) ? "yes" : "no"}`,
+    `- tool calls: ${liveRecord?.execution.toolCalls === true ? "yes" : liveRecord?.execution.toolCalls === false ? "no" : "unknown"}`,
     `- context/output: ${liveRecord?.execution.contextWindow ?? localModel?.contextWindow ?? "unknown"} / ${liveRecord?.execution.maxTokens ?? localModel?.maxTokens ?? "unknown"}`,
     `- economics: ${economicsSummary(economics)}`,
     `- source: ${economicsSourceSummary(economics)}`,
