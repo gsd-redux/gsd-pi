@@ -724,3 +724,108 @@ test("repairMilestoneLifecycleShadowsForward runs task repairs before slice repa
 
   assert.deepEqual(result.repaired, ["M011/S01/T01", "M011/S01"]);
 });
+
+// ── Sibling corroboration (#2002 x #2070): a canonically-completed sibling
+// establishes the adoption pattern, deferring bare legacy-complete
+// stragglers to milestone completion; without it the strict gate applies. ──
+
+function insertCanonicalCompletedSibling(milestoneId: string, sliceId: string, taskId: string): void {
+  // The corroboration sibling is a canonical shadow row; FK targets
+  // (project_authority / workflow_operations) are not the subject here.
+  db().exec("PRAGMA foreign_keys = OFF");
+  db().prepare(`
+    INSERT INTO workflow_item_lifecycles (
+      lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id,
+      lifecycle_status, state_version, created_at, updated_at,
+      last_operation_id, last_project_revision, last_authority_epoch
+    ) VALUES (
+      'corroboration-' || :task_id, 'test-project', 'task', :milestone_id, :slice_id, :task_id,
+      'completed', 1, '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z',
+      'fixture-adopt', 1, 0
+    )
+  `).run({ ":milestone_id": milestoneId, ":slice_id": sliceId, ":task_id": taskId });
+  db().exec("PRAGMA foreign_keys = ON");
+}
+
+test("a bare legacy-complete straggler is deferred to completion when a sibling is canonically complete", (t) => {
+  openFixture(t);
+  insertCanonicalCompletedSibling("M001", "S01", "T01");
+  // T02 here: legacy complete, no durable evidence, canonical row absent —
+  // the exact straggler shape from #2070.
+  db().exec(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      'M001', 'S01', 'T04', 'Bare straggler', 'complete',
+      '2026-07-04T00:00:00.000Z', 'Finished', 'Historical completion', '', ''
+    );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/corroboration/deferred"),
+    milestoneId: "M001",
+  });
+
+  // Neither repaired by the gate nor treated as unresolved — completion adopts it.
+  assert.deepEqual(result.repaired, []);
+  assert.deepEqual(result.unresolved, []);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M001'
+  `).get()?.["count"], 1, "the gate must not adopt the straggler itself");
+});
+
+test("a bare straggler with recorded failed verification blocks even with sibling corroboration", (t) => {
+  openFixture(t);
+  insertCanonicalCompletedSibling("M001", "S01", "T01");
+  db().exec(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      'M001', 'S01', 'T05', 'Failed-verification straggler', 'complete',
+      '2026-07-04T00:00:00.000Z', 'Finished', 'Historical completion', 'failed', '# T05 summary'
+    );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/corroboration/failed"),
+    milestoneId: "M001",
+  });
+
+  assert.deepEqual(result.repaired, []);
+  assert.deepEqual(result.unresolved, ["M001/S01/T05"]);
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M001'
+  `).get()?.["count"], 1, "only the corroborating sibling's own row exists");
+});
+
+test("without sibling corroboration a bare legacy-complete descendant is unresolved", (t) => {
+  openFixture(t);
+  db().exec(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, completed_at,
+      one_liner, narrative, verification_result, full_summary_md
+    ) VALUES (
+      'M001', 'S01', 'T06', 'Unsubstantiated straggler', 'complete',
+      '2026-07-04T00:00:00.000Z', 'Finished', 'Historical completion', '', ''
+    );
+  `);
+
+  const result = repairMilestoneLifecycleShadowsForward({
+    invocation: invocation("shadow-repair/corroboration/unsubstantiated"),
+    milestoneId: "M001",
+  });
+
+  assert.deepEqual(result.repaired, []);
+  // #2002's atomicity: T03 (unsupported evidence) and T06 (bare, unverified)
+  // are unresolved, so the evidence-backed T01/T02 are reported unresolved
+  // too and nothing is written.
+  assert.deepEqual(
+    [...result.unresolved].sort(),
+    ["M001/S01/T01", "M001/S01/T02", "M001/S01/T03", "M001/S01/T06"],
+  );
+  assert.equal(db().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_item_lifecycles WHERE milestone_id = 'M001'
+  `).get()?.["count"], 0);
+});
