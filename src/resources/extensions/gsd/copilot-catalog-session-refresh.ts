@@ -1,14 +1,14 @@
 // Project/App: gsd-pi
 // File Purpose: GSD-W018 — session-start GitHub Copilot catalog refresh
-// coordinator and 3-tier runtime model classification.
+// coordinator.
 //
 // Extends the explicit, user-invoked `/gsd copilot-models sync` (GSD-W014)
 // with an OPT-IN automatic refresh at GSD session start, gated by
 // `copilot_catalog.refresh_on_session_start` (default "off"). Reuses the
 // same read-only fetch/sanitize/last-known-good pipeline from
 // `copilot-model-catalog.ts` — this module never duplicates network/auth
-// logic, it only coordinates *when* to call it and classifies the result for
-// safe runtime selection.
+// logic, it only coordinates *when* to call it and captures the result for
+// the W017 change notifications.
 //
 // Invariants:
 //   - Never blocks ordinary session startup: callers must fire-and-forget
@@ -20,11 +20,7 @@
 //     `ctx.modelRegistry.getApiKey()`, which only ever returns a token that
 //     is already available, and any thrown/missing token is treated as
 //     "auth unavailable, skip silently" — never surfaced as an error.
-//   - Bounded wall-clock timeout; a slow/hanging fetch never wedges startup
-//     or a caller awaiting the in-flight refresh (e.g. the model picker).
-//   - Classification never fabricates capability or pricing data: unknown
-//     stays unknown (manual-only), and structurally incomplete records are
-//     quarantined rather than silently defaulted.
+//   - Bounded wall-clock timeout; a slow/hanging fetch never wedges startup.
 //   - State here is session-scoped only (module-level, per basePath) —
 //     nothing is persisted to disk, mirroring the existing
 //     `commands/handlers/copilot-models.ts` session-scoped snapshot.
@@ -36,16 +32,8 @@ import {
 	applyLastKnownGood,
 	diffCatalogSnapshots,
 	fetchGitHubCopilotModels,
-	type CopilotModelRecord,
 	type CopilotModelSnapshot,
 } from "./copilot-model-catalog.js";
-import { resolveModelEconomics } from "./model-cost-table.js";
-import {
-	canonicalizeModelId,
-	getModelProfileConfidence,
-	MODEL_CAPABILITY_TIER,
-	type CapabilityProfileConfidence,
-} from "./model-router.js";
 import type {
 	CopilotCatalogPreferences,
 	CopilotCatalogRefreshMode,
@@ -97,123 +85,6 @@ export function shouldTriggerCopilotCatalogRefresh(
 	return nowMs - lastRefreshedAtMs >= staleAfterMs;
 }
 
-// ─── Runtime model classification (Class A / B / C) ────────────────────────
-
-/**
- * - "trusted" (Class A): capability tier, profile confidence, and pricing are
- *   all known — exposed for manual selection AND eligible for automatic
- *   routing (subject to the existing routing confidence/economics gates in
- *   model-router.ts).
- * - "manual-only" (Class B): the live record is transport-valid
- *   (`tool_call: true`) but capability tier, profile confidence, or pricing
- *   is unknown — selectable manually, never auto-routed, never used for
- *   cheaper-model suggestions.
- * - "quarantined" (Class C): structurally incomplete (not tool-call capable)
- *   — not exposed as selectable, not routed, not suggested.
- */
-export type ModelRuntimeClass = "trusted" | "manual-only" | "quarantined";
-
-export interface ModelClassification {
-	modelClass: ModelRuntimeClass;
-	reasons: string[];
-	tier?: string;
-	profileConfidence?: CapabilityProfileConfidence;
-	hasKnownPricing: boolean;
-}
-
-/**
- * Classify a single live-catalog GitHub Copilot model for safe runtime
- * exposure (GSD-W018 Decision 6). Never invents capability or pricing data —
- * absence of evidence always resolves to "manual-only" or "quarantined",
- * never a synthesized "trusted" classification.
- */
-export function classifyRemoteCopilotModel(
-	record: CopilotModelRecord,
-): ModelClassification {
-	if (!record.execution.toolCalls) {
-		return {
-			modelClass: "quarantined",
-			reasons: ["missing required tool-call capability"],
-			hasKnownPricing: false,
-		};
-	}
-	if (record.availability.policyState === "disabled" || record.availability.policyState === "restricted") {
-		return {
-			modelClass: "quarantined",
-			reasons: [`policy state: ${record.availability.policyState}`],
-			hasKnownPricing: false,
-		};
-	}
-	if (record.availability.preview) {
-		return {
-			modelClass: "quarantined",
-			reasons: ["preview model — not yet stable for automatic exposure"],
-			hasKnownPricing: false,
-		};
-	}
-	if (record.conflicts.length > 0) {
-		return {
-			modelClass: "quarantined",
-			reasons: [`unresolved normalization conflict(s): ${record.conflicts.join(", ")}`],
-			hasKnownPricing: false,
-		};
-	}
-
-	const tier = MODEL_CAPABILITY_TIER[canonicalizeModelId(record.id)];
-	const profileConfidence = getModelProfileConfidence(record.id);
-	const hasKnownLimits =
-		typeof record.execution.contextWindow === "number" && typeof record.execution.maxTokens === "number";
-	const hasBillingOnRecord = record.billing.inputPer1k !== undefined && record.billing.outputPer1k !== undefined;
-	const economics = resolveModelEconomics({
-		provider: "github-copilot",
-		modelId: record.id,
-		fallbackEconomics: {
-			source: "bundled-fallback",
-			stale: false,
-			billingUnit: "tokens",
-		},
-		// BUNDLED_COST_TABLE entries are keyed by bare model ID and are not
-		// provider-qualified — without this, a same-named model priced by a
-		// different provider (e.g. OpenAI's "gpt-5.4") could silently be
-		// reported as this Copilot model's known price. See model-cost-table.ts.
-		disableImplicitFallback: true,
-	});
-	const fallbackPrices = economics.tokenPrices?.default;
-	const hasKnownPricing =
-		hasBillingOnRecord ||
-		economics.source !== "bundled-fallback" ||
-		Boolean(fallbackPrices && (fallbackPrices.inputPer1k > 0 || fallbackPrices.outputPer1k > 0));
-
-	if (tier && profileConfidence !== "unknown" && hasKnownPricing && hasKnownLimits) {
-		return {
-			modelClass: "trusted",
-			reasons: [
-				`capability tier known (${tier})`,
-				`profile confidence: ${profileConfidence}`,
-				"pricing known",
-				"context/token limits known",
-			],
-			tier,
-			profileConfidence,
-			hasKnownPricing,
-		};
-	}
-
-	const reasons: string[] = [];
-	if (!tier) reasons.push("no known capability tier");
-	if (profileConfidence === "unknown") reasons.push("no capability profile (unknown confidence)");
-	if (!hasKnownPricing) reasons.push("no known pricing");
-	if (!hasKnownLimits) reasons.push("no known context/token limits");
-
-	return {
-		modelClass: "manual-only",
-		reasons,
-		tier,
-		profileConfidence,
-		hasKnownPricing,
-	};
-}
-
 // ─── Session-start refresh coordinator ─────────────────────────────────────
 
 export interface CopilotCatalogSessionRefreshResult {
@@ -222,7 +93,6 @@ export interface CopilotCatalogSessionRefreshResult {
 	ok: boolean;
 	reason?: string;
 	snapshot: CopilotModelSnapshot | null;
-	classifications: Record<string, ModelClassification>;
 	changedModelIds: string[];
 }
 
@@ -230,7 +100,6 @@ const NOOP_RESULT: Readonly<CopilotCatalogSessionRefreshResult> = Object.freeze(
 	ran: false,
 	ok: false,
 	snapshot: null,
-	classifications: {},
 	changedModelIds: [],
 });
 
@@ -351,11 +220,6 @@ async function runCopilotCatalogRefresh(
 	lastSnapshotByBasePath.set(basePath, nextSnapshot);
 	lastRefreshedAtByBasePath.set(basePath, nowFn());
 
-	const classifications: Record<string, ModelClassification> = {};
-	for (const model of nextSnapshot.models) {
-		classifications[model.id] = classifyRemoteCopilotModel(model);
-	}
-
 	const changedModelIds = previousSnapshot
 		? (() => {
 				const diff = diffCatalogSnapshots(previousSnapshot, nextSnapshot);
@@ -367,7 +231,6 @@ async function runCopilotCatalogRefresh(
 		ran: true,
 		ok: true,
 		snapshot: nextSnapshot,
-		classifications,
 		changedModelIds,
 	};
 }
@@ -377,12 +240,10 @@ async function runCopilotCatalogRefresh(
  * refresh. Callers on the startup path MUST NOT `await` this synchronously —
  * fire it and let it resolve in the background (`void
  * startCopilotCatalogSessionRefresh(...)`), per the non-blocking-startup
- * invariant. `awaitCopilotCatalogSessionRefresh` is the bounded-wait join
- * point for callers (e.g. the model picker) that need the result.
+ * invariant.
  *
  * Returns `NOOP_RESULT` synchronously-resolved when the mode is "off" or
- * "if_stale" and the snapshot is not yet stale — no promise is stored in
- * that case, so `awaitCopilotCatalogSessionRefresh` has nothing to join.
+ * "if_stale" and the snapshot is not yet stale.
  */
 export function startCopilotCatalogSessionRefresh(
 	options: RefreshCopilotCatalogSessionOptions,
@@ -412,21 +273,6 @@ export function startCopilotCatalogSessionRefresh(
 
 	inFlightRefreshes.set(basePath, runPromise);
 	return runPromise;
-}
-
-/**
- * Await an in-flight refresh for `basePath`, bounded by `timeoutMs`. Used by
- * the model picker so a just-started refresh can populate newly available
- * models before the picker renders, without ever blocking indefinitely.
- * Resolves immediately with `NOOP_RESULT` when nothing is in flight.
- */
-export function awaitCopilotCatalogSessionRefresh(
-	basePath: string,
-	timeoutMs = DEFAULT_COPILOT_CATALOG_REFRESH_TIMEOUT_MS,
-): Promise<CopilotCatalogSessionRefreshResult> {
-	const pending = inFlightRefreshes.get(basePath);
-	if (!pending) return Promise.resolve(NOOP_RESULT);
-	return withTimeout(pending, timeoutMs, { ...NOOP_RESULT, ran: true, reason: "timeout" });
 }
 
 /**

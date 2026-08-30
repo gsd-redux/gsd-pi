@@ -1,24 +1,19 @@
 // Regression/behavior tests for GSD-W018: the session-start GitHub Copilot
-// catalog refresh coordinator and 3-tier runtime model classification.
-// Exercises the coordinator's dedup/timeout/auth-safety contract and the
-// classifier's refusal to fabricate capability or pricing data — as opposed
-// to the production command wiring covered by copilot-models-handler.test.ts.
+// catalog refresh coordinator. Exercises the coordinator's dedup/timeout/
+// auth-safety contract — as opposed to the production command wiring covered
+// by copilot-models-handler.test.ts.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
 	_resetCopilotCatalogSessionRefreshStateForTests,
-	awaitCopilotCatalogSessionRefresh,
-	classifyRemoteCopilotModel,
 	resolveCopilotCatalogNotifyOnChanges,
 	resolveCopilotCatalogRefreshMode,
 	resolveCopilotCatalogStaleAfterMs,
 	shouldTriggerCopilotCatalogRefresh,
 	startCopilotCatalogSessionRefresh,
-	type CopilotCatalogSessionRefreshResult,
 } from "../copilot-catalog-session-refresh.js";
-import type { CopilotModelRecord } from "../copilot-model-catalog.js";
 
 interface FakeModel {
 	id: string;
@@ -55,38 +50,6 @@ function jsonResponse(data: Array<Record<string, unknown>>) {
 
 function neverResolves() {
 	return (async () => new Promise<Response>(() => {})) as unknown as typeof fetch;
-}
-
-function buildRecord(overrides: Partial<CopilotModelRecord> = {}): CopilotModelRecord {
-	return {
-		provider: "github-copilot",
-		id: "claude-sonnet-5",
-		registryId: "github-copilot/claude-sonnet-5",
-		name: "Claude Sonnet 5",
-		availability: { enabled: true, pickerEnabled: true, preview: false, policyState: "enabled" },
-		execution: {
-			toolCalls: true,
-			supportedEndpoints: [],
-			reasoningLevels: [],
-			contextWindow: 200_000,
-			maxTokens: 8_192,
-		},
-		billing: { billingUnit: "tokens", inputPer1k: 0.003, outputPer1k: 0.015 },
-		provenance: {
-			displayName: { source: "provider-live", freshness: "fresh" },
-			availability: { source: "provider-live", freshness: "fresh" },
-			endpoints: { source: "provider-live", freshness: "fresh" },
-			reasoning: { source: "provider-live", freshness: "fresh" },
-			limits: { source: "provider-live", freshness: "fresh" },
-			billingUnit: { source: "provider-live", freshness: "fresh" },
-			tokenPrices: { source: "provider-live", freshness: "fresh" },
-			requestMultiplier: { source: "unknown", freshness: "unknown" },
-			promotion: { source: "unknown", freshness: "unknown" },
-		},
-		conflicts: [],
-		hash: "test-hash",
-		...overrides,
-	} as CopilotModelRecord;
 }
 
 // ─── Config resolution ──────────────────────────────────────────────────────
@@ -143,63 +106,6 @@ test("shouldTriggerCopilotCatalogRefresh: if_stale triggers on first run and aft
 	assert.equal(shouldTriggerCopilotCatalogRefresh("if_stale", 1000, 1400, 500), false, "still fresh");
 	assert.equal(shouldTriggerCopilotCatalogRefresh("if_stale", 1000, 1500, 500), true, "exactly at threshold");
 	assert.equal(shouldTriggerCopilotCatalogRefresh("if_stale", 1000, 2000, 500), true, "past threshold");
-});
-
-// ─── classifyRemoteCopilotModel (pure) ──────────────────────────────────────
-
-test("classifyRemoteCopilotModel: trusted when tier, profile, pricing, and limits are all known", () => {
-	const result = classifyRemoteCopilotModel(buildRecord());
-	assert.equal(result.modelClass, "trusted");
-	assert.equal(result.tier, "standard");
-	assert.equal(result.hasKnownPricing, true);
-});
-
-test("classifyRemoteCopilotModel: manual-only when capability tier is unknown", () => {
-	const result = classifyRemoteCopilotModel(buildRecord({ id: "some-brand-new-unlisted-model" }));
-	assert.equal(result.modelClass, "manual-only");
-	assert.ok(result.reasons.some((reason) => reason.includes("capability tier")));
-});
-
-test("classifyRemoteCopilotModel: manual-only when pricing is unknown and tier/profile are unknown too", () => {
-	const result = classifyRemoteCopilotModel(
-		buildRecord({ id: "some-brand-new-unlisted-model-2", billing: { billingUnit: "unknown" } }),
-	);
-	assert.equal(result.modelClass, "manual-only");
-	assert.equal(result.hasKnownPricing, false);
-});
-
-test("classifyRemoteCopilotModel: quarantined when not tool-call capable", () => {
-	const result = classifyRemoteCopilotModel(
-		buildRecord({ execution: { ...buildRecord().execution, toolCalls: false } }),
-	);
-	assert.equal(result.modelClass, "quarantined");
-	assert.match(result.reasons[0]!, /tool-call/);
-});
-
-test("classifyRemoteCopilotModel: quarantined when policy-restricted or disabled", () => {
-	const restricted = classifyRemoteCopilotModel(
-		buildRecord({ availability: { ...buildRecord().availability, policyState: "restricted" } }),
-	);
-	assert.equal(restricted.modelClass, "quarantined");
-
-	const disabled = classifyRemoteCopilotModel(
-		buildRecord({ availability: { ...buildRecord().availability, policyState: "disabled" } }),
-	);
-	assert.equal(disabled.modelClass, "quarantined");
-});
-
-test("classifyRemoteCopilotModel: quarantined when preview", () => {
-	const result = classifyRemoteCopilotModel(
-		buildRecord({ availability: { ...buildRecord().availability, preview: true } }),
-	);
-	assert.equal(result.modelClass, "quarantined");
-	assert.match(result.reasons[0]!, /preview/);
-});
-
-test("classifyRemoteCopilotModel: quarantined when normalization reported conflicts", () => {
-	const result = classifyRemoteCopilotModel(buildRecord({ conflicts: ["endpoint mismatch"] }));
-	assert.equal(result.modelClass, "quarantined");
-	assert.match(result.reasons[0]!, /conflict/);
 });
 
 // ─── startCopilotCatalogSessionRefresh (coordinator) ────────────────────────
@@ -277,7 +183,7 @@ test("startCopilotCatalogSessionRefresh: a throwing getApiKey never triggers a l
 	assert.equal(result.reason, "auth-unavailable");
 });
 
-test("startCopilotCatalogSessionRefresh: successful refresh classifies models and reports changes", async () => {
+test("startCopilotCatalogSessionRefresh: successful refresh reports changed models", async () => {
 	_resetCopilotCatalogSessionRefreshStateForTests();
 	const { ctx } = createFakeCtx({
 		models: [{ id: "claude-sonnet-5", provider: "github-copilot" }],
@@ -294,7 +200,6 @@ test("startCopilotCatalogSessionRefresh: successful refresh classifies models an
 	assert.equal(result.ok, true);
 	assert.ok(result.snapshot);
 	assert.equal(result.changedModelIds.length, 1, "first-ever snapshot reports every model as changed");
-	assert.ok(result.classifications["claude-sonnet-5"]);
 });
 
 test("startCopilotCatalogSessionRefresh: no-diff second refresh reports zero changes", async () => {
@@ -380,30 +285,4 @@ test("startCopilotCatalogSessionRefresh: a hanging fetch resolves via the bounde
 	});
 
 	assert.equal(result.reason, "timeout");
-});
-
-test("awaitCopilotCatalogSessionRefresh: resolves immediately when nothing is in flight", async () => {
-	_resetCopilotCatalogSessionRefreshStateForTests();
-	const result = await awaitCopilotCatalogSessionRefresh("/no-such-project", 50);
-	assert.equal(result.ran, false);
-});
-
-test("awaitCopilotCatalogSessionRefresh: joins an in-flight refresh started elsewhere", async () => {
-	_resetCopilotCatalogSessionRefreshStateForTests();
-	const { ctx } = createFakeCtx({
-		models: [{ id: "claude-sonnet-5", provider: "github-copilot" }],
-		apiKey: "token-abc",
-	});
-
-	const started: Promise<CopilotCatalogSessionRefreshResult> = startCopilotCatalogSessionRefresh({
-		ctx,
-		basePath: "/project-6",
-		preferences: { copilot_catalog: { refresh_on_session_start: "always" } },
-		fetchImpl: jsonResponse([{ id: "claude-sonnet-5", name: "Claude Sonnet 5", tool_call: true }]),
-	});
-
-	const joined = await awaitCopilotCatalogSessionRefresh("/project-6", 1000);
-	const original = await started;
-	assert.equal(joined.ok, original.ok);
-	assert.deepEqual(joined.snapshot, original.snapshot);
 });
