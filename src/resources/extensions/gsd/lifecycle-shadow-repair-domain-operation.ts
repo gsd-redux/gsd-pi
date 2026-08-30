@@ -12,6 +12,7 @@ import {
 import { getDb } from "./db/engine.js";
 import {
   getLifecycleShadowRepairCandidate,
+  isPassingVerificationResult,
   type LifecycleShadowRepairCandidate,
   type LifecycleShadowRepairEvidence,
   type LifecycleShadowRepairIdentity,
@@ -453,16 +454,41 @@ export function repairMilestoneLifecycleShadowsForward(input: {
     return { repaired: [], unresolved: [] };
   }
 
+  // A canonically-completed sibling descendant proves the adoption pattern is
+  // established for this milestone (e.g. a partially-applied legacy import):
+  // bare legacy-complete stragglers are then swept in by milestone completion
+  // rather than blocking validation (#2070). Without that corroboration, an
+  // adopted milestone claiming readiness on unsubstantiated descendants is
+  // refused (#2002).
+  const repairItems = milestoneRepairItems(milestoneId);
+  const corroborated = repairItems.some(
+    (item) => getLifecycleShadowRepairCandidate(item)?.canonicalStatus === "completed",
+  );
+
   const inScope: MilestoneRepairEntry[] = [];
   const unresolved: string[] = [];
 
-  for (const item of milestoneRepairItems(milestoneId)) {
+  for (const item of repairItems) {
     const candidate = getLifecycleShadowRepairCandidate(item);
     if (!candidate || candidate.canonicalStatus === "completed") continue;
     const legacyComplete = candidate.comparison.normalizedLegacyStatus === "completed";
     if (!legacyComplete) continue;
 
     const identity = entityId(item);
+    const failedVerification =
+      item.itemKind === "task" &&
+      typeof candidate.legacyVerificationResult === "string" &&
+      candidate.legacyVerificationResult !== "" &&
+      !isPassingVerificationResult(candidate.legacyVerificationResult);
+    if (failedVerification) {
+      // Recorded failed verification must never be silently repaired (#2002).
+      unresolved.push(identity);
+      continue;
+    }
+    if (corroborated && candidate.canonicalStatus === null) {
+      // Adoption pattern established: completion sweeps this straggler in.
+      continue;
+    }
     if (candidate.targetStatus !== "completed" || !candidate.evidence) {
       unresolved.push(identity);
       continue;
