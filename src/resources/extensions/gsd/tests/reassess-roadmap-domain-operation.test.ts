@@ -279,6 +279,10 @@ test("reassessment corrects milestone and completed-slice evidence metadata with
     },
   });
   const beforeTask = getTask("M001", "S01", "T01");
+  assert.equal(db().prepare(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'
+  `).get(), undefined, "fixture task must start without canonical lifecycle authority");
   const beforeMilestoneLifecycle = db().prepare(
     "SELECT lifecycle_status, state_version FROM workflow_item_lifecycles WHERE item_kind = 'milestone' AND milestone_id = 'M001'",
   ).get();
@@ -323,6 +327,10 @@ test("reassessment corrects milestone and completed-slice evidence metadata with
   assert.equal(completedSlice?.demo, "The corrected runtime acceptance policy is demonstrable.");
   assert.equal(completedSlice?.success_criteria, "Runtime acceptance evidence is recorded.");
   assert.deepEqual(getTask("M001", "S01", "T01"), beforeTask, "metadata correction must not mutate completed task rows");
+  assert.deepEqual(db().prepare(`
+    SELECT lifecycle_status, state_version FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'
+  `).get(), { lifecycle_status: "completed", state_version: 0 }, "metadata correction must adopt completed task lifecycles");
   assert.deepEqual(db().prepare(
     "SELECT lifecycle_status, state_version FROM workflow_item_lifecycles WHERE item_kind = 'milestone' AND milestone_id = 'M001'",
   ).get(), beforeMilestoneLifecycle, "metadata correction must preserve completed milestone lifecycle state");

@@ -398,6 +398,16 @@ export async function handleReassessRoadmap(
           if (lifecycle.lifecycleStatus !== "completed") {
             throw new PlanningGuardError(`metadata correction target ${correction.sliceId} is canonically ${lifecycle.lifecycleStatus}, not completed`);
           }
+          for (const task of getSliceTasks(params.milestoneId, correction.sliceId)) {
+            if (normalizeLegacyLifecycleStatus(task.status) !== "completed") continue;
+            adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: correction.sliceId,
+              taskId: task.id,
+              lifecycleStatus: "completed",
+            });
+          }
         }
 
         for (const modifiedSlice of params.sliceChanges.modified) {
