@@ -104,7 +104,7 @@ function getAliases(): Record<string, string> {
 		"@gsd/pi-tui": resolveWorkspaceOrImport("pi-tui/dist/index.js", "@gsd/pi-tui"),
 		"@gsd/pi-ai": resolveWorkspaceOrImport("pi-ai/dist/index.js", "@gsd/pi-ai"),
 		"@gsd/pi-ai/oauth": resolveWorkspaceOrImport("pi-ai/dist/oauth.js", "@gsd/pi-ai/oauth"),
-		"@gsd/agent-core": resolveWorkspaceOrImport("gsd-agent-core/dist/index.js", "@gsd/agent-core"),
+		"@gsd/agent-core": resolveWorkspaceOrImport("gsd-agent-core/dist", "@gsd/agent-core"),
 		"@gsd/agent-modes": resolveWorkspaceOrImport("gsd-agent-modes/dist/index.js", "@gsd/agent-modes"),
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,

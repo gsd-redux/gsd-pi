@@ -67,14 +67,50 @@ jobs:
       - name: Build core
         run: pnpm run build:core
 
+      # The pinned @opengsd/engine-* npm binary lags the Rust source and is built
+      # without the test-fault-injection feature, so the mutation-boundary fault
+      # tests would all fail with "setMutationBoundaryFaultForTest is not a
+      # function". Build the addon from this commit's Rust source instead (same
+      # as the CI test job) and prefer it via GSD_NATIVE_PREFER_LOCAL below.
+      - name: Setup Rust toolchain (native addon for tests)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache Rust build (native addon)
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: native-linux-x64-gnu
+          workspaces: native -> target
+
+      - name: Build native addon from source (test parity)
+        run: pnpm run build:native:test
+
       - name: Check test coverage thresholds
+        env:
+          GSD_NATIVE_PREFER_LOCAL: '1'
         run: pnpm run test:coverage
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium
 
+      # test:coverage:full runs the compiled suites, whose native loader resolves
+      # its addon dir relative to dist-test/ — mirror the from-source addon there
+      # so the fault-injection tests don't fall back to the stale npm binary.
+      - name: Compile test artifacts
+        run: pnpm run test:compile
+
+      - name: Mirror native addon into dist-test (compiled-test loader path)
+        run: |
+          mkdir -p dist-test/native/addon
+          cp native/addon/*.node dist-test/native/addon/
+
       - name: Generate merged coverage report
-        run: pnpm run test:coverage:full
+        env:
+          GSD_NATIVE_PREFER_LOCAL: '1'
+        run: >-
+          pnpm run test:coverage:unit
+          && pnpm run test:coverage:integration
+          && pnpm run test:coverage:packages
+          && pnpm run test:coverage:merge
 
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v7
