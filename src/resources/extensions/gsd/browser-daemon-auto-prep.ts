@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import {
   resolveAmbientBrowserEngineResolution,
@@ -10,11 +12,15 @@ import {
   resolveGsdBrowserCliAvailability,
   resolveGsdBrowserDaemonStartInvocation,
   resolveGsdBrowserDaemonStopInvocation,
+  type GsdBrowserMcpLaunchConfig,
 } from "../shared/gsd-browser-cli.js";
 import { uatTypeIncludesBrowser, type UatType } from "./uat-policy.js";
 
 const DEFAULT_DAEMON_START_TIMEOUT_MS = 30_000;
 const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 15_000;
+
+/** Maximum bytes of daemon stderr folded into an error message (4 KB). */
+const MAX_DAEMON_STDERR_BYTES = 4 * 1024;
 
 /**
  * Project roots whose gsd-browser daemon this process warmed via
@@ -65,6 +71,83 @@ export function shouldWarmBrowserDaemonForUat(ctx: BrowserDaemonWarmContext): bo
   return resolveActiveBrowserEngine(projectRoot, env) === "gsd-browser";
 }
 
+/** Truncate to maxBytes, appending the marker used by verification-gate.ts. */
+function truncateDaemonStderr(value: string): string {
+  if (Buffer.byteLength(value, "utf-8") <= MAX_DAEMON_STDERR_BYTES) return value;
+  // Slice conservatively then trim to last full character
+  const buf = Buffer.from(value, "utf-8").subarray(0, MAX_DAEMON_STDERR_BYTES);
+  return buf.toString("utf-8") + "\n…[truncated]";
+}
+
+function readDaemonStderr(stderrPath: string): string {
+  try {
+    return truncateDaemonStderr(readFileSync(stderrPath, "utf-8").trim());
+  } catch {
+    // Diagnostics are best-effort — never let stderr recovery mask the real failure.
+    return "";
+  }
+}
+
+/**
+ * Run a `gsd-browser daemon <action>` invocation without ever handing the child an
+ * stdio *pipe* (#2103).
+ *
+ * `daemon start` exits 0 but leaves a detached daemon (and Chrome) behind that inherits
+ * the pipe's write handle. execFileSync unblocks on stdio EOF, not on child exit, so the
+ * surviving grandchild held the pipe open and warm-up burned its full timeout — reporting
+ * ETIMEDOUT even though the daemon had started cleanly.
+ *
+ * stderr is captured to a file descriptor instead, mirroring verification-gate.ts: a file
+ * is not a pipe, so spawnSync never waits on it. Capturing rather than discarding keeps the
+ * daemon's own failure text inside the user-facing "daemon failed to start (...)" message,
+ * which stdio "ignore" would reduce to a bare "Command failed: <cmd>".
+ */
+function runDaemonCommand(
+  invocation: Pick<GsdBrowserMcpLaunchConfig, "command" | "args" | "cwd" | "env">,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): { ok: true } | { ok: false; error: string } {
+  // Capture setup is best-effort: this module must stay incapable of throwing, because the
+  // dispatch-rule loop that reaches it does not guard rule.match(). If the temp file cannot
+  // be created we discard stderr rather than fail the warm-up.
+  let capture: { dir: string; path: string; fd: number } | null = null;
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "gsd-browser-daemon-"));
+    const path = join(dir, "stderr");
+    capture = { dir, path, fd: openSync(path, "w") };
+  } catch {
+    capture = null;
+  }
+
+  try {
+    execFileSync(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
+      env: { ...process.env, ...env, ...(invocation.env ?? {}) },
+      stdio: ["ignore", "ignore", capture ? capture.fd : "ignore"],
+      timeout: timeoutMs,
+      windowsHide: true,
+    });
+    return { ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const stderrText = capture ? readDaemonStderr(capture.path) : "";
+    return { ok: false, error: stderrText ? `${detail}: ${stderrText}` : detail };
+  } finally {
+    if (capture) {
+      try {
+        closeSync(capture.fd);
+      } catch {
+        /* already closed */
+      }
+      try {
+        rmSync(capture.dir, { recursive: true, force: true });
+      } catch {
+        /* best-effort temp cleanup */
+      }
+    }
+  }
+}
+
 export function ensureBrowserDaemonStarted(
   projectRoot: string,
   options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
@@ -85,21 +168,7 @@ export function ensureBrowserDaemonStarted(
     };
   }
 
-  try {
-    execFileSync(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      env: { ...process.env, ...env, ...(invocation.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: options.timeoutMs ?? DEFAULT_DAEMON_START_TIMEOUT_MS,
-      encoding: "utf-8",
-    });
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return runDaemonCommand(invocation, env, options.timeoutMs ?? DEFAULT_DAEMON_START_TIMEOUT_MS);
 }
 
 /**
@@ -144,21 +213,7 @@ export function stopBrowserDaemon(
     };
   }
 
-  try {
-    execFileSync(invocation.command, invocation.args, {
-      cwd: invocation.cwd,
-      env: { ...process.env, ...env, ...(invocation.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: options.timeoutMs ?? DEFAULT_DAEMON_STOP_TIMEOUT_MS,
-      encoding: "utf-8",
-    });
-    return { ok: true };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return runDaemonCommand(invocation, env, options.timeoutMs ?? DEFAULT_DAEMON_STOP_TIMEOUT_MS);
 }
 
 /**
