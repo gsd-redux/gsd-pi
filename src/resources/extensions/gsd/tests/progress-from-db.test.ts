@@ -3,16 +3,22 @@
 // reads (#2101). Pins both the values derived from the DB and the exact
 // ProgressResult key set the Hermes contract depends on.
 
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
+  _getAdapter,
   insertMilestone,
   insertSlice,
 } from "../gsd-db.ts";
-import { deriveState } from "../state.ts";
+import {
+  deriveState,
+  getDeriveTelemetry,
+  invalidateStateCache,
+  resetDeriveTelemetry,
+} from "../state.ts";
 import { readProgressFromDb } from "../state/progress-from-db.ts";
 import {
   createWorkflowAuthorityFixture,
@@ -30,6 +36,38 @@ function seedSecondMilestone(fixture: WorkflowAuthorityFixture): void {
     depends: [],
     sequence: 1,
   });
+}
+
+function changeAuthorityDuringCounts(
+  t: TestContext,
+  limit: number,
+): () => number {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  const originalPrepare = adapter.prepare.bind(adapter);
+  let changes = 0;
+
+  adapter.prepare = (sql: string) => {
+    const statement = originalPrepare(sql);
+    if (!sql.includes("AS completed") || !sql.includes("FROM milestones")) return statement;
+    return {
+      ...statement,
+      get(...params: unknown[]) {
+        if (changes < limit) {
+          changes++;
+          originalPrepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
+            .run(`Authority revision ${changes}`);
+          originalPrepare("UPDATE project_authority SET revision = revision + 1 WHERE singleton = 1")
+            .run();
+        }
+        return statement.get(...params);
+      },
+    };
+  };
+  t.after(() => {
+    adapter.prepare = originalPrepare;
+  });
+  return () => changes;
 }
 
 test("readProgressFromDb emits exactly the ProgressResult key set", async (t) => {
@@ -124,4 +162,34 @@ test("readProgressFromDb reflects DB state, never stale projection files", async
   assert.equal(result.activeMilestone?.id, "M001");
   assert.notEqual(result.activeMilestone?.title, "Stale Projection");
   assert.notEqual(result.nextAction, "Stale action from projection");
+});
+
+test("readProgressFromDb retries when the authority revision moves", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  const getChanges = changeAuthorityDuringCounts(t, 1);
+  invalidateStateCache();
+  resetDeriveTelemetry();
+
+  const result = await readProgressFromDb(fixture.root);
+
+  assert.ok(result);
+  assert.equal(result.activeMilestone?.title, "Authority revision 1");
+  assert.equal(getChanges(), 1);
+  assert.equal(getDeriveTelemetry().dbDeriveCount, 2);
+});
+
+test("readProgressFromDb returns the last attempt during sustained revision movement", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  const getChanges = changeAuthorityDuringCounts(t, 3);
+  invalidateStateCache();
+  resetDeriveTelemetry();
+
+  const result = await readProgressFromDb(fixture.root);
+
+  assert.ok(result);
+  assert.equal(result.activeMilestone?.title, "Authority revision 2");
+  assert.equal(getChanges(), 3);
+  assert.equal(getDeriveTelemetry().dbDeriveCount, 3);
 });

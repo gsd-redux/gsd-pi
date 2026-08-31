@@ -12,7 +12,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -27,6 +27,7 @@ import {
   formatAskUserQuestionsElicitResult,
   isLocalElicitClientAbortError,
   isLocalElicitTimeoutError,
+  registerProgressTool,
   withElicitTimeout,
 } from './server.js';
 import {
@@ -36,6 +37,7 @@ import {
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, CostAccumulator, PendingBlocker } from './types.js';
 import { WORKFLOW_TOOL_ALIAS_NAMES } from '@opengsd/contracts';
+import { readProgress } from './readers/state.js';
 
 describe('installGlobalErrorHandlers', () => {
   it('logs uncaught exceptions and unhandled rejections to stderr, then terminates (#783)', () => {
@@ -875,6 +877,76 @@ describe('createMcpServer tool registration', () => {
 
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /projectDir must be an absolute path/);
+  });
+
+  it('registered gsd_progress prefers the DB payload when the bridge is configured', async (t) => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'gsd-progress-handler-'));
+    t.after(() => rmSync(projectDir, { recursive: true, force: true }));
+    mkdirSync(join(projectDir, '.gsd'));
+    writeFileSync(
+      join(projectDir, '.gsd', 'STATE.md'),
+      [
+        '# Project State',
+        '',
+        '**Active Milestone:** M999: Stale Projection',
+        '**Phase:** planning',
+      ].join('\n'),
+    );
+
+    let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
+    registerProgressTool({
+      tool(name, _description, _params, registeredHandler) {
+        if (name === 'gsd_progress') handler = registeredHandler;
+      },
+    }, {
+      hasWorkflowBridge: () => true,
+      readFromDb: async () => ({
+        activeMilestone: { id: 'M001', title: 'Database Authority' },
+        phase: 'executing',
+      }),
+      readProjection: readProgress,
+    });
+    assert.ok(handler);
+
+    const result = await handler({ projectDir });
+    assert.deepEqual(JSON.parse(result.content[0].text), {
+      activeMilestone: { id: 'M001', title: 'Database Authority' },
+      phase: 'executing',
+    });
+  });
+
+  it('registered gsd_progress uses projections without a workflow bridge', async (t) => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'gsd-progress-handler-'));
+    t.after(() => rmSync(projectDir, { recursive: true, force: true }));
+    mkdirSync(join(projectDir, '.gsd'));
+    writeFileSync(
+      join(projectDir, '.gsd', 'STATE.md'),
+      [
+        '# Project State',
+        '',
+        '**Active Milestone:** M999: Projection Only',
+        '**Phase:** planning',
+      ].join('\n'),
+    );
+
+    let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
+    registerProgressTool({
+      tool(name, _description, _params, registeredHandler) {
+        if (name === 'gsd_progress') handler = registeredHandler;
+      },
+    }, {
+      hasWorkflowBridge: () => false,
+      readFromDb: async () => {
+        throw new Error('DB reader must not run without a bridge');
+      },
+      readProjection: readProgress,
+    });
+    assert.ok(handler);
+
+    const result = await handler({ projectDir });
+    const progress = JSON.parse(result.content[0].text);
+    assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
+    assert.equal(progress.phase, 'plan');
   });
 
   it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {

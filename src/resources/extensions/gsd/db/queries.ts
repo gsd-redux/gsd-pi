@@ -80,6 +80,11 @@ export interface MilestoneStatusCounts {
   parked: number;
 }
 
+export interface ProjectAuthorityVersion {
+  revision: number;
+  authorityEpoch: number;
+}
+
 function numberColumn(row: Record<string, unknown> | undefined, column: string): number {
   const value = row?.[column];
   if (typeof value === "number") return value;
@@ -102,6 +107,21 @@ function getCompletionCount(table: "milestones" | "slices" | "tasks"): { complet
   return {
     completed: numberColumn(row, "completed"),
     total: numberColumn(row, "total"),
+  };
+}
+
+export function getProjectAuthorityVersion(): ProjectAuthorityVersion {
+  const db = getDbOrNull();
+  if (!db) throw new Error("GSD database is not available");
+
+  const row = db.prepare(
+    "SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1",
+  ).get();
+  if (!row) throw new Error("GSD project authority row is not available");
+
+  return {
+    revision: numberColumn(row, "revision"),
+    authorityEpoch: numberColumn(row, "authority_epoch"),
   };
 }
 

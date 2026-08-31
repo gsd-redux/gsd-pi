@@ -382,6 +382,46 @@ interface McpServerInstance {
   close(): Promise<void>;
 }
 
+interface ProgressToolDependencies {
+  hasWorkflowBridge: () => boolean;
+  readFromDb: (projectDir: string) => Promise<unknown | null>;
+  readProjection: (projectDir: string) => unknown;
+}
+
+const progressToolDependencies: ProgressToolDependencies = {
+  hasWorkflowBridge: hasWorkflowToolBridgeConfiguration,
+  readFromDb: readProjectProgressViaBridge,
+  readProjection: readProgress,
+};
+
+export function registerProgressTool(
+  server: Pick<McpServerInstance, 'tool'>,
+  dependencies: ProgressToolDependencies = progressToolDependencies,
+): void {
+  server.tool(
+    'gsd_progress',
+    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = args as { projectDir: string };
+      try {
+        const dir = validateProjectDir(projectDir);
+        if (dependencies.hasWorkflowBridge()) {
+          const fromDb = await dependencies.readFromDb(dir);
+          if (fromDb !== null) {
+            return jsonContent(fromDb);
+          }
+        }
+        return jsonContent(dependencies.readProjection(dir));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+}
+
 interface AskUserQuestionOption {
   label: string;
   description: string;
@@ -1373,31 +1413,7 @@ export async function createMcpServer(
   // -----------------------------------------------------------------------
   // gsd_progress — structured project progress metrics
   // -----------------------------------------------------------------------
-  server.tool(
-    'gsd_progress',
-    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
-    {
-      projectDir: z.string().describe('Absolute path to the project directory'),
-    },
-    async (args: Record<string, unknown>) => {
-      const { projectDir } = args as { projectDir: string };
-      try {
-        const dir = validateProjectDir(projectDir);
-        if (hasWorkflowToolBridgeConfiguration()) {
-          // ADR-046: DB-authoritative when the runtime bridge exists. DB
-          // errors fail loud; null (no DB) falls back to the projection
-          // reader, matching `gsd read progress`.
-          const fromDb = await readProjectProgressViaBridge(dir);
-          if (fromDb !== null) {
-            return jsonContent(fromDb);
-          }
-        }
-        return jsonContent(readProgress(dir));
-      } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
-      }
-    },
-  );
+  registerProgressTool(server);
 
   // -----------------------------------------------------------------------
   // gsd_roadmap — milestone/slice/task structure with status

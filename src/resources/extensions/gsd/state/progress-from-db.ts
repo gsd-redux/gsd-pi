@@ -4,15 +4,19 @@
 // is the sole workflow authority, so integration reads must not serve
 // projection data that can lag it.
 
-import { deriveState } from "./derive/index.js";
+import { deriveState, invalidateStateCache } from "./derive/index.js";
+import { ensureExistingWorkflowDbOpen } from "./derive/db-open.js";
 import {
   getHierarchyCompletionCounts,
   getInFlightSliceCount,
   getMilestoneStatusCounts,
+  getProjectAuthorityVersion,
   isDbAvailable,
   readTransaction,
 } from "../gsd-db.js";
 import type { GSDState } from "../types.js";
+
+const MAX_REVISION_ATTEMPTS = 3;
 
 /**
  * Structural mirror of `ProgressResult`
@@ -37,26 +41,24 @@ function toRef(value: { id: string; title: string } | null): { id: string; title
   return value ? { id: value.id, title: value.title } : null;
 }
 
-/**
- * Derive the integration progress payload from the database. `deriveState`
- * supplies current refs, phase, blockers, and next action (the same source
- * the runtime and auto-mode use); project-wide milestone/slice/task counts
- * come from the read seam, since `deriveState` may be execution-scoped while
- * `ProgressResult` buckets are project-wide.
- *
- * Note: the derive open path runs pending migrations and syncs the
- * milestone queue-order projection (same behavior as `gsd headless status`).
- */
-export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
-  const state: GSDState = await deriveState(basePath);
-  if (!isDbAvailable()) return null;
+interface ProgressHierarchy {
+  counts: ReturnType<typeof getHierarchyCompletionCounts>;
+  milestones: ReturnType<typeof getMilestoneStatusCounts>;
+  slicesActive: number;
+}
 
-  const hierarchy = readTransaction(() => ({
+function readProgressHierarchy(): ProgressHierarchy {
+  return readTransaction(() => ({
     counts: getHierarchyCompletionCounts(),
     milestones: getMilestoneStatusCounts(),
     slicesActive: getInFlightSliceCount(),
   }));
+}
 
+function buildProgressResult(
+  state: GSDState,
+  hierarchy: ReturnType<typeof readProgressHierarchy>,
+): DbProgressResult {
   const slicesDone = hierarchy.counts.slices;
   const slicesTotal = hierarchy.counts.slicesTotal;
   const tasksDone = hierarchy.counts.tasks;
@@ -91,4 +93,38 @@ export async function readProgressFromDb(basePath: string): Promise<DbProgressRe
     blockers: [...state.blockers],
     nextAction: state.nextAction,
   };
+}
+
+/**
+ * Derive the integration progress payload from the database. `deriveState`
+ * supplies current refs, phase, blockers, and next action (the same source
+ * the runtime and auto-mode use); project-wide milestone/slice/task counts
+ * come from the read seam, since `deriveState` may be execution-scoped while
+ * `ProgressResult` buckets are project-wide.
+ *
+ * Note: the derive open path runs pending migrations and syncs the
+ * milestone queue-order projection (same behavior as `gsd headless status`).
+ * Results are bound to a stable authority revision; under sustained concurrent
+ * commits a snapshot may still straddle revisions.
+ */
+export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
+  ensureExistingWorkflowDbOpen(basePath);
+  if (!isDbAvailable()) return null;
+
+  for (let attempt = 1; ; attempt++) {
+    const before = getProjectAuthorityVersion();
+    const state = await deriveState(basePath);
+    const result = buildProgressResult(state, readProgressHierarchy());
+    const after = getProjectAuthorityVersion();
+
+    if (
+      before.revision === after.revision
+      && before.authorityEpoch === after.authorityEpoch
+    ) {
+      return result;
+    }
+
+    invalidateStateCache();
+    if (attempt === MAX_REVISION_ATTEMPTS) return result;
+  }
 }
