@@ -12,6 +12,7 @@ import {
   getMilestoneStatusCounts,
   getProjectAuthorityVersion,
   isDbAvailable,
+  _getAdapter,
   readTransaction,
 } from "../gsd-db.js";
 import type { GSDState } from "../types.js";
@@ -45,6 +46,31 @@ interface ProgressHierarchy {
   counts: ReturnType<typeof getHierarchyCompletionCounts>;
   milestones: ReturnType<typeof getMilestoneStatusCounts>;
   slicesActive: number;
+}
+
+interface ProgressStabilityToken {
+  revision: number;
+  authorityEpoch: number;
+  dataVersion: number;
+}
+
+function readProgressStabilityToken(): ProgressStabilityToken {
+  const authority = getProjectAuthorityVersion();
+  const row = _getAdapter()?.prepare("PRAGMA data_version").get();
+  const dataVersion = Number(row?.["data_version"]);
+  if (!Number.isSafeInteger(dataVersion) || dataVersion < 0) {
+    throw new Error("GSD database data version is not available");
+  }
+  return { ...authority, dataVersion };
+}
+
+function stabilityTokensMatch(
+  before: ProgressStabilityToken,
+  after: ProgressStabilityToken,
+): boolean {
+  return before.revision === after.revision
+    && before.authorityEpoch === after.authorityEpoch
+    && before.dataVersion === after.dataVersion;
 }
 
 function readProgressHierarchy(): ProgressHierarchy {
@@ -104,27 +130,24 @@ function buildProgressResult(
  *
  * Note: the derive open path runs pending migrations and syncs the
  * milestone queue-order projection (same behavior as `gsd headless status`).
- * Results are bound to a stable authority revision; under sustained concurrent
- * commits a snapshot may still straddle revisions.
+ * Results are bound to stable authority and data-version tokens; under
+ * sustained concurrent commits or same-process interleaved writes, a snapshot
+ * may still straddle revisions.
  */
 export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
   ensureExistingWorkflowDbOpen(basePath);
   if (!isDbAvailable()) return null;
 
+  invalidateStateCache();
   for (let attempt = 1; ; attempt++) {
-    const before = getProjectAuthorityVersion();
+    const before = readProgressStabilityToken();
     const state = await deriveState(basePath);
     const result = buildProgressResult(state, readProgressHierarchy());
-    const after = getProjectAuthorityVersion();
+    const after = readProgressStabilityToken();
 
-    if (
-      before.revision === after.revision
-      && before.authorityEpoch === after.authorityEpoch
-    ) {
-      return result;
-    }
+    if (stabilityTokensMatch(before, after)) return result;
 
-    invalidateStateCache();
     if (attempt === MAX_REVISION_ATTEMPTS) return result;
+    invalidateStateCache();
   }
 }

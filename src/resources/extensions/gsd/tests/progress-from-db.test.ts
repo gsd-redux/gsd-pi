@@ -7,6 +7,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   _getAdapter,
@@ -59,6 +60,41 @@ function changeAuthorityDuringCounts(
             .run(`Authority revision ${changes}`);
           originalPrepare("UPDATE project_authority SET revision = revision + 1 WHERE singleton = 1")
             .run();
+        }
+        return statement.get(...params);
+      },
+    };
+  };
+  t.after(() => {
+    adapter.prepare = originalPrepare;
+  });
+  return () => changes;
+}
+
+function changeHierarchyFromAnotherConnectionDuringCounts(
+  t: TestContext,
+  dbPath: string,
+): () => number {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  const originalPrepare = adapter.prepare.bind(adapter);
+  let changes = 0;
+
+  adapter.prepare = (sql: string) => {
+    const statement = originalPrepare(sql);
+    if (!sql.includes("AS completed") || !sql.includes("FROM milestones")) return statement;
+    return {
+      ...statement,
+      get(...params: unknown[]) {
+        if (changes === 0) {
+          changes++;
+          const external = new DatabaseSync(dbPath);
+          try {
+            external.prepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
+              .run("External hierarchy commit");
+          } finally {
+            external.close();
+          }
         }
         return statement.get(...params);
       },
@@ -177,6 +213,40 @@ test("readProgressFromDb retries when the authority revision moves", async (t) =
   assert.equal(result.activeMilestone?.title, "Authority revision 1");
   assert.equal(getChanges(), 1);
   assert.equal(getDeriveTelemetry().dbDeriveCount, 2);
+});
+
+test("readProgressFromDb retries when another connection changes hierarchy data", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  const getChanges = changeHierarchyFromAnotherConnectionDuringCounts(t, fixture.dbPath);
+  invalidateStateCache();
+  resetDeriveTelemetry();
+
+  const result = await readProgressFromDb(fixture.root);
+
+  assert.ok(result);
+  assert.equal(result.activeMilestone?.title, "External hierarchy commit");
+  assert.equal(getChanges(), 1);
+  assert.equal(getDeriveTelemetry().dbDeriveCount, 2);
+});
+
+test("readProgressFromDb rejects a pre-existing stale derive cache", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  t.mock.method(Date, "now", () => 42_000);
+  invalidateStateCache();
+  const cached = await deriveState(fixture.root);
+  assert.equal(cached.activeMilestone?.title, "Authority Fixture");
+
+  _getAdapter()?.prepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
+    .run("Current hierarchy title");
+  resetDeriveTelemetry();
+
+  const result = await readProgressFromDb(fixture.root);
+
+  assert.ok(result);
+  assert.equal(result.activeMilestone?.title, "Current hierarchy title");
+  assert.equal(getDeriveTelemetry().dbDeriveCount, 1);
 });
 
 test("readProgressFromDb returns the last attempt during sustained revision movement", async (t) => {

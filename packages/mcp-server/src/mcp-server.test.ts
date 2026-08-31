@@ -27,7 +27,6 @@ import {
   formatAskUserQuestionsElicitResult,
   isLocalElicitClientAbortError,
   isLocalElicitTimeoutError,
-  registerProgressTool,
   withElicitTimeout,
 } from './server.js';
 import {
@@ -893,22 +892,21 @@ describe('createMcpServer tool registration', () => {
       ].join('\n'),
     );
 
-    let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
-    registerProgressTool({
-      tool(name, _description, _params, registeredHandler) {
-        if (name === 'gsd_progress') handler = registeredHandler;
+    const { server } = await createMcpServer(sm, {
+      includeWorkflowTools: false,
+      progressToolDependencies: {
+        hasWorkflowBridge: () => true,
+        readFromDb: async () => ({
+          activeMilestone: { id: 'M001', title: 'Database Authority' },
+          phase: 'executing',
+        }),
+        readProjection: readProgress,
       },
-    }, {
-      hasWorkflowBridge: () => true,
-      readFromDb: async () => ({
-        activeMilestone: { id: 'M001', title: 'Database Authority' },
-        phase: 'executing',
-      }),
-      readProjection: readProgress,
     });
-    assert.ok(handler);
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
 
-    const result = await handler({ projectDir });
+    const result = await progressTool.handler({ projectDir });
     assert.deepEqual(JSON.parse(result.content[0].text), {
       activeMilestone: { id: 'M001', title: 'Database Authority' },
       phase: 'executing',
@@ -929,21 +927,20 @@ describe('createMcpServer tool registration', () => {
       ].join('\n'),
     );
 
-    let handler: ((args: Record<string, unknown>) => Promise<any>) | undefined;
-    registerProgressTool({
-      tool(name, _description, _params, registeredHandler) {
-        if (name === 'gsd_progress') handler = registeredHandler;
+    const { server } = await createMcpServer(sm, {
+      includeWorkflowTools: false,
+      progressToolDependencies: {
+        hasWorkflowBridge: () => false,
+        readFromDb: async () => {
+          throw new Error('DB reader must not run without a bridge');
+        },
+        readProjection: readProgress,
       },
-    }, {
-      hasWorkflowBridge: () => false,
-      readFromDb: async () => {
-        throw new Error('DB reader must not run without a bridge');
-      },
-      readProjection: readProgress,
     });
-    assert.ok(handler);
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
 
-    const result = await handler({ projectDir });
+    const result = await progressTool.handler({ projectDir });
     const progress = JSON.parse(result.content[0].text);
     assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
     assert.equal(progress.phase, 'plan');
