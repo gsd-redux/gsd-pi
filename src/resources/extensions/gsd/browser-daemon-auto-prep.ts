@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -71,20 +71,41 @@ export function shouldWarmBrowserDaemonForUat(ctx: BrowserDaemonWarmContext): bo
   return resolveActiveBrowserEngine(projectRoot, env) === "gsd-browser";
 }
 
-/** Truncate to maxBytes, appending the marker used by verification-gate.ts. */
-function truncateDaemonStderr(value: string): string {
-  if (Buffer.byteLength(value, "utf-8") <= MAX_DAEMON_STDERR_BYTES) return value;
-  // Slice conservatively then trim to last full character
-  const buf = Buffer.from(value, "utf-8").subarray(0, MAX_DAEMON_STDERR_BYTES);
-  return buf.toString("utf-8") + "\n…[truncated]";
-}
-
+/**
+ * Read at most {@link MAX_DAEMON_STDERR_BYTES} from the capture file, keeping the head and
+ * the tail around a marker. Mirrors readBoundedCommandOutput in verification-gate.ts, so a
+ * daemon that floods stderr cannot pull an unbounded file into memory here.
+ */
 function readDaemonStderr(stderrPath: string): string {
+  let fd: number;
   try {
-    return truncateDaemonStderr(readFileSync(stderrPath, "utf-8").trim());
+    fd = openSync(stderrPath, "r");
   } catch {
     // Diagnostics are best-effort — never let stderr recovery mask the real failure.
     return "";
+  }
+
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= MAX_DAEMON_STDERR_BYTES) return readFileSync(stderrPath, "utf-8").trim();
+
+    const marker = Buffer.from("\n…[truncated]\n", "utf-8");
+    const retainedBytes = MAX_DAEMON_STDERR_BYTES - marker.byteLength;
+    const headBytes = Math.floor(retainedBytes / 2);
+    const tailBytes = retainedBytes - headBytes;
+    const head = Buffer.allocUnsafe(headBytes);
+    const tail = Buffer.allocUnsafe(tailBytes);
+    readSync(fd, head, 0, headBytes, 0);
+    readSync(fd, tail, 0, tailBytes, size - tailBytes);
+    return Buffer.concat([head, marker, tail]).toString("utf-8").trim();
+  } catch {
+    return "";
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* already closed */
+    }
   }
 }
 
@@ -110,11 +131,14 @@ function runDaemonCommand(
   // Capture setup is best-effort: this module must stay incapable of throwing, because the
   // dispatch-rule loop that reaches it does not guard rule.match(). If the temp file cannot
   // be created we discard stderr rather than fail the warm-up.
-  let capture: { dir: string; path: string; fd: number } | null = null;
+  // The directory is tracked separately from the descriptor so that a partial setup —
+  // mkdtempSync succeeds, openSync then fails — still gets cleaned up below.
+  let captureDir: string | null = null;
+  let capture: { path: string; fd: number } | null = null;
   try {
-    const dir = mkdtempSync(join(tmpdir(), "gsd-browser-daemon-"));
-    const path = join(dir, "stderr");
-    capture = { dir, path, fd: openSync(path, "w") };
+    captureDir = mkdtempSync(join(tmpdir(), "gsd-browser-daemon-"));
+    const path = join(captureDir, "stderr");
+    capture = { path, fd: openSync(path, "w") };
   } catch {
     capture = null;
   }
@@ -139,8 +163,10 @@ function runDaemonCommand(
       } catch {
         /* already closed */
       }
+    }
+    if (captureDir) {
       try {
-        rmSync(capture.dir, { recursive: true, force: true });
+        rmSync(captureDir, { recursive: true, force: true });
       } catch {
         /* best-effort temp cleanup */
       }
