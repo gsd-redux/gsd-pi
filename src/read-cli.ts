@@ -76,6 +76,37 @@ async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
   }
 }
 
+async function loadDbProgressReader(): Promise<DbProgressReader> {
+  const mod = await jiti.import(gsdExtensionPath('state/progress-from-db.ts'), {}) as any
+  if (typeof mod.readProgressFromDb !== 'function') {
+    throw new Error('selected GSD extensions do not support DB-backed progress reads; synchronize the extension bundle')
+  }
+  return (projectDir: string) => mod.readProgressFromDb(projectDir)
+}
+
+/**
+ * DB-backed progress payload, or null when the projection fallback applies:
+ * no DB file, or the DB cannot be opened (locked/unreadable). Schema skew
+ * has already refused loudly via assertProjectDbSchemaSupported before this
+ * runs. When the DB is usable but the read itself fails, the error propagates
+ * — it must never be swallowed into a projection fallback, which would serve
+ * exactly the stale data this path exists to prevent.
+ */
+async function tryReadProgressFromDb(
+  dbPath: string,
+  projectDir: string,
+  preflight?: ReadCliSchemaPreflight,
+  reader?: DbProgressReader,
+): Promise<unknown | null> {
+  if (!existsSync(dbPath)) return null
+  const pf = preflight ?? await loadSchemaPreflight()
+  const probe = pf.openIsolatedDatabase(dbPath)
+  if (!probe) return null
+  probe.close()
+  const read = reader ?? await loadDbProgressReader()
+  return await read(projectDir)
+}
+
 /**
  * Read-only schema-version preflight. The markdown readers below never open
  * gsd.db, so without this guard `gsd read` would silently serve stale/empty
@@ -84,6 +115,13 @@ async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
  * no migration, no global-handle side effects — and throws SchemaTooNewError
  * when the recorded schema version is newer than this binary supports. A
  * missing or unreadable DB keeps the existing degraded markdown behavior.
+ *
+ * After this guard, `gsd read progress` prefers a DB-derived payload
+ * (state/progress-from-db.ts via the extension runtime). Unlike the
+ * preflight, that read opens the DB through the engine's normal path: it
+ * runs pending migrations and syncs the milestone queue-order projection —
+ * the same contract as `gsd headless status`. A locked or unreadable DB
+ * falls back to markdown; a failed DB-backed read refuses loudly instead.
  */
 async function assertProjectDbSchemaSupported(
   dbPath: string,
@@ -109,6 +147,9 @@ async function assertProjectDbSchemaSupported(
 }
 
 export type ReadKind = 'progress' | 'roadmap' | 'memory'
+
+/** DB-backed progress reader — jiti-loaded in production, injected in tests. */
+export type DbProgressReader = (projectDir: string) => Promise<unknown>
 
 export interface ReadEnvelope<T = unknown> {
   integration_version: number
@@ -150,7 +191,11 @@ function parseReadArgs(argv: string[]): ReadCliOptions | null {
   return { kind, project, milestone, query, json }
 }
 
-export async function runReadCli(argv: string[], preflight?: ReadCliSchemaPreflight): Promise<number> {
+export async function runReadCli(
+  argv: string[],
+  preflight?: ReadCliSchemaPreflight,
+  dbProgressReader?: DbProgressReader,
+): Promise<number> {
   const opts = parseReadArgs(argv)
   if (!opts) {
     process.stderr.write(
@@ -184,9 +229,21 @@ export async function runReadCli(argv: string[], preflight?: ReadCliSchemaPrefli
 
   let data: unknown
   switch (opts.kind) {
-    case 'progress':
-      data = readProgress(projectDir)
+    case 'progress': {
+      // ADR-046: when the DB is present and openable, serve DB-derived state;
+      // the projection reader is the fallback for missing/locked DBs only.
+      let fromDb: unknown | null
+      try {
+        fromDb = await tryReadProgressFromDb(join(gsdRoot, 'gsd.db'), projectDir, preflight, dbProgressReader)
+      } catch (err) {
+        process.stderr.write(
+          `[gsd] DB-backed progress read failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        )
+        return 1
+      }
+      data = fromDb ?? readProgress(projectDir)
       break
+    }
     case 'roadmap':
       data = readRoadmap(projectDir, opts.milestone)
       break

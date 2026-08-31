@@ -34,6 +34,7 @@ import { seedSliceCompletionAuthority } from "../../../src/resources/extensions/
 import {
   _buildBridgeImportCandidates,
   _buildImportCandidates,
+  readProjectProgressViaBridge,
   registerWorkflowTools,
   resolveRecoveryActionProjectDir,
   WORKFLOW_TOOL_NAMES,
@@ -3737,6 +3738,46 @@ describe("validateProjectDir", () => {
       assert.match(result.content?.[0]?.text ?? "", /Error/);
       assert.ok(result.structuredContent, "error details must ride on structuredContent");
       assert.equal(result.structuredContent.error, "db_unavailable");
+    } finally {
+      cleanup(base);
+    }
+  });
+});
+
+describe("readProjectProgressViaBridge", () => {
+  it("serves each project's own state across back-to-back calls (no wrong-handle leakage)", async () => {
+    const baseA = makeTmpBase();
+    const baseB = makeTmpBase();
+    try {
+      openDatabase(join(baseA, ".gsd", "gsd.db"));
+      insertMilestone({ id: "M001", title: "Project A milestone", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "A slice", status: "complete", risk: "low", depends: [], sequence: 1 });
+      closeDatabase();
+
+      openDatabase(join(baseB, ".gsd", "gsd.db"));
+      insertMilestone({ id: "M002", title: "Project B milestone", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M002", title: "B slice", status: "complete", risk: "low", depends: [], sequence: 1 });
+      closeDatabase();
+
+      const a = await readProjectProgressViaBridge(baseA) as { activeMilestone?: { id?: string; title?: string } };
+      assert.equal(a.activeMilestone?.id, "M001");
+      assert.equal(a.activeMilestone?.title, "Project A milestone");
+
+      const b = await readProjectProgressViaBridge(baseB) as { activeMilestone?: { id?: string; title?: string } };
+      assert.equal(b.activeMilestone?.id, "M002");
+      assert.equal(b.activeMilestone?.title, "Project B milestone");
+    } finally {
+      cleanup(baseA);
+      cleanup(baseB);
+    }
+  });
+
+  it("returns null when the project DB is missing (no DB created as a read side effect)", async () => {
+    const base = makeTmpBase();
+    try {
+      const result = await readProjectProgressViaBridge(base);
+      assert.equal(result, null);
+      assert.equal(existsSync(join(base, ".gsd", "gsd.db")), false, "a read must not create gsd.db");
     } finally {
       cleanup(base);
     }

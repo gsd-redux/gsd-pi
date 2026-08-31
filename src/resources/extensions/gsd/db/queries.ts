@@ -116,6 +116,24 @@ export function getHierarchyCompletionCounts(): HierarchyCompletionCounts {
   };
 }
 
+/**
+ * Slices currently in flight, for progress reads that expose an "active"
+ * bucket (integration ProgressResult). Canonical in-flight statuses plus the
+ * legacy 'in-progress' alias — the DB column is free-form
+ * (status-guards.ts). Deferred/blocked/queued slices are NOT in flight; they
+ * land in the caller's "pending" bucket, matching the projection reader's
+ * buckets, which have no deferred field.
+ */
+export function getInFlightSliceCount(): number {
+  if (!getDbOrNull()!) return 0;
+  const row = getDbOrNull()!
+    .prepare(
+      "SELECT COUNT(*) AS n FROM slices WHERE status IN ('in_progress', 'in-progress', 'active')",
+    )
+    .get();
+  return numberColumn(row, "n");
+}
+
 export function getDecisionById(id: string): Decision | null {
   if (!getDbOrNull()!) return null;
   const row = getDbOrNull()!.prepare("SELECT * FROM decisions WHERE id = ?").get(id);

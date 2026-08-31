@@ -34,6 +34,7 @@ import { resolveGsdRoot, resolveMilestoneFile } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
 import {
   hasWorkflowToolBridgeConfiguration,
+  readProjectProgressViaBridge,
   registerWorkflowTools,
   validateProjectDir,
   warmWorkflowToolBridges,
@@ -1374,14 +1375,24 @@ export async function createMcpServer(
   // -----------------------------------------------------------------------
   server.tool(
     'gsd_progress',
-    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads directly from .gsd/ on disk.',
+    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
     {
       projectDir: z.string().describe('Absolute path to the project directory'),
     },
     async (args: Record<string, unknown>) => {
       const { projectDir } = args as { projectDir: string };
+      const dir = validateProjectDir(projectDir);
       try {
-        return jsonContent(readProgress(validateProjectDir(projectDir)));
+        if (hasWorkflowToolBridgeConfiguration()) {
+          // ADR-046: DB-authoritative when the runtime bridge exists. DB
+          // errors fail loud; null (no DB) falls back to the projection
+          // reader, matching `gsd read progress`.
+          const fromDb = await readProjectProgressViaBridge(dir);
+          if (fromDb !== null) {
+            return jsonContent(fromDb);
+          }
+        }
+        return jsonContent(readProgress(dir));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }

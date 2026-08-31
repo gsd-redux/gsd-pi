@@ -45,6 +45,7 @@ interface GsdMcpBridge {
   upsertMilestonePlanning: (...args: any[]) => any;
   invalidateStateCache: (...args: any[]) => any;
   isReusableGhostMilestone: (...args: any[]) => any;
+  readProgressFromDb: (...args: any[]) => any;
   loadEffectiveGSDPreferences: (...args: any[]) => any;
   saveDecisionToDb: (...args: any[]) => any;
   saveRequirementToDb: (...args: any[]) => any;
@@ -1296,6 +1297,35 @@ async function runSerializedWorkflowDbOperation<T>(
       throw new Error("GSD database is not available");
     }
     return fn();
+  });
+}
+
+/**
+ * DB-authoritative progress payload for the `gsd_progress` tool
+ * (ADR-046). Runs inside the workflow serialization queue with the bridge's
+ * project-scoped DB open, so back-to-back calls for different projects
+ * cannot serve one project's state for another.
+ *
+ * Returns null when the project has no database — the caller falls back to
+ * the projection reader, matching `gsd read progress`. A missing DB must not
+ * be created as a side effect of a read (`ensureDbOpen` would happily create
+ * an empty one). Any other failure throws — callers must fail loud, not
+ * degrade to projection data that can lag the database.
+ */
+export async function readProjectProgressViaBridge(projectDir: string): Promise<unknown | null> {
+  return runSerializedWorkflowOperation(async () => {
+    const { resolveProjectRootDbPath } = await importWorkflowRuntimeModule<any>(
+      "../../../src/resources/extensions/gsd/db-workspace.js",
+    );
+    if (!existsSync(resolveProjectRootDbPath(projectDir))) {
+      return null;
+    }
+    const bridge = await importBridgeModule();
+    const dbAvailable = await bridge.ensureDbOpen(projectDir);
+    if (!dbAvailable) {
+      throw new Error("GSD database is not available");
+    }
+    return bridge.readProgressFromDb(projectDir);
   });
 }
 

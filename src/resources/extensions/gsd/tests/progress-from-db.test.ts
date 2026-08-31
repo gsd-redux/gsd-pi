@@ -1,0 +1,105 @@
+// Project/App: gsd-pi
+// File Purpose: readProgressFromDb — DB-authoritative integration progress
+// reads (#2101). Pins both the values derived from the DB and the exact
+// ProgressResult key set the Hermes contract depends on.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  insertMilestone,
+  insertSlice,
+} from "../gsd-db.ts";
+import { deriveState } from "../state.ts";
+import { readProgressFromDb } from "../state/progress-from-db.ts";
+import {
+  createWorkflowAuthorityFixture,
+  type WorkflowAuthorityFixture,
+} from "./workflow-authority-fixture.ts";
+
+function seedSecondMilestone(fixture: WorkflowAuthorityFixture): void {
+  insertMilestone({ id: "M002", title: "Later milestone", status: "pending" });
+  insertSlice({
+    id: "S03",
+    milestoneId: "M002",
+    title: "In-flight slice",
+    status: "in_progress",
+    risk: "low",
+    depends: [],
+    sequence: 1,
+  });
+}
+
+test("readProgressFromDb emits exactly the ProgressResult key set", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  const result = await readProgressFromDb(fixture.root);
+  assert.deepEqual(Object.keys(result), [
+    "activeMilestone",
+    "activeSlice",
+    "activeTask",
+    "phase",
+    "milestones",
+    "slices",
+    "tasks",
+    "requirements",
+    "blockers",
+    "nextAction",
+  ]);
+  assert.deepEqual(Object.keys(result.milestones), ["total", "done", "active", "pending", "parked"]);
+  assert.deepEqual(Object.keys(result.slices), ["total", "done", "active", "pending"]);
+  assert.deepEqual(Object.keys(result.tasks), ["total", "done", "pending"]);
+  assert.deepEqual(
+    Object.keys(result.requirements ?? {}),
+    ["active", "validated", "deferred", "outOfScope"],
+  );
+});
+
+test("readProgressFromDb derives refs, project-wide counts, and requirements from the DB", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  seedSecondMilestone(fixture);
+
+  const result = await readProgressFromDb(fixture.root);
+  const state = await deriveState(fixture.root);
+
+  assert.deepEqual(result.activeMilestone, { id: "M001", title: "Authority Fixture" });
+  assert.deepEqual(result.activeSlice, { id: "S02", title: "Ready dependent slice" });
+  assert.deepEqual(result.activeTask, { id: "T01", title: "Ready task" });
+  assert.equal(result.phase, state.phase);
+  assert.deepEqual(result.milestones, { total: 2, done: 0, active: 1, pending: 1, parked: 0 });
+  assert.deepEqual(result.slices, { total: 3, done: 1, active: 1, pending: 1 });
+  assert.deepEqual(result.tasks, { total: 2, done: 1, pending: 1 });
+  assert.deepEqual(result.requirements, { active: 1, validated: 0, deferred: 0, outOfScope: 0 });
+  assert.deepEqual(result.blockers, []);
+  assert.equal(typeof result.nextAction, "string");
+  assert.ok(result.nextAction.length > 0);
+});
+
+test("readProgressFromDb reflects DB state, never stale projection files", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  writeFileSync(
+    join(fixture.root, ".gsd", "STATE.md"),
+    [
+      "# Project State",
+      "",
+      "**Phase:** planning",
+      "**Active Milestone:** M999: Stale Projection",
+      "",
+      "## Next Action",
+      "",
+      "Stale action from projection",
+      "",
+    ].join("\n"),
+  );
+
+  const result = await readProgressFromDb(fixture.root);
+  assert.equal(result.activeMilestone?.id, "M001");
+  assert.notEqual(result.activeMilestone?.title, "Stale Projection");
+  assert.notEqual(result.nextAction, "Stale action from projection");
+});
