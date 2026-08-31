@@ -11,7 +11,6 @@ import { logWarning } from "../workflow-logger.js";
 import {
   getWorkflowDatabaseStatus,
   openWorkflowDatabaseIsolated,
-  openExistingWorkflowDatabase,
   openWorkflowDatabase,
   resolveProjectRootDbPath,
   type WorkflowDatabaseOpenResult,
@@ -166,15 +165,6 @@ export async function ensureDbOpen(basePath: string = safeWorkspaceCwd()): Promi
   if (result.ok) return true;
 
   logWarning("bootstrap", formatWorkflowDatabaseOpenFailure(result));
-  return false;
-}
-
-export async function ensureExistingDbOpen(basePath: string = safeWorkspaceCwd()): Promise<boolean> {
-  const result = openExistingWorkflowDatabase(basePath);
-  if (result.ok) return true;
-  if (result.reason !== "missing-database") {
-    logWarning("bootstrap", formatWorkflowDatabaseOpenFailure(result));
-  }
   return false;
 }
 

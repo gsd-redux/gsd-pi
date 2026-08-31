@@ -71,6 +71,13 @@ function changeAuthorityDuringCounts(
   return () => changes;
 }
 
+function updateMilestoneFromExternalConnection(dbPath: string): void {
+  const external = new DatabaseSync(dbPath);
+  external.prepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
+    .run("External hierarchy commit");
+  external.close();
+}
+
 function changeHierarchyFromAnotherConnectionDuringCounts(
   t: TestContext,
   dbPath: string,
@@ -88,13 +95,7 @@ function changeHierarchyFromAnotherConnectionDuringCounts(
       get(...params: unknown[]) {
         if (changes === 0) {
           changes++;
-          const external = new DatabaseSync(dbPath);
-          try {
-            external.prepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
-              .run("External hierarchy commit");
-          } finally {
-            external.close();
-          }
+          updateMilestoneFromExternalConnection(dbPath);
         }
         return statement.get(...params);
       },

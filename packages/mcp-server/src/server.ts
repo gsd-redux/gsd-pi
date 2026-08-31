@@ -382,22 +382,7 @@ interface McpServerInstance {
   close(): Promise<void>;
 }
 
-interface ProgressToolDependencies {
-  hasWorkflowBridge: () => boolean;
-  readFromDb: (projectDir: string) => Promise<unknown | null>;
-  readProjection: (projectDir: string) => unknown;
-}
-
-const progressToolDependencies: ProgressToolDependencies = {
-  hasWorkflowBridge: hasWorkflowToolBridgeConfiguration,
-  readFromDb: readProjectProgressViaBridge,
-  readProjection: readProgress,
-};
-
-export function registerProgressTool(
-  server: Pick<McpServerInstance, 'tool'>,
-  dependencies: ProgressToolDependencies = progressToolDependencies,
-): void {
+function registerProgressTool(server: Pick<McpServerInstance, 'tool'>): void {
   server.tool(
     'gsd_progress',
     'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
@@ -408,13 +393,13 @@ export function registerProgressTool(
       const { projectDir } = args as { projectDir: string };
       try {
         const dir = validateProjectDir(projectDir);
-        if (dependencies.hasWorkflowBridge()) {
-          const fromDb = await dependencies.readFromDb(dir);
+        if (hasWorkflowToolBridgeConfiguration()) {
+          const fromDb = await readProjectProgressViaBridge(dir);
           if (fromDb !== null) {
             return jsonContent(fromDb);
           }
         }
-        return jsonContent(dependencies.readProjection(dir));
+        return jsonContent(readProgress(dir));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
