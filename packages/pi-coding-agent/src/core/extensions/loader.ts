@@ -67,7 +67,7 @@ const require = createRequire(import.meta.url);
  */
 let _aliases: Record<string, string> | null = null;
 
-function getAliases(): Record<string, string> {
+export function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
