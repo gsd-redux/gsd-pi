@@ -1392,7 +1392,7 @@ export async function createMcpServer(
   );
 
   // =======================================================================
-  // READ-ONLY TOOLS — no session required, pure filesystem reads
+  // READ-ONLY TOOLS — no session required
   // =======================================================================
 
   // -----------------------------------------------------------------------
