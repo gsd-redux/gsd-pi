@@ -31,7 +31,10 @@ import { invalidateAllCaches } from "../../../src/resources/extensions/gsd/cache
 import { resolveToolPresentationPlan } from "../../../src/resources/extensions/gsd/tool-presentation-plan.ts";
 import { claimTaskAttempt } from "../../../src/resources/extensions/gsd/task-execution-domain-operation.ts";
 import { seedSliceCompletionAuthority } from "../../../src/resources/extensions/gsd/tests/slice-completion-fixture.ts";
-import { _setDatabaseOpenBeforeRawForTest } from "../../../src/resources/extensions/gsd/db/engine.ts";
+import {
+  _setDatabaseOpenBeforeRawForTest,
+  _setStartupSchemaDetectionForTest,
+} from "../../../src/resources/extensions/gsd/db/engine.ts";
 import {
   _buildBridgeImportCandidates,
   _buildImportCandidates,
@@ -3791,5 +3794,22 @@ describe("readProjectProgressViaBridge", () => {
 
     assert.equal(result, null);
     assert.equal(existsSync(dbPath), false, "a read must not recreate gsd.db");
+  });
+
+  it("returns null when the existing project DB is locked", async (t) => {
+    const base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    t.after(() => cleanup(base));
+    t.after(() => _setStartupSchemaDetectionForTest(null));
+    assert.equal(openDatabase(dbPath), true);
+    closeDatabase();
+    _setStartupSchemaDetectionForTest(() => {
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY", errcode: 5 });
+    });
+
+    const result = await readProjectProgressViaBridge(base);
+
+    assert.equal(result, null);
+    assert.equal(existsSync(dbPath), true, "a locked read must preserve the existing DB");
   });
 });

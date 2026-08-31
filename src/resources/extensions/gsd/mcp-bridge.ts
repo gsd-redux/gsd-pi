@@ -5,6 +5,7 @@ export {
   shouldBlockQueueExecutionInSnapshot,
 } from "./bootstrap/write-gate.js";
 export { ensureDbOpen, ensureExistingDbOpen } from "./bootstrap/dynamic-tools.js";
+export { openExistingWorkflowDatabase } from "./db-workspace.js";
 export { readProgressFromDb } from "./state/progress-from-db.js";
 export {
   _getAdapter,

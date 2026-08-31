@@ -1134,10 +1134,7 @@ export async function secureEnvCollectHandler(
  */
 export async function createMcpServer(
   sessionManager: SessionManager,
-  options: {
-    includeWorkflowTools?: boolean;
-    progressToolDependencies?: ProgressToolDependencies;
-  } = {},
+  options: { includeWorkflowTools?: boolean } = {},
 ): Promise<{
   server: McpServerInstance;
 }> {
@@ -1416,7 +1413,7 @@ export async function createMcpServer(
   // -----------------------------------------------------------------------
   // gsd_progress — structured project progress metrics
   // -----------------------------------------------------------------------
-  registerProgressTool(server, options.progressToolDependencies);
+  registerProgressTool(server);
 
   // -----------------------------------------------------------------------
   // gsd_roadmap — milestone/slice/task structure with status

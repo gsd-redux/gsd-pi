@@ -29,7 +29,7 @@ interface GsdMcpBridge {
   shouldBlockPendingGateInSnapshot: (...args: any[]) => any;
   shouldBlockQueueExecutionInSnapshot: (...args: any[]) => any;
   ensureDbOpen: (...args: any[]) => any;
-  ensureExistingDbOpen: (...args: any[]) => any;
+  openExistingWorkflowDatabase: (projectDir: string) => WorkflowDatabaseOpenResult;
   _getAdapter: (...args: any[]) => any;
   checkpointDatabase: (...args: any[]) => any;
   closeDatabase: (...args: any[]) => any;
@@ -59,6 +59,15 @@ interface GsdMcpBridge {
   milestoneIdSort: (...args: any[]) => any;
   nextMilestoneId: (...args: any[]) => any;
 }
+
+type WorkflowDatabaseOpenResult =
+  | { ok: true; reason: "opened-existing" | "created-empty" }
+  | {
+      ok: false;
+      reason: "missing-database" | "missing-gsd-dir" | "locked" | "open-failed";
+      error?: Error;
+    }
+  | { ok: false; reason: "schema-too-new"; error: Error };
 
 async function importBridgeModule(): Promise<GsdMcpBridge> {
   return importLocalModule<GsdMcpBridge>("../../../src/resources/extensions/gsd/mcp-bridge.js");
@@ -1307,22 +1316,17 @@ async function runSerializedWorkflowDbOperation<T>(
  * project-scoped DB open, so back-to-back calls for different projects
  * cannot serve one project's state for another.
  *
- * Returns null when the project has no database — the caller falls back to
- * the projection reader, matching `gsd read progress`. A missing DB must not
- * be created as a side effect of a read (`ensureDbOpen` would happily create
- * an empty one). Any other failure throws — callers must fail loud, not
- * degrade to projection data that can lag the database.
+ * Returns null when the project database is missing or cannot be opened, so
+ * the caller falls back to the projection reader, matching `gsd read progress`.
+ * Schema-version errors and failures after a successful open remain loud.
  */
 export async function readProjectProgressViaBridge(projectDir: string): Promise<unknown | null> {
   return runSerializedWorkflowOperation(async () => {
-    const { resolveProjectRootDbPath } = await importWorkflowRuntimeModule<any>(
-      "../../../src/resources/extensions/gsd/db-workspace.js",
-    );
     const bridge = await importBridgeModule();
-    const dbAvailable = await bridge.ensureExistingDbOpen(projectDir);
-    if (!dbAvailable) {
-      if (!existsSync(resolveProjectRootDbPath(projectDir))) return null;
-      throw new Error("GSD database is not available");
+    const opened = bridge.openExistingWorkflowDatabase(projectDir);
+    if (!opened.ok) {
+      if (opened.reason === "schema-too-new") throw opened.error;
+      return null;
     }
     return bridge.readProgressFromDb(projectDir);
   });
