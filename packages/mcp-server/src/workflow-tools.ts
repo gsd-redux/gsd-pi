@@ -29,6 +29,7 @@ interface GsdMcpBridge {
   shouldBlockPendingGateInSnapshot: (...args: any[]) => any;
   shouldBlockQueueExecutionInSnapshot: (...args: any[]) => any;
   ensureDbOpen: (...args: any[]) => any;
+  ensureExistingDbOpen: (...args: any[]) => any;
   _getAdapter: (...args: any[]) => any;
   checkpointDatabase: (...args: any[]) => any;
   closeDatabase: (...args: any[]) => any;
@@ -1317,12 +1318,10 @@ export async function readProjectProgressViaBridge(projectDir: string): Promise<
     const { resolveProjectRootDbPath } = await importWorkflowRuntimeModule<any>(
       "../../../src/resources/extensions/gsd/db-workspace.js",
     );
-    if (!existsSync(resolveProjectRootDbPath(projectDir))) {
-      return null;
-    }
     const bridge = await importBridgeModule();
-    const dbAvailable = await bridge.ensureDbOpen(projectDir);
+    const dbAvailable = await bridge.ensureExistingDbOpen(projectDir);
     if (!dbAvailable) {
+      if (!existsSync(resolveProjectRootDbPath(projectDir))) return null;
       throw new Error("GSD database is not available");
     }
     return bridge.readProgressFromDb(projectDir);

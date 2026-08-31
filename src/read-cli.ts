@@ -52,6 +52,7 @@ function isSchemaTooNewErrorLike(err: unknown): err is Error {
  * through their own module graph.
  */
 export interface ReadCliSchemaPreflight {
+  resolveProjectRootDbPath: (basePath: string) => string
   openIsolatedDatabase: (path: string) => {
     prepare(sql: string): { get(): Record<string, unknown> | undefined }
     close(): void
@@ -63,12 +64,14 @@ export interface ReadCliSchemaPreflight {
 async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
   const dbWorkspaceModule = await jiti.import(gsdExtensionPath('db-workspace.ts'), {}) as any
   const engineModule = await jiti.import(gsdExtensionPath('db/engine.ts'), {}) as any
-  if (typeof dbWorkspaceModule.openWorkflowDatabaseIsolated !== 'function'
+  if (typeof dbWorkspaceModule.resolveProjectRootDbPath !== 'function'
+    || typeof dbWorkspaceModule.openWorkflowDatabaseIsolated !== 'function'
     || typeof engineModule.SCHEMA_VERSION !== 'number'
     || typeof engineModule.SchemaTooNewError !== 'function') {
     throw new Error('selected GSD extensions do not support schema-version preflight; synchronize the extension bundle')
   }
   return {
+    resolveProjectRootDbPath: dbWorkspaceModule.resolveProjectRootDbPath,
     openIsolatedDatabase: dbWorkspaceModule.openWorkflowDatabaseIsolated,
     supportedSchemaVersion: engineModule.SCHEMA_VERSION,
     createSchemaTooNewError: (currentVersion, supportedVersion) =>
@@ -223,8 +226,10 @@ export async function runReadCli(
     return 1
   }
 
+  const schemaPreflight = preflight ?? await loadSchemaPreflight()
+  const dbPath = schemaPreflight.resolveProjectRootDbPath(projectDir)
   try {
-    await assertProjectDbSchemaSupported(join(gsdRoot, 'gsd.db'), preflight)
+    await assertProjectDbSchemaSupported(dbPath, schemaPreflight)
   } catch (err) {
     if (isSchemaTooNewErrorLike(err)) {
       // Version skew must refuse loudly: exact engine message, non-zero exit —
@@ -243,7 +248,7 @@ export async function runReadCli(
       let fromDb: unknown | null
       try {
         fromDb = await tryReadProgressFromDb(
-          join(gsdRoot, 'gsd.db'),
+          dbPath,
           projectDir,
           dbProgressReader,
           dbProgressModuleImporter,

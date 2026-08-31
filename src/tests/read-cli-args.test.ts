@@ -14,6 +14,7 @@ const fixture = resolve(__dirname, "../../integrations/hermes/tests/fixtures/min
 // hermes fixture is not copied into dist-test) and would depend on the
 // developer machine's extension bundle state.
 const probelessPreflight: ReadCliSchemaPreflight = {
+	resolveProjectRootDbPath: (basePath) => resolve(basePath, ".gsd", "gsd.db"),
 	openIsolatedDatabase: () => null,
 	supportedSchemaVersion: Number.MAX_SAFE_INTEGER,
 	createSchemaTooNewError: (currentVersion, supportedVersion) =>
@@ -37,6 +38,7 @@ test("runReadCli handles global flags before read", async () => {
 				fixture,
 			],
 			probelessPreflight,
+			async () => null,
 		);
 
 		assert.equal(exitCode, 0, stderr.output());

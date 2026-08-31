@@ -2,6 +2,7 @@
 // File Purpose: SQLite provider loading and lifecycle helpers for the GSD database facade.
 
 import { closeSync, openSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 export type DbProviderName = "node:sqlite";
 
@@ -25,8 +26,12 @@ type RawDatabase = {
 };
 
 type NodeSqliteModule = {
-  DatabaseSync?: new (path: string, options?: { readOnly?: boolean }) => RawDatabase;
+  DatabaseSync?: new (path: string | URL, options?: { readOnly?: boolean }) => RawDatabase;
 };
+
+export interface SqliteRawOpenOptions {
+  createIfMissing?: boolean;
+}
 
 function isClosedDatabaseError(error: unknown): boolean {
   return /database (?:is )?not open|database is closed/iu.test(String(error));
@@ -146,16 +151,22 @@ export class SqliteProviderLoader {
     return this.providerModule ? "node:sqlite" : null;
   }
 
-  openRaw(path: string): unknown {
+  openRaw(path: string, options: SqliteRawOpenOptions = {}): unknown {
     this.load();
     const DatabaseSync = this.providerModule?.DatabaseSync;
     if (!DatabaseSync) return null;
     if (path === ":memory:") return new DatabaseSync(path);
 
-    closeSync(openSync(path, "a"));
+    const createIfMissing = options.createIfMissing !== false;
+    if (createIfMissing) closeSync(openSync(path, "a"));
     const readOnlyGuard = new DatabaseSync(path, { readOnly: true });
     try {
-      return withReadOnlyCloseGuard(new DatabaseSync(path), readOnlyGuard);
+      let writablePath: string | URL = path;
+      if (!createIfMissing) {
+        writablePath = pathToFileURL(path);
+        writablePath.searchParams.set("mode", "rw");
+      }
+      return withReadOnlyCloseGuard(new DatabaseSync(writablePath), readOnlyGuard);
     } catch (error) {
       readOnlyGuard.close();
       throw error;

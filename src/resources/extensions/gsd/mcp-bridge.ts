@@ -4,7 +4,7 @@ export {
   shouldBlockPendingGateInSnapshot,
   shouldBlockQueueExecutionInSnapshot,
 } from "./bootstrap/write-gate.js";
-export { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
+export { ensureDbOpen, ensureExistingDbOpen } from "./bootstrap/dynamic-tools.js";
 export { readProgressFromDb } from "./state/progress-from-db.js";
 export {
   _getAdapter,

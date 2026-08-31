@@ -24,11 +24,15 @@ import {
   type ReadCliSchemaPreflight,
 } from "../read-cli.ts";
 import { closeDatabase, openDatabase } from "../resources/extensions/gsd/gsd-db.ts";
-import { openWorkflowDatabaseIsolated } from "../resources/extensions/gsd/db-workspace.ts";
+import {
+  openWorkflowDatabaseIsolated,
+  resolveProjectRootDbPath,
+} from "../resources/extensions/gsd/db-workspace.ts";
 import { SCHEMA_VERSION, SchemaTooNewError } from "../resources/extensions/gsd/db/engine.ts";
 import { readProgressFromDb } from "../resources/extensions/gsd/state/progress-from-db.ts";
 
 const realPreflight: ReadCliSchemaPreflight = {
+  resolveProjectRootDbPath,
   openIsolatedDatabase: (path) => openWorkflowDatabaseIsolated(path),
   supportedSchemaVersion: SCHEMA_VERSION,
   createSchemaTooNewError: (currentVersion, supportedVersion) =>
@@ -38,6 +42,7 @@ const realPreflight: ReadCliSchemaPreflight = {
 // Probe that never opens — simulates a locked/unreadable DB during the
 // read-only schema check before the DB-backed reader reaches its own open.
 const lockedPreflight: ReadCliSchemaPreflight = {
+  resolveProjectRootDbPath,
   openIsolatedDatabase: () => null,
   supportedSchemaVersion: SCHEMA_VERSION,
   createSchemaTooNewError: (currentVersion, supportedVersion) =>
@@ -111,6 +116,27 @@ test("gsd read progress serves the DB-backed payload when the project DB is pres
   assert.equal(envelope.kind, "progress");
   assert.deepEqual(envelope.data, sentinel);
   assert.equal(calls, 1);
+});
+
+test("gsd read progress uses the project DB from a canonical milestone worktree", async (t) => {
+  const base = makeProject();
+  const worktree = join(base, ".gsd-worktrees", "M001");
+  mkdirSync(join(worktree, ".gsd"), { recursive: true });
+  writeFileSync(join(worktree, ".gsd", "STATE.md"), "# Project State\n\n**Phase:** planning\n");
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  closeDatabase();
+
+  const sentinel = { phase: "project-db-derived" };
+  const run = await captureReadCli(readProgressArgv(worktree), {
+    reader: async (projectDir) => {
+      assert.equal(projectDir, worktree);
+      return sentinel;
+    },
+  });
+
+  assert.equal(run.exitCode, 0);
+  assert.deepEqual(JSON.parse(run.stdout).data, sentinel);
 });
 
 test("gsd read progress lets the DB reader decide availability after schema preflight", async (t) => {
