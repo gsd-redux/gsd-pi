@@ -237,6 +237,40 @@ test("ensureBrowserDaemonStarted keeps daemon stderr in the failure detail", (t)
   );
 });
 
+test("ensureBrowserDaemonStarted degrades instead of throwing when stderr capture cannot be set up", (t) => {
+  // The module must stay incapable of throwing: the dispatch-rule loop that reaches it does
+  // not wrap rule.match(), so an escaped exception from a best-effort *warm-up* would take
+  // down dispatch. Point the temp dir at a path that cannot be created, so mkdtempSync fails.
+  const dir = mkdtempSync(join(tmpdir(), "gsd-daemon-nocapture-"));
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best-effort temp cleanup */
+    }
+  });
+
+  const scriptPath = writeFakeGsdBrowser(dir, [
+    `process.stderr.write("chrome not found\\n");`,
+    `process.exit(1);`,
+  ]);
+
+  const unusable = join(dir, "does-not-exist", "nor-does-this");
+  process.env.TMPDIR = unusable;
+  process.env.TEMP = unusable;
+  process.env.TMP = unusable;
+
+  const result = ensureBrowserDaemonStarted(dir, { env: fakeCliEnv(scriptPath), timeoutMs: 20_000 });
+
+  // Still a normal failure result, just without the captured stderr detail.
+  assert.equal(result.ok, false);
+});
+
 test("teardownWarmedBrowserDaemons is a no-op when nothing was warmed", () => {
   // A failed warm-up must not register a project root for teardown.
   prepareBrowserDaemonForUat({
