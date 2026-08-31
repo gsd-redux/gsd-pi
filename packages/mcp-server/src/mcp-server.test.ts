@@ -866,6 +866,17 @@ describe('createMcpServer tool registration', () => {
     assert.ok(typeof server.close === 'function');
   });
 
+  it('gsd_progress returns validation failures in the MCP error envelope', async () => {
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+
+    const result = await progressTool.handler({ projectDir: 'relative/path' });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /projectDir must be an absolute path/);
+  });
+
   it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {
     const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
     const askTool = (server as any)._registeredTools?.ask_user_questions;

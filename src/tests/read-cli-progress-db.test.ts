@@ -17,10 +17,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runReadCli, type ReadCliSchemaPreflight, type DbProgressReader } from "../read-cli.ts";
+import {
+  runReadCli,
+  type DbProgressModuleImporter,
+  type DbProgressReader,
+  type ReadCliSchemaPreflight,
+} from "../read-cli.ts";
 import { closeDatabase, openDatabase } from "../resources/extensions/gsd/gsd-db.ts";
 import { openWorkflowDatabaseIsolated } from "../resources/extensions/gsd/db-workspace.ts";
 import { SCHEMA_VERSION, SchemaTooNewError } from "../resources/extensions/gsd/db/engine.ts";
+import { readProgressFromDb } from "../resources/extensions/gsd/state/progress-from-db.ts";
 
 const realPreflight: ReadCliSchemaPreflight = {
   openIsolatedDatabase: (path) => openWorkflowDatabaseIsolated(path),
@@ -29,8 +35,8 @@ const realPreflight: ReadCliSchemaPreflight = {
     new SchemaTooNewError(currentVersion, supportedVersion),
 };
 
-// Probe that never opens — simulates a locked/unreadable DB at the seam
-// where tryReadProgressFromDb decides the projection fallback.
+// Probe that never opens — simulates a locked/unreadable DB during the
+// read-only schema check before the DB-backed reader reaches its own open.
 const lockedPreflight: ReadCliSchemaPreflight = {
   openIsolatedDatabase: () => null,
   supportedSchemaVersion: SCHEMA_VERSION,
@@ -41,6 +47,7 @@ const lockedPreflight: ReadCliSchemaPreflight = {
 interface CaptureOpts {
   preflight?: ReadCliSchemaPreflight;
   reader?: DbProgressReader;
+  moduleImporter?: DbProgressModuleImporter;
 }
 
 async function captureReadCli(argv: string[], opts: CaptureOpts = {}) {
@@ -57,7 +64,12 @@ async function captureReadCli(argv: string[], opts: CaptureOpts = {}) {
     return true;
   }) as typeof process.stderr.write;
   try {
-    const exitCode = await runReadCli(argv, opts.preflight ?? realPreflight, opts.reader);
+    const exitCode = await runReadCli(
+      argv,
+      opts.preflight ?? realPreflight,
+      opts.reader,
+      opts.moduleImporter,
+    );
     return { exitCode, stdout, stderr };
   } finally {
     process.stdout.write = originalOut;
@@ -101,22 +113,38 @@ test("gsd read progress serves the DB-backed payload when the project DB is pres
   assert.equal(calls, 1);
 });
 
-test("gsd read progress falls back to the projection reader when the DB cannot be opened", async (t) => {
+test("gsd read progress lets the DB reader decide availability after schema preflight", async (t) => {
   const base = makeProject();
   t.after(() => rmSync(base, { recursive: true, force: true }));
   assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
   closeDatabase();
 
+  const sentinel = { phase: "db-derived-after-preflight" };
   const run = await captureReadCli(readProgressArgv(base), {
     preflight: lockedPreflight,
-    reader: async () => {
-      throw new Error("reader must not be called when the probe cannot open the DB");
-    },
+    reader: async () => sentinel,
   });
   assert.equal(run.exitCode, 0);
   const envelope = JSON.parse(run.stdout);
-  assert.equal(envelope.kind, "progress");
-  // Parsed from STATE.md — the documented degraded fallback.
+  assert.deepEqual(envelope.data, sentinel);
+});
+
+test("gsd read progress falls back when the DB disappears before the DB reader opens it", async (t) => {
+  const base = makeProject();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const dbPath = join(base, ".gsd", "gsd.db");
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+
+  const run = await captureReadCli(readProgressArgv(base), {
+    reader: async (projectDir) => {
+      rmSync(dbPath, { force: true });
+      return readProgressFromDb(projectDir);
+    },
+  });
+
+  assert.equal(run.exitCode, 0);
+  const envelope = JSON.parse(run.stdout);
   assert.equal(envelope.data.phase, "plan");
 });
 
@@ -138,6 +166,23 @@ test("gsd read progress refuses loudly when the DB-backed read fails", async (t)
     `stderr should explain the failure, got: ${run.stderr}`,
   );
   assert.ok(run.stderr.includes("boom"), `stderr should carry the cause, got: ${run.stderr}`);
+});
+
+test("gsd read progress explains how to repair a stale extension bundle", async (t) => {
+  const base = makeProject();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  closeDatabase();
+
+  const run = await captureReadCli(readProgressArgv(base), {
+    moduleImporter: async () => {
+      throw new Error("Cannot find module state/progress-from-db.ts");
+    },
+  });
+
+  assert.equal(run.exitCode, 1);
+  assert.equal(run.stdout, "");
+  assert.match(run.stderr, /synchronize the extension bundle/);
 });
 
 test("gsd read progress does not invoke the DB reader when no DB exists", async (t) => {

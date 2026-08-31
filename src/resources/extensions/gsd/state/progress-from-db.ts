@@ -5,7 +5,13 @@
 // projection data that can lag it.
 
 import { deriveState } from "./derive/index.js";
-import { getHierarchyCompletionCounts, getInFlightSliceCount, readTransaction } from "../gsd-db.js";
+import {
+  getHierarchyCompletionCounts,
+  getInFlightSliceCount,
+  getMilestoneStatusCounts,
+  isDbAvailable,
+  readTransaction,
+} from "../gsd-db.js";
 import type { GSDState } from "../types.js";
 
 /**
@@ -34,26 +40,22 @@ function toRef(value: { id: string; title: string } | null): { id: string; title
 /**
  * Derive the integration progress payload from the database. `deriveState`
  * supplies current refs, phase, blockers, and next action (the same source
- * the runtime and auto-mode use); project-wide slice/task counts come from
- * the read seam, since `GSDState.progress` is scoped to the active
- * milestone/slice while `ProgressResult` buckets are project-wide.
+ * the runtime and auto-mode use); project-wide milestone/slice/task counts
+ * come from the read seam, since `deriveState` may be execution-scoped while
+ * `ProgressResult` buckets are project-wide.
  *
  * Note: the derive open path runs pending migrations and syncs the
  * milestone queue-order projection (same behavior as `gsd headless status`).
- * Callers must have already decided the DB is present and schema-supported;
- * a locked or unreadable DB should fall back at the call site, not here.
  */
-export async function readProgressFromDb(basePath: string): Promise<DbProgressResult> {
+export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
   const state: GSDState = await deriveState(basePath);
+  if (!isDbAvailable()) return null;
+
   const hierarchy = readTransaction(() => ({
     counts: getHierarchyCompletionCounts(),
+    milestones: getMilestoneStatusCounts(),
     slicesActive: getInFlightSliceCount(),
   }));
-
-  const registry = state.registry ?? [];
-  const milestonesDone = registry.filter((m) => m.status === "complete").length;
-  const milestonesActive = registry.filter((m) => m.status === "active").length;
-  const milestonesParked = registry.filter((m) => m.status === "parked").length;
 
   const slicesDone = hierarchy.counts.slices;
   const slicesTotal = hierarchy.counts.slicesTotal;
@@ -65,13 +67,7 @@ export async function readProgressFromDb(basePath: string): Promise<DbProgressRe
     activeSlice: toRef(state.activeSlice),
     activeTask: toRef(state.activeTask),
     phase: state.phase,
-    milestones: {
-      total: registry.length,
-      done: milestonesDone,
-      active: milestonesActive,
-      pending: registry.length - milestonesDone - milestonesActive - milestonesParked,
-      parked: milestonesParked,
-    },
+    milestones: hierarchy.milestones,
     slices: {
       total: slicesTotal,
       done: slicesDone,

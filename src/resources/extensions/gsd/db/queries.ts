@@ -72,6 +72,14 @@ export interface HierarchyCompletionCounts {
   tasksTotal: number;
 }
 
+export interface MilestoneStatusCounts {
+  total: number;
+  done: number;
+  active: number;
+  pending: number;
+  parked: number;
+}
+
 function numberColumn(row: Record<string, unknown> | undefined, column: string): number {
   const value = row?.[column];
   if (typeof value === "number") return value;
@@ -113,6 +121,34 @@ export function getHierarchyCompletionCounts(): HierarchyCompletionCounts {
     slicesTotal: slices.total,
     tasks: tasks.completed,
     tasksTotal: tasks.total,
+  };
+}
+
+export function getMilestoneStatusCounts(): MilestoneStatusCounts {
+  const db = getDbOrNull();
+  if (!db) {
+    return { total: 0, done: 0, active: 0, pending: 0, parked: 0 };
+  }
+
+  const row = db.prepare(
+    `SELECT
+       COUNT(*) AS total,
+       COALESCE(SUM(CASE WHEN status IN (${TERMINAL_STATUS_SQL}) THEN 1 ELSE 0 END), 0) AS done,
+       COALESCE(SUM(CASE WHEN status IN ('active', 'in_progress', 'in-progress') THEN 1 ELSE 0 END), 0) AS active,
+       COALESCE(SUM(CASE WHEN status = 'parked' THEN 1 ELSE 0 END), 0) AS parked
+     FROM milestones`,
+  ).get();
+  const total = numberColumn(row, "total");
+  const done = numberColumn(row, "done");
+  const active = numberColumn(row, "active");
+  const parked = numberColumn(row, "parked");
+
+  return {
+    total,
+    done,
+    active,
+    pending: total - done - active - parked,
+    parked,
   };
 }
 

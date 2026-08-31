@@ -1381,8 +1381,8 @@ export async function createMcpServer(
     },
     async (args: Record<string, unknown>) => {
       const { projectDir } = args as { projectDir: string };
-      const dir = validateProjectDir(projectDir);
       try {
+        const dir = validateProjectDir(projectDir);
         if (hasWorkflowToolBridgeConfiguration()) {
           // ADR-046: DB-authoritative when the runtime bridge exists. DB
           // errors fail loud; null (no DB) falls back to the projection

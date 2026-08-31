@@ -76,8 +76,18 @@ async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
   }
 }
 
-async function loadDbProgressReader(): Promise<DbProgressReader> {
-  const mod = await jiti.import(gsdExtensionPath('state/progress-from-db.ts'), {}) as any
+async function loadDbProgressReader(
+  moduleImporter: DbProgressModuleImporter = (path) => jiti.import(path, {}),
+): Promise<DbProgressReader> {
+  let mod: any
+  try {
+    mod = await moduleImporter(gsdExtensionPath('state/progress-from-db.ts'))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `selected GSD extensions do not support DB-backed progress reads; synchronize the extension bundle (${detail})`,
+    )
+  }
   if (typeof mod.readProgressFromDb !== 'function') {
     throw new Error('selected GSD extensions do not support DB-backed progress reads; synchronize the extension bundle')
   }
@@ -95,15 +105,11 @@ async function loadDbProgressReader(): Promise<DbProgressReader> {
 async function tryReadProgressFromDb(
   dbPath: string,
   projectDir: string,
-  preflight?: ReadCliSchemaPreflight,
   reader?: DbProgressReader,
+  moduleImporter?: DbProgressModuleImporter,
 ): Promise<unknown | null> {
   if (!existsSync(dbPath)) return null
-  const pf = preflight ?? await loadSchemaPreflight()
-  const probe = pf.openIsolatedDatabase(dbPath)
-  if (!probe) return null
-  probe.close()
-  const read = reader ?? await loadDbProgressReader()
+  const read = reader ?? await loadDbProgressReader(moduleImporter)
   return await read(projectDir)
 }
 
@@ -150,6 +156,7 @@ export type ReadKind = 'progress' | 'roadmap' | 'memory'
 
 /** DB-backed progress reader — jiti-loaded in production, injected in tests. */
 export type DbProgressReader = (projectDir: string) => Promise<unknown>
+export type DbProgressModuleImporter = (path: string) => Promise<unknown>
 
 export interface ReadEnvelope<T = unknown> {
   integration_version: number
@@ -195,6 +202,7 @@ export async function runReadCli(
   argv: string[],
   preflight?: ReadCliSchemaPreflight,
   dbProgressReader?: DbProgressReader,
+  dbProgressModuleImporter?: DbProgressModuleImporter,
 ): Promise<number> {
   const opts = parseReadArgs(argv)
   if (!opts) {
@@ -234,7 +242,12 @@ export async function runReadCli(
       // the projection reader is the fallback for missing/locked DBs only.
       let fromDb: unknown | null
       try {
-        fromDb = await tryReadProgressFromDb(join(gsdRoot, 'gsd.db'), projectDir, preflight, dbProgressReader)
+        fromDb = await tryReadProgressFromDb(
+          join(gsdRoot, 'gsd.db'),
+          projectDir,
+          dbProgressReader,
+          dbProgressModuleImporter,
+        )
       } catch (err) {
         process.stderr.write(
           `[gsd] DB-backed progress read failed: ${err instanceof Error ? err.message : String(err)}\n`,

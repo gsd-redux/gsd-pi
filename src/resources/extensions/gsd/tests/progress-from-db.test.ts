@@ -37,6 +37,7 @@ test("readProgressFromDb emits exactly the ProgressResult key set", async (t) =>
   t.after(() => fixture.cleanup());
 
   const result = await readProgressFromDb(fixture.root);
+  assert.ok(result);
   assert.deepEqual(Object.keys(result), [
     "activeMilestone",
     "activeSlice",
@@ -64,6 +65,7 @@ test("readProgressFromDb derives refs, project-wide counts, and requirements fro
   seedSecondMilestone(fixture);
 
   const result = await readProgressFromDb(fixture.root);
+  assert.ok(result);
   const state = await deriveState(fixture.root);
 
   assert.deepEqual(result.activeMilestone, { id: "M001", title: "Authority Fixture" });
@@ -77,6 +79,25 @@ test("readProgressFromDb derives refs, project-wide counts, and requirements fro
   assert.deepEqual(result.blockers, []);
   assert.equal(typeof result.nextAction, "string");
   assert.ok(result.nextAction.length > 0);
+});
+
+test("readProgressFromDb keeps milestone counts project-wide under a milestone lock", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+  seedSecondMilestone(fixture);
+
+  const previousLock = process.env.GSD_MILESTONE_LOCK;
+  process.env.GSD_MILESTONE_LOCK = "M002";
+  t.after(() => {
+    if (previousLock === undefined) delete process.env.GSD_MILESTONE_LOCK;
+    else process.env.GSD_MILESTONE_LOCK = previousLock;
+  });
+
+  const result = await readProgressFromDb(fixture.root);
+  assert.ok(result);
+
+  assert.equal(result.activeMilestone?.id, "M002");
+  assert.deepEqual(result.milestones, { total: 2, done: 0, active: 1, pending: 1, parked: 0 });
 });
 
 test("readProgressFromDb reflects DB state, never stale projection files", async (t) => {
@@ -99,6 +120,7 @@ test("readProgressFromDb reflects DB state, never stale projection files", async
   );
 
   const result = await readProgressFromDb(fixture.root);
+  assert.ok(result);
   assert.equal(result.activeMilestone?.id, "M001");
   assert.notEqual(result.activeMilestone?.title, "Stale Projection");
   assert.notEqual(result.nextAction, "Stale action from projection");
