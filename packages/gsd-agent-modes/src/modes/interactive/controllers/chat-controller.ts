@@ -278,10 +278,14 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					startLoadingAnimation(host);
 				}
 
-				// Batch renders, not the walker: sub-turn replacement and
-				// suppression logic must observe every intermediate state,
-				// while consecutive renders within one 50ms window can coalesce.
-				rs.scheduleDebouncedRender(host.ui);
+				// Leading-edge render: the first delta triggers an immediate
+				// render so the beginning of the response is visible right away.
+				// Subsequent deltas are throttled by the TUI's requestRender()
+				// guard (no-op when a render is already pending) and the
+				// 16ms minimum render interval — the debounce from #1686 was
+				// dead code (timer resets on every delta, never fires during
+				// continuous streaming). See .gsd/issue-streaming-render-starvation.md
+				host.ui.requestRender();
 			}
 			break;
 
@@ -327,6 +331,11 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						host.chatContainer.addChild(host.streamingComponent);
 						markFirstVisibleAssistantOutput(host, "message_end_only");
 						reconcileChatTurnConnections(host.chatContainer.children);
+						// Ensure the newly created component renders immediately
+						// (flushPendingStreamingWork runs after this block, but
+						// an explicit requestRender here prevents a race where
+						// the component exists but hasn't painted yet).
+						host.ui.requestRender();
 					}
 					if (host.streamingComponent) {
 						host.streamingComponent.setShowMetadata(true);

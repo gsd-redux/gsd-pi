@@ -382,6 +382,13 @@ export function toggleThinkingBlockVisibility(host: InteractiveModeDelegateHost)
 		host.hideThinkingBlock = !host.hideThinkingBlock;
 		host.settingsManager.setHideThinkingBlock(host.hideThinkingBlock);
 
+		// Disable shrink debounce during rebuild to prevent full redraw flash.
+		// The clear() + rebuildChatFromMessages() changes content length, which
+		// would trigger the TUI's _shrinkDebounceActive path and cause a
+		// full repaint (~1.5s cadence) that jumps the viewport.
+		const prevClearOnShrink = host.ui.getClearOnShrink();
+		host.ui.setClearOnShrink(false);
+
 		// Rebuild chat from session messages
 		host.chatContainer.clear();
 		host.rebuildChatFromMessages();
@@ -392,6 +399,9 @@ export function toggleThinkingBlockVisibility(host: InteractiveModeDelegateHost)
 			host.streamingComponent.updateContent(host.streamingMessage);
 			host.chatContainer.addChild(host.streamingComponent);
 		}
+
+		// Restore shrink debounce setting
+		host.ui.setClearOnShrink(prevClearOnShrink);
 
 		host.showStatus(`Thinking blocks: ${host.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
