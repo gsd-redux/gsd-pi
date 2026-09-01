@@ -16647,13 +16647,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 1.17,
-				output: 3.96,
-				cacheRead: 0.234,
+				input: 1.1875,
+				output: 4.18,
+				cacheRead: 0.247,
 				cacheWrite: 0,
 			},
 			contextWindow: 1310720,
-			maxTokens: 943718,
+			maxTokens: 131072,
 		} satisfies Model<"openai-completions">,
 	},
 	"together": {
@@ -18123,8 +18123,8 @@ export const MODELS = {
 				cacheRead: 0.007,
 				cacheWrite: 0,
 			},
-			contextWindow: 1000000,
-			maxTokens: 384000,
+			contextWindow: 1048576,
+			maxTokens: 1048576,
 		} satisfies Model<"anthropic-messages">,
 		"deepseek/deepseek-v4-pro": {
 			id: "deepseek/deepseek-v4-pro",
