@@ -10,6 +10,7 @@ import {
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
 } from "../src/providers/cloudflare.ts";
 import type { AnthropicMessagesCompat, Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.ts";
+import { formatCost, roundCost } from "./lib/model-cost.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -318,18 +319,6 @@ function getBedrockBaseUrl(modelId: string): string {
 	return modelId.startsWith("eu.")
 		? "https://bedrock-runtime.eu-central-1.amazonaws.com"
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
-}
-
-function roundCost(value: number): number {
-	if (!Number.isFinite(value)) {
-		throw new Error("Model costs must be finite numbers.");
-	}
-	const rounded = Number(value.toFixed(12));
-	return Object.is(rounded, -0) ? 0 : rounded;
-}
-
-function formatCost(value: number): string {
-	return String(roundCost(value));
 }
 
 function formatFiniteNumber(value: unknown, field: string, modelId: string): string {
