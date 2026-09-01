@@ -37,9 +37,13 @@ describe("Fireworks models", () => {
 		});
 	});
 
-	it("registers the Fire Pass turbo router model", () => {
+	it("registers the Fire Pass fast router model", () => {
+		// Fireworks retired the -turbo router tier; -fast is the current tier.
 		const model = getModels("fireworks").find(
-			(candidate) => candidate.id.startsWith("accounts/fireworks/routers/") && candidate.id.endsWith("-turbo"),
+			(candidate) =>
+				candidate.id.startsWith("accounts/fireworks/routers/") &&
+				candidate.id.endsWith("-fast") &&
+				candidate.input.includes("image"),
 		);
 
 		expect(model).toBeDefined();

@@ -130,7 +130,14 @@ describe("openai-completions empty tools handling", () => {
 	it("uses conservative OpenAI-compatible fields for Cloudflare AI Gateway /compat models", async () => {
 		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
 		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
-		const model = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
+		// models.dev no longer lists workers-ai entries under the gateway, so
+		// build the /compat fixture from the direct Workers AI provider.
+		const base = getModel("cloudflare-workers-ai", "@cf/nvidia/nemotron-3-120b-a12b")!;
+		const model = {
+			...base,
+			provider: "cloudflare-ai-gateway" as const,
+			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+		};
 
 		await streamSimple(
 			model,
@@ -184,7 +191,15 @@ describe("openai-completions empty tools handling", () => {
 	it("sends session affinity headers for Workers AI through Cloudflare AI Gateway", async () => {
 		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
 		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";
-		const workersModel = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")!;
+		// models.dev no longer lists workers-ai entries under the gateway, so
+		// build the fixture from the direct Workers AI provider (which carries
+		// the same sendSessionAffinityHeaders compat).
+		const base = getModel("cloudflare-workers-ai", "@cf/nvidia/nemotron-3-120b-a12b")!;
+		const workersModel = {
+			...base,
+			provider: "cloudflare-ai-gateway" as const,
+			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+		};
 
 		await streamSimple(
 			workersModel,
