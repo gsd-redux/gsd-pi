@@ -378,7 +378,7 @@ MCP 模式也会暴露供 headless 和 MCP 客户端使用的 GSD workflow adapt
 - 项目状态和只读工具：`gsd_query`、`gsd_progress`、`gsd_roadmap`、`gsd_history`、`gsd_doctor`、`gsd_captures`、`gsd_knowledge`、`gsd_graph`
 - 交互式表单工具：`ask_user_questions`
 
-运行自动模式时，先用绝对路径 `projectDir` 调用 `gsd_execute`。它会返回 `sessionId`；之后用这个 `sessionId` 轮询 `gsd_status`，直到运行结束，再调用 `gsd_result` 获取累积输出，或调用 `gsd_cancel` 停止运行。如果客户端丢失了 `sessionId`，`gsd_status` 可以回退到 `projectDir`；只有当这个 MCP server 只跟踪一个会话时，才可以同时省略这两个字段。项目只读工具会直接读取 `.gsd/`，不需要活跃会话。
+运行自动模式时，先用绝对路径 `projectDir` 调用 `gsd_execute`。它会返回 `sessionId`；之后用这个 `sessionId` 轮询 `gsd_status`，直到运行结束，再调用 `gsd_result` 获取累积输出，或调用 `gsd_cancel` 停止运行。如果客户端丢失了 `sessionId`，`gsd_status` 可以回退到 `projectDir`；只有当这个 MCP server 只跟踪一个会话时，才可以同时省略这两个字段。项目只读工具不需要活跃会话；当前数据库与 projection 的读取规则请以[英文命令文档](../../user-docs/commands.md#mcp-server-mode)为准。
 
 ## 会话内更新
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   _setFlatPhaseMigrationBoundaryForTest,
@@ -109,8 +110,28 @@ test("concurrent migrations in separate processes do not corrupt each other", as
   const base = makeTmp();
   closeDatabase(); // children own the DB handle
 
-  const migrationUrl = new URL("../flat-phase-migration.js", import.meta.url).href;
-  const dbUrl = new URL("../gsd-db.js", import.meta.url).href;
+  // Strip-types runs have no compiled .js sibling on disk, so hand the worker
+  // the .ts entrypoints; compiled runs keep the .js URLs. The worker also needs
+  // this run's loader hooks and type-stripping flag: spawn() ignores its
+  // execArgv option (that is fork()-only), so the flags go in the args array.
+  const loadableUrl = (specifier: string): string => {
+    const filePath = fileURLToPath(new URL(specifier, import.meta.url));
+    if (specifier.endsWith(".js") && !existsSync(filePath)) {
+      const tsPath = filePath.replace(/\.js$/, ".ts");
+      if (existsSync(tsPath)) return pathToFileURL(tsPath).href;
+    }
+    return new URL(specifier, import.meta.url).href;
+  };
+  const migrationUrl = loadableUrl("../flat-phase-migration.js");
+  const dbUrl = loadableUrl("../gsd-db.js");
+  const workerExecArgs: string[] = [];
+  for (let i = 0; i < process.execArgv.length; i++) {
+    const arg = process.execArgv[i]!;
+    if (arg === "--experimental-strip-types" || arg.startsWith("--import")) {
+      workerExecArgs.push(arg);
+      if (arg === "--import") workerExecArgs.push(process.execArgv[++i]!);
+    }
+  }
   const worker = `
     const db = await import(${JSON.stringify(dbUrl)});
     const mig = await import(${JSON.stringify(migrationUrl)});
@@ -121,7 +142,7 @@ test("concurrent migrations in separate processes do not corrupt each other", as
 
   const exits = await Promise.all(
     [0, 1].map(() => new Promise<number>((resolve) => {
-      const child = spawn(process.execPath, ["--input-type=module", "-e", worker], { stdio: "pipe" });
+      const child = spawn(process.execPath, [...workerExecArgs, "--input-type=module", "-e", worker], { stdio: "pipe" });
       let stderr = "";
       child.stderr.on("data", (chunk) => { stderr += String(chunk); });
       child.on("exit", (code) => resolve(code === 0 ? 0 : (assert.fail(`migration worker failed: ${stderr}`), 1)));

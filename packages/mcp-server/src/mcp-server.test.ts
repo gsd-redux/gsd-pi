@@ -12,11 +12,11 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { SessionManager } from './session-manager.js';
 import { installGlobalErrorHandlers } from './cli-errors.js';
@@ -36,6 +36,43 @@ import {
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, CostAccumulator, PendingBlocker } from './types.js';
 import { WORKFLOW_TOOL_ALIAS_NAMES } from '@opengsd/contracts';
+
+interface WorkflowBridgeFixtureModule {
+  closeDatabase(): void;
+  insertMilestone(milestone: { id: string; title: string; status: string }): boolean;
+  insertSlice(slice: {
+    id: string;
+    milestoneId: string;
+    title: string;
+    status: string;
+    risk: string;
+    depends: string[];
+    sequence: number;
+  }): void;
+  openDatabase(path: string): boolean;
+}
+
+async function importWorkflowBridgeFixture(): Promise<WorkflowBridgeFixtureModule> {
+  const candidates = [
+    '../../../src/resources/extensions/gsd/mcp-bridge.js',
+    '../../../src/resources/extensions/gsd/mcp-bridge.ts',
+    '../../../dist/resources/extensions/gsd/mcp-bridge.js',
+  ];
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return await import(new URL(candidate, import.meta.url).href) as WorkflowBridgeFixtureModule;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+function restoreEnvironmentValue(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
 
 describe('installGlobalErrorHandlers', () => {
   it('logs uncaught exceptions and unhandled rejections to stderr, then terminates (#783)', () => {
@@ -864,6 +901,105 @@ describe('createMcpServer tool registration', () => {
     assert.equal(typeof server.server.elicitInput, 'function');
     assert.ok(typeof server.connect === 'function');
     assert.ok(typeof server.close === 'function');
+  });
+
+  it('gsd_progress returns validation failures in the MCP error envelope', async () => {
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+
+    const result = await progressTool.handler({ projectDir: 'relative/path' });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /projectDir must be an absolute path/);
+  });
+
+  it('registered gsd_progress prefers the DB payload when the bridge is configured', async (t) => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'gsd-progress-handler-'));
+    const bridge = await importWorkflowBridgeFixture();
+    t.after(() => {
+      bridge.closeDatabase();
+      rmSync(projectDir, { recursive: true, force: true });
+    });
+    mkdirSync(join(projectDir, '.gsd'));
+    writeFileSync(
+      join(projectDir, '.gsd', 'STATE.md'),
+      [
+        '# Project State',
+        '',
+        '**Active Milestone:** M999: Stale Projection',
+        '**Phase:** planning',
+      ].join('\n'),
+    );
+    assert.equal(bridge.openDatabase(join(projectDir, '.gsd', 'gsd.db')), true);
+    assert.equal(
+      bridge.insertMilestone({ id: 'M001', title: 'Database Authority', status: 'active' }),
+      true,
+    );
+    bridge.insertSlice({
+      id: 'S01',
+      milestoneId: 'M001',
+      title: 'Database Slice',
+      status: 'pending',
+      risk: 'low',
+      depends: [],
+      sequence: 1,
+    });
+    bridge.closeDatabase();
+
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+
+    const result = await progressTool.handler({ projectDir });
+    const progress = JSON.parse(result.content[0].text);
+    assert.deepEqual(progress.activeMilestone, { id: 'M001', title: 'Database Authority' });
+    assert.equal(progress.milestones.total, 1);
+  });
+
+  it('registered gsd_progress uses projections without a workflow bridge', async (t) => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'gsd-progress-handler-'));
+    t.after(() => rmSync(projectDir, { recursive: true, force: true }));
+    mkdirSync(join(projectDir, '.gsd'));
+    writeFileSync(
+      join(projectDir, '.gsd', 'STATE.md'),
+      [
+        '# Project State',
+        '',
+        '**Active Milestone:** M999: Projection Only',
+        '**Phase:** planning',
+      ].join('\n'),
+    );
+
+    const previousExecutors = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    const previousWriteGate = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    t.after(() => {
+      restoreEnvironmentValue('GSD_WORKFLOW_EXECUTORS_MODULE', previousExecutors);
+      restoreEnvironmentValue('GSD_WORKFLOW_WRITE_GATE_MODULE', previousWriteGate);
+    });
+
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    const standaloneRoot = mkdtempSync(join(dirname(moduleDir), 'standalone-mcp-'));
+    const standaloneModuleDir = join(standaloneRoot, 'runtime');
+    cpSync(moduleDir, standaloneModuleDir, { recursive: true });
+    t.after(() => rmSync(standaloneRoot, { recursive: true, force: true }));
+    const serverExtension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
+    const standaloneServerModule = await import(pathToFileURL(
+      join(standaloneModuleDir, `server${serverExtension}`),
+    ).href) as typeof import('./server.js');
+    const { server } = await standaloneServerModule.createMcpServer(
+      sm,
+      { includeWorkflowTools: false },
+    );
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+
+    const result = await progressTool.handler({ projectDir });
+    const progress = JSON.parse(result.content[0].text);
+    assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
+    assert.equal(progress.phase, 'plan');
   });
 
   it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {

@@ -79,6 +79,13 @@ closeout from one consistent project-database snapshot. Missing or unreadable
 authority fails explicitly; runtime does not fall back to files or cached
 prose.
 
+Read-only progress integrations are a display-only compatibility boundary:
+`gsd read progress` and packaged MCP `gsd_progress` may serve the `STATE.md`
+projection only when the project database is missing or cannot be opened, or
+when the standalone MCP package has no GSD runtime bridge. Once the database
+opens, it remains authoritative and any later read failure is reported instead
+of falling back. This exception cannot drive lifecycle state.
+
 Only Domain Operations in the Single Writer layer mutate workflow state. A
 Domain Operation validates revision, dependencies, lifecycle, lease/fencing,
 evidence, and transport idempotency inside one transaction. That transaction

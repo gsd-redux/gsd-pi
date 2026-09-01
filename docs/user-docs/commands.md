@@ -574,7 +574,9 @@ MCP mode also exposes the GSD workflow adapter tools used by headless runtimes:
 - Project state and read-only tools: `gsd_query`, `gsd_progress`, `gsd_roadmap`, `gsd_history`, `gsd_doctor`, `gsd_captures`, `gsd_knowledge`, `gsd_graph`
 - Interactive form tool: `ask_user_questions`
 
-For an auto-mode run, call `gsd_execute` first with an absolute `projectDir`. It returns a `sessionId`; poll `gsd_status` with that `sessionId` until the run finishes, then call `gsd_result` for accumulated output or `gsd_cancel` to stop it. If a client loses the `sessionId`, `gsd_status` can fall back to `projectDir`, or omit both fields only when this MCP server tracks exactly one session. The read-only project tools read `.gsd/` directly and do not require an active session.
+For an auto-mode run, call `gsd_execute` first with an absolute `projectDir`. It returns a `sessionId`; poll `gsd_status` with that `sessionId` until the run finishes, then call `gsd_result` for accumulated output or `gsd_cancel` to stop it. If a client loses the `sessionId`, `gsd_status` can fall back to `projectDir`, or omit both fields only when this MCP server tracks exactly one session. Read-only project tools do not require an active session. With the GSD runtime bridge available, `gsd_progress` reads the project-root database and may run pending migrations and synchronize milestone queue order, matching `gsd headless status`. It uses the `STATE.md` projection only when the database is missing or cannot be opened; failures after a successful open are returned as errors. Without the bridge, the standalone MCP package keeps its projection-reader behavior. The other read-only project tools continue to read `.gsd/` projections directly.
+
+The integration CLI `gsd read progress --json --project <path>` follows the same database-first and projection-fallback contract as `gsd_progress`.
 
 ## In-Session Update
 

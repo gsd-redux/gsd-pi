@@ -67,7 +67,7 @@ const require = createRequire(import.meta.url);
  */
 let _aliases: Record<string, string> | null = null;
 
-function getAliases(): Record<string, string> {
+export function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -86,6 +86,10 @@ function getAliases(): Record<string, string> {
 		}
 		return fileURLToPath(import.meta.resolve(specifier));
 	};
+	const agentCoreWorkspacePath = path.join(packagesRoot, "gsd-agent-core/dist");
+	const agentCoreEntry = fs.existsSync(agentCoreWorkspacePath)
+		? agentCoreWorkspacePath
+		: path.dirname(fileURLToPath(import.meta.resolve("@gsd/agent-core")));
 
 	const piCodingAgentEntry = packageIndex;
 
@@ -104,7 +108,7 @@ function getAliases(): Record<string, string> {
 		"@gsd/pi-tui": resolveWorkspaceOrImport("pi-tui/dist/index.js", "@gsd/pi-tui"),
 		"@gsd/pi-ai": resolveWorkspaceOrImport("pi-ai/dist/index.js", "@gsd/pi-ai"),
 		"@gsd/pi-ai/oauth": resolveWorkspaceOrImport("pi-ai/dist/oauth.js", "@gsd/pi-ai/oauth"),
-		"@gsd/agent-core": resolveWorkspaceOrImport("gsd-agent-core/dist/index.js", "@gsd/agent-core"),
+		"@gsd/agent-core": agentCoreEntry,
 		"@gsd/agent-modes": resolveWorkspaceOrImport("gsd-agent-modes/dist/index.js", "@gsd/agent-modes"),
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,

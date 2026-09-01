@@ -21,6 +21,7 @@ import {
   isSchemaTooNewError,
   _getAdapter,
   openDatabase,
+  openExistingDatabase,
   openDatabaseByScope,
   openDatabaseByWorkspace,
   openIsolatedDatabase,
@@ -153,15 +154,23 @@ export function resolveProjectRootDbPath(basePath: string): string {
   return resolveWorkflowDatabaseLocation(basePath).projectDb;
 }
 
-export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResult {
+function openWorkflowDatabaseWithMode(
+  basePath: string,
+  createIfMissing: boolean,
+): WorkflowDatabaseOpenResult {
   const location = resolveWorkflowDatabaseLocation(basePath);
   if (!existsSync(location.projectGsd)) {
     return { ok: false, reason: "missing-gsd-dir", location };
   }
 
   const existed = existsSync(location.projectDb);
+  if (!createIfMissing && !existed) {
+    return { ok: false, reason: "missing-database", location };
+  }
   try {
-    const opened = openDatabase(location.projectDb);
+    const opened = createIfMissing
+      ? openDatabase(location.projectDb)
+      : openExistingDatabase(location.projectDb);
     if (!opened) {
       return { ok: false, reason: "open-failed", location };
     }
@@ -191,6 +200,9 @@ export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResu
         error,
       };
     }
+    if (!createIfMissing && !existsSync(location.projectDb)) {
+      return { ok: false, reason: "missing-database", location, error };
+    }
     return {
       ok: false,
       reason: "open-failed",
@@ -200,12 +212,12 @@ export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResu
   }
 }
 
+export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResult {
+  return openWorkflowDatabaseWithMode(basePath, true);
+}
+
 export function openExistingWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResult {
-  const location = resolveWorkflowDatabaseLocation(basePath);
-  if (!existsSync(location.projectDb)) {
-    return { ok: false, reason: "missing-database", location };
-  }
-  return openWorkflowDatabase(basePath);
+  return openWorkflowDatabaseWithMode(basePath, false);
 }
 
 export function openWorkflowDatabasePath(path: string): boolean {

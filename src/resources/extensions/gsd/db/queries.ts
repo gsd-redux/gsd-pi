@@ -72,6 +72,19 @@ export interface HierarchyCompletionCounts {
   tasksTotal: number;
 }
 
+export interface MilestoneStatusCounts {
+  total: number;
+  done: number;
+  active: number;
+  pending: number;
+  parked: number;
+}
+
+export interface ProjectAuthorityVersion {
+  revision: number;
+  authorityEpoch: number;
+}
+
 function numberColumn(row: Record<string, unknown> | undefined, column: string): number {
   const value = row?.[column];
   if (typeof value === "number") return value;
@@ -97,6 +110,21 @@ function getCompletionCount(table: "milestones" | "slices" | "tasks"): { complet
   };
 }
 
+export function getProjectAuthorityVersion(): ProjectAuthorityVersion {
+  const db = getDbOrNull();
+  if (!db) throw new Error("GSD database is not available");
+
+  const row = db.prepare(
+    "SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1",
+  ).get();
+  if (!row) throw new Error("GSD project authority row is not available");
+
+  return {
+    revision: numberColumn(row, "revision"),
+    authorityEpoch: numberColumn(row, "authority_epoch"),
+  };
+}
+
 export function getHierarchyCompletionCounts(): HierarchyCompletionCounts {
   if (!getDbOrNull()!) {
     return { milestones: 0, milestonesTotal: 0, slices: 0, slicesTotal: 0, tasks: 0, tasksTotal: 0 };
@@ -114,6 +142,52 @@ export function getHierarchyCompletionCounts(): HierarchyCompletionCounts {
     tasks: tasks.completed,
     tasksTotal: tasks.total,
   };
+}
+
+export function getMilestoneStatusCounts(): MilestoneStatusCounts {
+  const db = getDbOrNull();
+  if (!db) {
+    return { total: 0, done: 0, active: 0, pending: 0, parked: 0 };
+  }
+
+  const row = db.prepare(
+    `SELECT
+       COUNT(*) AS total,
+       COALESCE(SUM(CASE WHEN status IN (${TERMINAL_STATUS_SQL}) THEN 1 ELSE 0 END), 0) AS done,
+       COALESCE(SUM(CASE WHEN status IN ('active', 'in_progress', 'in-progress') THEN 1 ELSE 0 END), 0) AS active,
+       COALESCE(SUM(CASE WHEN status = 'parked' THEN 1 ELSE 0 END), 0) AS parked
+     FROM milestones`,
+  ).get();
+  const total = numberColumn(row, "total");
+  const done = numberColumn(row, "done");
+  const active = numberColumn(row, "active");
+  const parked = numberColumn(row, "parked");
+
+  return {
+    total,
+    done,
+    active,
+    pending: total - done - active - parked,
+    parked,
+  };
+}
+
+/**
+ * Slices currently in flight, for progress reads that expose an "active"
+ * bucket (integration ProgressResult). Canonical in-flight statuses plus the
+ * legacy 'in-progress' alias — the DB column is free-form
+ * (status-guards.ts). Deferred/blocked/queued slices are NOT in flight; they
+ * land in the caller's "pending" bucket, matching the projection reader's
+ * buckets, which have no deferred field.
+ */
+export function getInFlightSliceCount(): number {
+  if (!getDbOrNull()!) return 0;
+  const row = getDbOrNull()!
+    .prepare(
+      "SELECT COUNT(*) AS n FROM slices WHERE status IN ('in_progress', 'in-progress', 'active')",
+    )
+    .get();
+  return numberColumn(row, "n");
 }
 
 export function getDecisionById(id: string): Decision | null {

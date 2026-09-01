@@ -52,6 +52,7 @@ function isSchemaTooNewErrorLike(err: unknown): err is Error {
  * through their own module graph.
  */
 export interface ReadCliSchemaPreflight {
+  resolveProjectRootDbPath: (basePath: string) => string
   openIsolatedDatabase: (path: string) => {
     prepare(sql: string): { get(): Record<string, unknown> | undefined }
     close(): void
@@ -63,17 +64,56 @@ export interface ReadCliSchemaPreflight {
 async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
   const dbWorkspaceModule = await jiti.import(gsdExtensionPath('db-workspace.ts'), {}) as any
   const engineModule = await jiti.import(gsdExtensionPath('db/engine.ts'), {}) as any
-  if (typeof dbWorkspaceModule.openWorkflowDatabaseIsolated !== 'function'
+  if (typeof dbWorkspaceModule.resolveProjectRootDbPath !== 'function'
+    || typeof dbWorkspaceModule.openWorkflowDatabaseIsolated !== 'function'
     || typeof engineModule.SCHEMA_VERSION !== 'number'
     || typeof engineModule.SchemaTooNewError !== 'function') {
     throw new Error('selected GSD extensions do not support schema-version preflight; synchronize the extension bundle')
   }
   return {
+    resolveProjectRootDbPath: dbWorkspaceModule.resolveProjectRootDbPath,
     openIsolatedDatabase: dbWorkspaceModule.openWorkflowDatabaseIsolated,
     supportedSchemaVersion: engineModule.SCHEMA_VERSION,
     createSchemaTooNewError: (currentVersion, supportedVersion) =>
       new engineModule.SchemaTooNewError(currentVersion, supportedVersion),
   }
+}
+
+async function loadDbProgressReader(
+  moduleImporter: DbProgressModuleImporter = (path) => jiti.import(path, {}),
+): Promise<DbProgressReader> {
+  let mod: any
+  try {
+    mod = await moduleImporter(gsdExtensionPath('state/progress-from-db.ts'))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `selected GSD extensions do not support DB-backed progress reads; synchronize the extension bundle (${detail})`,
+    )
+  }
+  if (typeof mod.readProgressFromDb !== 'function') {
+    throw new Error('selected GSD extensions do not support DB-backed progress reads; synchronize the extension bundle')
+  }
+  return (projectDir: string) => mod.readProgressFromDb(projectDir)
+}
+
+/**
+ * DB-backed progress payload, or null when the projection fallback applies:
+ * no DB file, or the DB cannot be opened (locked/unreadable). Schema skew
+ * has already refused loudly via assertProjectDbSchemaSupported before this
+ * runs. When the DB is usable but the read itself fails, the error propagates
+ * — it must never be swallowed into a projection fallback, which would serve
+ * exactly the stale data this path exists to prevent.
+ */
+async function tryReadProgressFromDb(
+  dbPath: string,
+  projectDir: string,
+  reader?: DbProgressReader,
+  moduleImporter?: DbProgressModuleImporter,
+): Promise<unknown | null> {
+  if (!existsSync(dbPath)) return null
+  const read = reader ?? await loadDbProgressReader(moduleImporter)
+  return await read(projectDir)
 }
 
 /**
@@ -84,6 +124,13 @@ async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
  * no migration, no global-handle side effects — and throws SchemaTooNewError
  * when the recorded schema version is newer than this binary supports. A
  * missing or unreadable DB keeps the existing degraded markdown behavior.
+ *
+ * After this guard, `gsd read progress` prefers a DB-derived payload
+ * (state/progress-from-db.ts via the extension runtime). Unlike the
+ * preflight, that read opens the DB through the engine's normal path: it
+ * runs pending migrations and syncs the milestone queue-order projection —
+ * the same contract as `gsd headless status`. A locked or unreadable DB
+ * falls back to markdown; a failed DB-backed read refuses loudly instead.
  */
 async function assertProjectDbSchemaSupported(
   dbPath: string,
@@ -109,6 +156,10 @@ async function assertProjectDbSchemaSupported(
 }
 
 export type ReadKind = 'progress' | 'roadmap' | 'memory'
+
+/** DB-backed progress reader — jiti-loaded in production, injected in tests. */
+export type DbProgressReader = (projectDir: string) => Promise<unknown>
+export type DbProgressModuleImporter = (path: string) => Promise<unknown>
 
 export interface ReadEnvelope<T = unknown> {
   integration_version: number
@@ -150,7 +201,12 @@ function parseReadArgs(argv: string[]): ReadCliOptions | null {
   return { kind, project, milestone, query, json }
 }
 
-export async function runReadCli(argv: string[], preflight?: ReadCliSchemaPreflight): Promise<number> {
+export async function runReadCli(
+  argv: string[],
+  preflight?: ReadCliSchemaPreflight,
+  dbProgressReader?: DbProgressReader,
+  dbProgressModuleImporter?: DbProgressModuleImporter,
+): Promise<number> {
   const opts = parseReadArgs(argv)
   if (!opts) {
     process.stderr.write(
@@ -170,8 +226,10 @@ export async function runReadCli(argv: string[], preflight?: ReadCliSchemaPrefli
     return 1
   }
 
+  const schemaPreflight = preflight ?? await loadSchemaPreflight()
+  const dbPath = schemaPreflight.resolveProjectRootDbPath(projectDir)
   try {
-    await assertProjectDbSchemaSupported(join(gsdRoot, 'gsd.db'), preflight)
+    await assertProjectDbSchemaSupported(dbPath, schemaPreflight)
   } catch (err) {
     if (isSchemaTooNewErrorLike(err)) {
       // Version skew must refuse loudly: exact engine message, non-zero exit —
@@ -184,9 +242,26 @@ export async function runReadCli(argv: string[], preflight?: ReadCliSchemaPrefli
 
   let data: unknown
   switch (opts.kind) {
-    case 'progress':
-      data = readProgress(projectDir)
+    case 'progress': {
+      // ADR-046: when the DB is present and openable, serve DB-derived state;
+      // the projection reader is the fallback for missing/locked DBs only.
+      let fromDb: unknown | null
+      try {
+        fromDb = await tryReadProgressFromDb(
+          dbPath,
+          projectDir,
+          dbProgressReader,
+          dbProgressModuleImporter,
+        )
+      } catch (err) {
+        process.stderr.write(
+          `[gsd] DB-backed progress read failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        )
+        return 1
+      }
+      data = fromDb ?? readProgress(projectDir)
       break
+    }
     case 'roadmap':
       data = readRoadmap(projectDir, opts.milestone)
       break

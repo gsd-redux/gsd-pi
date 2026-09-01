@@ -120,16 +120,16 @@ describe("models.generated.ts", () => {
 		expect("gpt-5.6" in MODELS["github-copilot"]).toBe(false);
 
 		for (const [id, name, input, output, cacheRead] of [
-			["gpt-5.6-sol", "GPT-5.6 Sol", 5, 30, 0.5],
-			["gpt-5.6-terra", "GPT-5.6 Terra", 2.5, 15, 0.25],
-			["gpt-5.6-luna", "GPT-5.6 Luna", 1, 6, 0.1],
+			["gpt-5.6-sol", "GPT-5.6 Sol", 2, 10, 0.2],
+			["gpt-5.6-terra", "GPT-5.6 Terra", 2, 12, 0.2],
+			["gpt-5.6-luna", "GPT-5.6 Luna", 0.2, 1.2, 0.02],
 		] as const) {
 			const copilot = MODELS["github-copilot"][id];
 			expect(copilot).toBeDefined();
 			expect(copilot.api).toBe("openai-responses");
 			expect(copilot.name).toBe(name);
 			expect(copilot.baseUrl).toBe("https://api.individual.githubcopilot.com");
-			expect(copilot.contextWindow).toBe(400_000);
+			expect(copilot.contextWindow).toBe(1_050_000);
 			expect(copilot.maxTokens).toBe(128_000);
 			expect(copilot.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh", max: "max" });
 			expect(copilot.cost.input).toBe(input);
@@ -156,16 +156,21 @@ describe("models.generated.ts", () => {
 	});
 
 	test("includes GPT-5.6 variants for OpenAI and OpenAI Codex providers", () => {
-		expect("gpt-5.6" in MODELS.openai).toBe(false);
+		// models.dev now lists the GPT-5.6 family natively; the curated fill in
+		// generate-models.ts stands down when upstream data is present.
+		expect("gpt-5.6" in MODELS.openai).toBe(true);
 		expect("gpt-5.6" in MODELS["openai-codex"]).toBe(false);
+		expect(MODELS.openai["gpt-5.6"].contextWindow).toBe(1_050_000);
+		expect(MODELS.openai["gpt-5.6"].cost).toMatchObject({ input: 4, output: 20, cacheRead: 0.4 });
 
 		const variants = [
-			["gpt-5.6-sol", "GPT-5.6 Sol", 5, 30],
-			["gpt-5.6-terra", "GPT-5.6 Terra", 2.5, 15],
-			["gpt-5.6-luna", "GPT-5.6 Luna", 1, 6],
+			// [id, name, openai input, openai output, codex input, codex output]
+			["gpt-5.6-sol", "GPT-5.6 Sol", 4, 20, 5, 30],
+			["gpt-5.6-terra", "GPT-5.6 Terra", 2, 12, 2.5, 15],
+			["gpt-5.6-luna", "GPT-5.6 Luna", 0.2, 1.2, 1, 6],
 		] as const;
 
-		for (const [id, name, input, output] of variants) {
+		for (const [id, name, openaiInput, openaiOutput, codexInput, codexOutput] of variants) {
 			const openai = MODELS.openai[id];
 			expect(openai).toBeDefined();
 			expect(openai.api).toBe("openai-responses");
@@ -173,8 +178,8 @@ describe("models.generated.ts", () => {
 			expect(openai.contextWindow).toBe(272_000);
 			expect(openai.maxTokens).toBe(128_000);
 			expect(openai.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh", max: "max" });
-			expect(openai.cost.input).toBe(input);
-			expect(openai.cost.output).toBe(output);
+			expect(openai.cost.input).toBe(openaiInput);
+			expect(openai.cost.output).toBe(openaiOutput);
 
 			const codex = MODELS["openai-codex"][id];
 			expect(codex).toBeDefined();
@@ -184,8 +189,8 @@ describe("models.generated.ts", () => {
 			expect(codex.contextWindow).toBe(372_000);
 			expect(codex.maxTokens).toBe(128_000);
 			expect(codex.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max", minimal: "low" });
-			expect(codex.cost.input).toBe(input);
-			expect(codex.cost.output).toBe(output);
+			expect(codex.cost.input).toBe(codexInput);
+			expect(codex.cost.output).toBe(codexOutput);
 		}
 
 		const sol = MODELS["openai-codex"]["gpt-5.6-sol"];
@@ -235,9 +240,9 @@ describe("models.generated.ts", () => {
 				input: ["text", "image", "video"],
 				compat: { forceAdaptiveThinking: true },
 				cost: {
-					input: 0.6,
-					output: 2.4,
-					cacheRead: 0.12,
+					input: 0.3,
+					output: 1.2,
+					cacheRead: 0.06,
 					cacheWrite: 0,
 				},
 				contextWindow: 1000000,
@@ -260,11 +265,11 @@ describe("models.generated.ts", () => {
 			cost: {
 				input: 2,
 				output: 6,
-				cacheRead: 0.5,
+				cacheRead: 0.3,
 				cacheWrite: 0,
 			},
 			contextWindow: 500000,
-			maxTokens: 30000,
+			maxTokens: 500000,
 		});
 	});
 

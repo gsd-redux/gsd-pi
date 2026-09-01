@@ -34,6 +34,7 @@ import { resolveGsdRoot, resolveMilestoneFile } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
 import {
   hasWorkflowToolBridgeConfiguration,
+  readProjectProgressViaBridge,
   registerWorkflowTools,
   validateProjectDir,
   warmWorkflowToolBridges,
@@ -379,6 +380,31 @@ interface McpServerInstance {
   };
   connect(transport: unknown): Promise<void>;
   close(): Promise<void>;
+}
+
+function registerProgressTool(server: Pick<McpServerInstance, 'tool'>): void {
+  server.tool(
+    'gsd_progress',
+    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = args as { projectDir: string };
+      try {
+        const dir = validateProjectDir(projectDir);
+        if (hasWorkflowToolBridgeConfiguration()) {
+          const fromDb = await readProjectProgressViaBridge(dir);
+          if (fromDb !== null) {
+            return jsonContent(fromDb);
+          }
+        }
+        return jsonContent(readProgress(dir));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
 }
 
 interface AskUserQuestionOption {
@@ -1366,27 +1392,13 @@ export async function createMcpServer(
   );
 
   // =======================================================================
-  // READ-ONLY TOOLS — no session required, pure filesystem reads
+  // READ-ONLY TOOLS — no session required
   // =======================================================================
 
   // -----------------------------------------------------------------------
   // gsd_progress — structured project progress metrics
   // -----------------------------------------------------------------------
-  server.tool(
-    'gsd_progress',
-    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads directly from .gsd/ on disk.',
-    {
-      projectDir: z.string().describe('Absolute path to the project directory'),
-    },
-    async (args: Record<string, unknown>) => {
-      const { projectDir } = args as { projectDir: string };
-      try {
-        return jsonContent(readProgress(validateProjectDir(projectDir)));
-      } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
-      }
-    },
-  );
+  registerProgressTool(server);
 
   // -----------------------------------------------------------------------
   // gsd_roadmap — milestone/slice/task structure with status

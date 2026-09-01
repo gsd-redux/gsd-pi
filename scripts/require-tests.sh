@@ -3,7 +3,8 @@
 # Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 #
 # Fails CI if a PR changes source files but includes no test file changes.
-# Exemptions: docs-only, CI/config, test-only, and chore branches.
+# Exemptions: docs-only, CI/config, test-only, chore branches, and generated
+# artifacts (*.generated.*) that are machine-regenerated.
 
 set -euo pipefail
 
@@ -35,10 +36,13 @@ if [[ "$BRANCH" =~ ^(docs|chore|ci)/ ]]; then
 fi
 
 # --- classify changed files ---
-# Source files: .ts/.mts/.mjs/.js in src/ or packages/, excluding tests and type declarations
+# Source files: .ts/.mts/.mjs/.js in src/ or packages/, excluding tests, type
+# declarations, and generated artifacts (machine-regenerated; bot PRs like
+# model-catalog refresh never carry hand-written tests)
 SRC_FILES=$(echo "$FILES" | grep -E '^(src|packages)/.*\.(ts|mts|mjs|js)$' \
   | grep -vE '\.(test|spec)\.' \
   | grep -vE '\.d\.ts$' \
+  | grep -vE '\.generated\.' \
   | grep -vE '__tests__/' \
   | grep -vE '/tests/' \
   || true)

@@ -79,6 +79,10 @@ Local parity: **`npm run verify:merge`** (runs the same npm scripts sequentially
 - `test:coverage:full` — merged coverage artifacts
 - Runs manually, weekly, or on PRs labeled `coverage`
 
+The workflow builds the native test addon from the checked-out Rust source and
+sets `GSD_NATIVE_PREFER_LOCAL=1`. For compiled coverage suites, it copies that
+addon into `dist-test/native/addon/` before merging the coverage artifacts.
+
 ### Warn or path-gate
 
 - **Windows e2e smoke** — runs when Windows-relevant paths change but does not block merge today
