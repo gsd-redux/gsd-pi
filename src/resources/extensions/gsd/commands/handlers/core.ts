@@ -107,7 +107,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd copilot-models Inspect and manage the live GitHub Copilot model catalog",
     "  /gsd copilot-models sync          Refresh the accepted Copilot live catalog snapshot",
     "  /gsd copilot-models changes       Show the last accepted Copilot catalog diff",
-    "  /gsd copilot-models pricing [model]  Show provider-aware pricing with source/freshness",
+    "  /gsd copilot-models pricing  Show provider-aware pricing for one model or the accepted snapshot",
     "  /gsd copilot-models promos        Show active, future, and expired Copilot promotions",
     "  /gsd copilot-models doctor        Local-only auth/cache/policy/quarantine diagnostics",
     "  /gsd copilot-models why <model>  Explain a Copilot model's local status/routing/economics (local-only)",

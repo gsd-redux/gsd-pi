@@ -444,6 +444,9 @@ function normalizeSupportedEndpoints(
   if (liveApis.length > 1 && !chosenApi) {
     conflicts.push(`no canonical transport can be determined from endpoint alternatives: ${liveApis.join(", ")}`);
   }
+  if (liveApis.length === 1 && staticApi && liveApis[0] !== staticApi) {
+    conflicts.push(`provider-live transport ${liveApis[0]} conflicts with provider-static transport ${staticApi}`);
+  }
 
   return {
     api: chosenApi,

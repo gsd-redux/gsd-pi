@@ -1382,6 +1382,7 @@ test("handleCopilotModels: --register on a first run writes complete remote-only
         name: "Brand New Complete",
         tool_call: true,
         supported_endpoints: ["/responses"],
+        vision: false,
         reasoning: true,
         limit: { context: 400000, output: 128000 },
         cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
@@ -1413,6 +1414,7 @@ test("handleCopilotModels: --register calls modelRegistry.refresh() so newly-reg
         name: "Brand New Complete",
         tool_call: true,
         supported_endpoints: ["/responses"],
+        vision: false,
         reasoning: true,
         limit: { context: 400000, output: 128000 },
         cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
@@ -1476,7 +1478,8 @@ test("showHelp: full help lists the expanded copilot-models subcommands", () => 
 
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models sync")));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models changes")));
-  assert.ok(lines.some((line) => line.includes("/gsd copilot-models pricing [model]")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models pricing")));
+  assert.ok(lines.every((line) => !/pricing \[model\]/i.test(line)));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models promos")));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models doctor")));
 });

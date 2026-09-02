@@ -120,6 +120,9 @@ function registrationBlockers(record: CopilotModelRecord): string[] {
   if (record.execution?.reasoning === undefined) {
     blockers.push("missing authoritative reasoning support flag");
   }
+  if (record.execution?.vision === undefined) {
+    blockers.push("missing authoritative input modality");
+  }
   if (record.billing?.inputPer1k === undefined) {
     blockers.push("missing authoritative input token price");
   }
@@ -150,6 +153,7 @@ export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model
   if (
     !api
     || reasoning === undefined
+    || vision === undefined
     || !contextWindow
     || !maxTokens
     || inputPer1k === undefined

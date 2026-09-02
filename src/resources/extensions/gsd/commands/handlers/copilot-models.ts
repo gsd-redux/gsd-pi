@@ -105,7 +105,7 @@ const COPILOT_MODELS_USAGE = [
   "  /gsd copilot-models sync              Refresh the accepted live catalog snapshot",
   "  /gsd copilot-models sync --register   Register complete remote-only models into the local overlay",
   "  /gsd copilot-models changes           Show the last accepted catalog diff",
-  "  /gsd copilot-models pricing <model>   Show provider-aware pricing with source/freshness",
+  "  /gsd copilot-models pricing           Show provider-aware pricing for one model or the accepted snapshot",
   "  /gsd copilot-models promos            Show active, future, and expired promotions",
   "  /gsd copilot-models doctor           Local-only auth/cache/policy/quarantine diagnostics",
   "  /gsd copilot-models why <model>       Explain a model's local status/routing/economics",
