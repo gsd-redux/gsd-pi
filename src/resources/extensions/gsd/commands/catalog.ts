@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { getModels } from "@gsd/pi-ai";
+
 import { loadRegistry } from "../workflow-templates.js";
 import { gsdHome } from "../gsd-home.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
@@ -430,6 +432,16 @@ function getExtensionCompletions(prefix: string, action: string) {
   }
 }
 
+function getCopilotModelCompletions(partial: string, action: "pricing" | "why") {
+  return getModels("github-copilot")
+    .filter((model) => model.id.startsWith(partial) || `github-copilot/${model.id}`.startsWith(partial))
+    .map((model) => ({
+      value: `copilot-models ${action} ${model.id}`,
+      label: model.id,
+      description: model.name,
+    }));
+}
+
 function resolveProjectRootForCompletion(basePath: string): string {
   // Completion honors GSD_PROJECT_ROOT unconditionally (worker processes may
   // complete from any cwd); resolveWorktreeProjectRoot only honors it for
@@ -489,6 +501,10 @@ export function getGsdArgumentCompletions(prefix: string) {
 
   if (command === "extensions" && parts.length === 3 && ["enable", "disable", "info"].includes(subcommand)) {
     return getExtensionCompletions(third, subcommand);
+  }
+
+  if (command === "copilot-models" && (subcommand === "pricing" || subcommand === "why") && parts.length <= 3) {
+    return getCopilotModelCompletions(third, subcommand);
   }
 
   if (command === "undo" && parts.length <= 2) {

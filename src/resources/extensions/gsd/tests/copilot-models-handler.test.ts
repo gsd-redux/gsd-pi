@@ -379,6 +379,22 @@ test("handleCopilotModels: placeholder syntax is never completed or accepted as 
   );
 });
 
+test("getGsdArgumentCompletions: copilot-models pricing and why complete real model IDs after the subcommand", () => {
+  const pricing = getGsdArgumentCompletions("copilot-models pricing gpt-5");
+  const why = getGsdArgumentCompletions("copilot-models why kimi");
+
+  assert.ok(
+    pricing.some((entry) => entry.value === "copilot-models pricing gpt-5.4"),
+    "pricing subcommand should complete concrete GitHub Copilot model IDs",
+  );
+  assert.ok(
+    why.some((entry) => entry.value === "copilot-models why kimi-k3"),
+    "why subcommand should complete concrete GitHub Copilot model IDs",
+  );
+  assert.ok(pricing.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+  assert.ok(why.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+});
+
 test("handleCopilotModels: help subcommand prints usage without auth or network", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
