@@ -17,7 +17,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { findCheaperSameTierOption, type CheaperSameTierSuggestion } from "./commands/handlers/copilot-models.js";
 import type { CopilotModelSnapshot } from "./copilot-model-catalog.js";
-import { canonicalizeModelId, compareCapabilityDominance, MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
+import { compareCapabilityDominance, resolveCapabilityProfile, type ModelCapabilities } from "./model-router.js";
 
 // Session-scoped only — never persisted to disk, mirrors the existing
 // per-account notification dedup pattern in commands/handlers/copilot-models.ts.
@@ -41,8 +41,8 @@ export function compareCapabilityScores(
 
 function compareModelCapabilities(selectedBareId: string, candidateBareId: string): ReturnType<typeof compareCapabilityScores> {
 	return compareCapabilityScores(
-		MODEL_CAPABILITY_PROFILES[canonicalizeModelId(selectedBareId)],
-		MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
+		resolveCapabilityProfile(selectedBareId).profile,
+		resolveCapabilityProfile(candidateBareId).profile,
 	);
 }
 

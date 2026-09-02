@@ -30,9 +30,9 @@ import {
   canonicalizeModelId,
   compareCapabilityDominance,
   getModelProfileConfidence,
-  MODEL_CAPABILITY_PROFILES,
   MODEL_CAPABILITY_TIER,
   PROFILE_CONFIDENCE_ORDINAL,
+  resolveCapabilityProfile,
 } from "../../model-router.js";
 
 interface CopilotCatalogDiffState {
@@ -488,6 +488,12 @@ function economicsFreshnessSummary(economics: RuntimeModelEconomics): string {
   return economics.provenance.defaultTokenPrices?.freshness ?? "unknown";
 }
 
+function toolCallsSummary(value: boolean | undefined): "yes" | "no" | "unknown" {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "unknown";
+}
+
 export interface CheaperSameTierSuggestion {
   modelId: string;
   tier: string;
@@ -562,8 +568,8 @@ export function findCheaperSameTierOption(
     if (candidateConfidence === "unknown") continue;
     if (
       compareCapabilityDominance(
-        MODEL_CAPABILITY_PROFILES[canonicalizeModelId(bareId)],
-        MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
+        resolveCapabilityProfile(bareId).profile,
+        resolveCapabilityProfile(candidateBareId).profile,
       ) === "incomparable"
     ) continue;
 
@@ -809,7 +815,7 @@ function buildWhyExplanation(
     `- preview: ${liveRecord?.availability.preview === true ? "yes" : liveRecord?.availability.preview === false ? "no" : "unknown"}`,
     `- runtime API: ${liveRecord?.execution.api ?? localModel?.api ?? "unknown"}`,
     `- supported endpoints: ${(liveRecord?.execution.supportedEndpoints ?? []).join(", ") || "unknown"}`,
-    `- tool calls: ${(liveRecord?.execution.toolCalls ?? true) ? "yes" : "no"}`,
+    `- tool calls: ${toolCallsSummary(liveRecord?.execution.toolCalls)}`,
     `- context/output: ${liveRecord?.execution.contextWindow ?? localModel?.contextWindow ?? "unknown"} / ${liveRecord?.execution.maxTokens ?? localModel?.maxTokens ?? "unknown"}`,
     `- economics: ${economicsSummary(economics)}`,
     `- source: ${economicsSourceSummary(economics)}`,

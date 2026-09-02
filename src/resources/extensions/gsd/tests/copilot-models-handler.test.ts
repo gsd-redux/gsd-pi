@@ -602,6 +602,7 @@ test("handleCopilotModels: why reports last known live catalog as unknown when n
   await handleCopilotModels("why gpt-5.4", ctx, {});
 
   assert.match(notifications[0].message, /^- last known live catalog: unknown$/m);
+  assert.match(notifications[0].message, /^- tool calls: unknown$/m);
 });
 
 test("handleCopilotModels: why marks an unknown capability tier/confidence as not routing-eligible", async () => {

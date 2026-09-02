@@ -76,7 +76,10 @@ export function compareCapabilityDominance(
   candidate: ModelCapabilities | undefined,
 ): "higher" | "equivalent" | "incomparable" {
   if (!selected || !candidate) return "incomparable";
-  const dimensions = Object.keys(selected) as Array<keyof ModelCapabilities>;
+  const dimensions = CAPABILITY_DIMENSIONS;
+  if (dimensions.some((dimension) => !Number.isFinite(selected[dimension]) || !Number.isFinite(candidate[dimension]))) {
+    return "incomparable";
+  }
   if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
   return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
 }
@@ -426,7 +429,7 @@ function buildNeutralCapabilityProfile(): ModelCapabilities {
   };
 }
 
-function resolveCapabilityProfile(
+export function resolveCapabilityProfile(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): { profile: ModelCapabilities; confidence: CapabilityProfileConfidence } {

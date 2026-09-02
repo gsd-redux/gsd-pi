@@ -66,6 +66,15 @@ test("compareCapabilityScores: incomparable when either profile is missing (neve
   assert.equal(compareCapabilityScores(selected, undefined), "incomparable");
 });
 
+test("compareCapabilityScores: incomparable when any required dimension is missing or non-finite", () => {
+  const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
+  const missingDimension = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50 } as any;
+  const nonFinite = { ...selected, coding: Number.NaN };
+
+  assert.equal(compareCapabilityScores(selected, missingDimension), "incomparable");
+  assert.equal(compareCapabilityScores(selected, nonFinite), "incomparable");
+});
+
 // ─── maybeNotifyCheaperAlternative ──────────────────────────────────────────
 
 test("maybeNotifyCheaperAlternative: no qualifying alternative sends no notification", () => {
@@ -214,4 +223,27 @@ test("maybeNotifyCheaperAlternative: a cheaper same-tier model with any lower re
 
   assert.equal(sent, false);
   assert.equal(notifications.length, 0);
+});
+
+test("maybeNotifyCheaperAlternative: skips an incomparable cheapest candidate and selects a safe second candidate", () => {
+  _resetCopilotModelsSessionStateForTests();
+  _resetCopilotCatalogNotificationStateForTests();
+  const { ctx, notifications } = createFakeCtx([
+    { id: "claude-sonnet-4-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+    { id: "gpt-4.1", provider: "github-copilot", cost: { input: 1, output: 4, cacheRead: 0, cacheWrite: 0 } },
+    { id: "claude-sonnet-4", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+  ]);
+
+  const sent = maybeNotifyCheaperAlternative({
+    ctx,
+    accountScope: "/project",
+    selectedModelProvider: "github-copilot",
+    selectedModelId: "claude-sonnet-4-5",
+    snapshot: null,
+  });
+
+  assert.equal(sent, true);
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0]!.message, /github-copilot\/claude-sonnet-4\b/);
+  assert.doesNotMatch(notifications[0]!.message, /github-copilot\/gpt-4\.1\b/);
 });
