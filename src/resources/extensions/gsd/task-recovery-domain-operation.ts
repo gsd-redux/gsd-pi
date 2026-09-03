@@ -400,6 +400,7 @@ export function readPendingTaskRecoveryContext(
   const storedAction = String(stored["action"]);
   let checkpoint = stored;
   const resumeAuthorized = isTaskRecoveryResumeAuthorized(attemptId);
+  if (storedAction === "abort" && !resumeAuthorized) return null;
   if (resumeAuthorized) {
     const lifecycleId = String(stored["lifecycle_id"]);
     const resumed = getDb().prepare(`
