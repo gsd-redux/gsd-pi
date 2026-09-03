@@ -107,7 +107,7 @@ const COPILOT_MODELS_USAGE = [
   "  /gsd copilot-models sync              Refresh the accepted live catalog snapshot",
   "  /gsd copilot-models sync --register   Register complete remote-only models into the local overlay",
   "  /gsd copilot-models changes           Show the last accepted catalog diff",
-  "  /gsd copilot-models pricing [model]   Show provider-aware pricing with source/freshness",
+  "  /gsd copilot-models pricing           Show provider-aware pricing for one model or the accepted snapshot",
   "  /gsd copilot-models promos            Show active, future, and expired promotions",
   "  /gsd copilot-models doctor           Local-only auth/cache/policy/quarantine diagnostics",
   "  /gsd copilot-models why <model>       Explain a model's local status/routing/economics",
@@ -129,6 +129,9 @@ function parseProviderModelArgument(prefix: string, args: string, required: bool
       : { valid: true };
   }
   const rawTarget = rest.split(/\s+/)[0] ?? "";
+  if (/^(?:\[model\]|<model>)$/i.test(rawTarget)) {
+    return { valid: false, error: `Usage: /gsd copilot-models ${prefix} <model>` };
+  }
   const provider = rawTarget.includes("/") ? rawTarget.split("/")[0]?.toLowerCase() : "";
   if (provider && provider !== "github-copilot") {
     return {
