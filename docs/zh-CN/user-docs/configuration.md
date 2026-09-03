@@ -331,6 +331,9 @@ auto_supervisor:
   stalled_tool_timeout_minutes: 5  # 恢复在调用中卡死的 tool（默认：5）
 ```
 
+长时协调工具（`subagent` 及其 `Task` 别名）不受 `stalled_tool_timeout_minutes` 约束——并行
+reviewer 的 subagent 合法运行可能远超该预算。真正卡死的 subagent 仍由 `hard_timeout_minutes` 兜底。
+
 ### `budget_ceiling`
 
 自动模式期间允许消耗的最大美元金额。不需要 `$`，直接填数字：
