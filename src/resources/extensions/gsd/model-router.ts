@@ -70,6 +70,20 @@ export interface ModelCapabilities {
   instruction: number;
 }
 
+/** Compare all required dimensions without allowing averages to hide regressions. */
+export function compareCapabilityDominance(
+  selected: ModelCapabilities | undefined,
+  candidate: ModelCapabilities | undefined,
+): "higher" | "equivalent" | "incomparable" {
+  if (!selected || !candidate) return "incomparable";
+  const dimensions = CAPABILITY_DIMENSIONS;
+  if (dimensions.some((dimension) => !Number.isFinite(selected[dimension]) || !Number.isFinite(candidate[dimension]))) {
+    return "incomparable";
+  }
+  if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
+  return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
+}
+
 /**
  * Semantic aliases whose spelling differs by more than separator or casing.
  * Both keys and values are canonical so formatting variants never need entries.
@@ -444,7 +458,7 @@ function buildNeutralCapabilityProfile(): ModelCapabilities {
   };
 }
 
-function resolveCapabilityProfile(
+export function resolveCapabilityProfile(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): { profile: ModelCapabilities; confidence: CapabilityProfileConfidence } {
