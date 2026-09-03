@@ -11,10 +11,8 @@
  * no registry mutation code — this only ever produces/merges/writes the
  * existing overlay file format.
  *
- * Every synthesized field the live Copilot `/models` response does not itself
- * expose (reasoning, context window, max tokens, cost) is a documented,
- * clearly-labeled placeholder — never presented as authoritative pricing or
- * capability data. Existing overlay entries (in particular anything already
+ * Overlay entries are synthesized only from complete, authoritative metadata.
+ * Existing overlay entries (in particular anything already
  * sourced from the `packages/pi-ai` generator via `models.dev`) are never
  * downgraded or overwritten by this module.
  */
@@ -108,8 +106,10 @@ function registrationBlockers(record: CopilotModelRecord): string[] {
   if (!record.execution?.api) {
     blockers.push("missing authoritative runtime API/endpoint mapping");
   }
-  if (record.execution?.toolCalls !== true) {
-    blockers.push("tool calling is unavailable");
+  if (record.execution?.toolCalls === false) {
+    blockers.push("provider reports tool calling is unavailable");
+  } else if (record.execution?.toolCalls === undefined) {
+    blockers.push("tool-call support is unknown");
   }
   if (!record.execution?.contextWindow) {
     blockers.push("missing authoritative context window");
@@ -119,6 +119,9 @@ function registrationBlockers(record: CopilotModelRecord): string[] {
   }
   if (record.execution?.reasoning === undefined) {
     blockers.push("missing authoritative reasoning support flag");
+  }
+  if (record.execution?.vision === undefined) {
+    blockers.push("missing authoritative input modality");
   }
   if (record.billing?.inputPer1k === undefined) {
     blockers.push("missing authoritative input token price");
@@ -141,33 +144,49 @@ function registrationBlockers(record: CopilotModelRecord): string[] {
  * Callers must only use this after `registrationBlockers()` returned no blockers.
  */
 export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model<Api> {
-  if (!record.execution.api) {
-    throw new Error(`Cannot synthesize overlay entry for ${record.registryId} without a resolved API.`);
+  const blockers = registrationBlockers(record);
+  if (blockers.length > 0) {
+    throw new Error(`Cannot synthesize overlay entry for ${record.registryId}: ${blockers.join("; ")}.`);
+  }
+  const { api, reasoning, reasoningLevels, vision, contextWindow, maxTokens } = record.execution;
+  const { inputPer1k, outputPer1k, cacheReadPer1k, cacheWritePer1k, longContextTiers } = record.billing;
+  if (
+    !api
+    || reasoning === undefined
+    || vision === undefined
+    || !contextWindow
+    || !maxTokens
+    || inputPer1k === undefined
+    || outputPer1k === undefined
+    || cacheReadPer1k === undefined
+    || cacheWritePer1k === undefined
+  ) {
+    throw new Error(`Cannot synthesize overlay entry for ${record.registryId} without complete authoritative metadata.`);
   }
 
   return {
     id: record.id,
     name: record.name || record.id,
-    api: record.execution.api,
+    api,
     provider: "github-copilot",
     baseUrl: COPILOT_OVERLAY_BASE_URL,
-    reasoning: record.execution.reasoning ?? false,
-    ...(record.execution.reasoningLevels.length > 0
+    reasoning,
+    ...(reasoningLevels.length > 0
       ? {
           thinkingLevelMap: Object.fromEntries(
-            record.execution.reasoningLevels.map((level) => [level, level]),
+            reasoningLevels.map((level) => [level, level]),
           ),
         }
       : {}),
-    input: record.execution.vision ? ["text", "image"] : ["text"],
+    input: vision ? ["text", "image"] : ["text"],
     cost: {
-      input: toPerMillion(record.billing.inputPer1k ?? 0),
-      output: toPerMillion(record.billing.outputPer1k ?? 0),
-      cacheRead: toPerMillion(record.billing.cacheReadPer1k ?? 0),
-      cacheWrite: toPerMillion(record.billing.cacheWritePer1k ?? 0),
-      ...(record.billing.longContextTiers?.length
+      input: toPerMillion(inputPer1k),
+      output: toPerMillion(outputPer1k),
+      cacheRead: toPerMillion(cacheReadPer1k),
+      cacheWrite: toPerMillion(cacheWritePer1k),
+      ...(longContextTiers?.length
         ? {
-            tiers: record.billing.longContextTiers.map((tier) => ({
+            tiers: longContextTiers.map((tier) => ({
               inputTokensAbove: tier.inputTokensAbove,
               ...(tier.inputPer1k !== undefined ? { input: toPerMillion(tier.inputPer1k) } : {}),
               ...(tier.outputPer1k !== undefined ? { output: toPerMillion(tier.outputPer1k) } : {}),
@@ -177,8 +196,8 @@ export function synthesizeCopilotOverlayEntry(record: CopilotModelRecord): Model
           }
         : {}),
     },
-    contextWindow: record.execution.contextWindow ?? 1,
-    maxTokens: record.execution.maxTokens ?? 1,
+      contextWindow,
+      maxTokens,
     headers: { ...COPILOT_OVERLAY_HEADERS },
     ...(apiSpecificCompat(record) ? { compat: apiSpecificCompat(record) } : {}),
   };

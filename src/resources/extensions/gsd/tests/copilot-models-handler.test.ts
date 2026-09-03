@@ -358,6 +358,43 @@ test("handleCopilotModels: why with no model argument reports usage and never to
   assert.equal(notifications[1].message, "Usage: /gsd copilot-models why <model>");
 });
 
+test("handleCopilotModels: placeholder syntax is never completed or accepted as a model ID", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
+
+  const completions = getGsdArgumentCompletions("copilot-models ");
+  assert.ok(completions.some((entry) => entry.label === "pricing" && entry.value === "copilot-models pricing"));
+  assert.ok(completions.some((entry) => entry.label === "why" && entry.value === "copilot-models why"));
+  assert.ok(completions.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+
+  await handleCopilotModels("pricing [model]", ctx, {});
+  await handleCopilotModels("why <model>", ctx, {});
+
+  assert.deepEqual(
+    notifications.map((notification) => notification.message),
+    [
+      "Usage: /gsd copilot-models pricing <model>",
+      "Usage: /gsd copilot-models why <model>",
+    ],
+  );
+});
+
+test("getGsdArgumentCompletions: copilot-models pricing and why complete real model IDs after the subcommand", () => {
+  const pricing = getGsdArgumentCompletions("copilot-models pricing gpt-5");
+  const why = getGsdArgumentCompletions("copilot-models why kimi");
+
+  assert.ok(
+    pricing.some((entry) => entry.value === "copilot-models pricing gpt-5.4"),
+    "pricing subcommand should complete concrete GitHub Copilot model IDs",
+  );
+  assert.ok(
+    why.some((entry) => entry.value === "copilot-models why kimi-k3"),
+    "why subcommand should complete concrete GitHub Copilot model IDs",
+  );
+  assert.ok(pricing.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+  assert.ok(why.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
+});
+
 test("handleCopilotModels: help subcommand prints usage without auth or network", async () => {
   _resetCopilotModelsSessionStateForTests();
   const { ctx, notifications } = createFakeCtx({ models: [], apiKey: undefined });
@@ -602,6 +639,21 @@ test("handleCopilotModels: why reports last known live catalog as unknown when n
   await handleCopilotModels("why gpt-5.4", ctx, {});
 
   assert.match(notifications[0].message, /^- last known live catalog: unknown$/m);
+});
+
+test("handleCopilotModels: why preserves unknown live tool-call support", async () => {
+  _resetCopilotModelsSessionStateForTests();
+  const { ctx, notifications } = createFakeCtx({
+    models: [{ id: "gpt-5.4", provider: "github-copilot" }],
+    apiKey: "token-abc",
+  });
+
+  await handleCopilotModels("sync", ctx, {
+    fetchImpl: jsonResponse([{ id: "gpt-5.4", name: "GPT-5.4" }]) as unknown as typeof fetch,
+  });
+  await handleCopilotModels("why gpt-5.4", ctx, {});
+
+  assert.match(notifications[1].message, /^- tool calls: unknown$/m);
 });
 
 test("handleCopilotModels: why marks an unknown capability tier/confidence as not routing-eligible", async () => {
@@ -1346,6 +1398,7 @@ test("handleCopilotModels: --register on a first run writes complete remote-only
         name: "Brand New Complete",
         tool_call: true,
         supported_endpoints: ["/responses"],
+        vision: false,
         reasoning: true,
         limit: { context: 400000, output: 128000 },
         cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
@@ -1377,6 +1430,7 @@ test("handleCopilotModels: --register calls modelRegistry.refresh() so newly-reg
         name: "Brand New Complete",
         tool_call: true,
         supported_endpoints: ["/responses"],
+        vision: false,
         reasoning: true,
         limit: { context: 400000, output: 128000 },
         cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
@@ -1417,11 +1471,12 @@ test("getGsdArgumentCompletions: /gsd copilot-models completions include the exp
   const labels = completions.map((entry) => entry.label);
   assert.ok(labels.includes("sync"));
   assert.ok(labels.includes("changes"));
-  assert.ok(labels.includes("pricing [model]"));
+  assert.ok(labels.includes("pricing"));
   assert.ok(labels.includes("promos"));
   assert.ok(labels.includes("doctor"));
-  assert.ok(labels.includes("why <model>"));
+  assert.ok(labels.includes("why"));
   assert.ok(labels.includes("--register"));
+  assert.ok(completions.every((entry) => !/[\[<]model[\]>]/i.test(entry.value)));
 });
 
 test("showHelp: full help lists the expanded copilot-models subcommands", () => {
@@ -1439,7 +1494,8 @@ test("showHelp: full help lists the expanded copilot-models subcommands", () => 
 
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models sync")));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models changes")));
-  assert.ok(lines.some((line) => line.includes("/gsd copilot-models pricing [model]")));
+  assert.ok(lines.some((line) => line.includes("/gsd copilot-models pricing")));
+  assert.ok(lines.every((line) => !/pricing \[model\]/i.test(line)));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models promos")));
   assert.ok(lines.some((line) => line.includes("/gsd copilot-models doctor")));
 });
