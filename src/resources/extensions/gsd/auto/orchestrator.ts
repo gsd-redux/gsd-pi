@@ -66,6 +66,7 @@ import { normalizeRealPath } from "../paths.js";
 import { preserveProjectionChanges } from "../projection-worker.js";
 import { throwIfTransientProjectionLockError } from "../projection-root-errors.js";
 import { buildDispatchKey } from "./dispatch-key.js";
+import { stableClaimSignature } from "./lease-conflict-notice.js";
 import {
   COMPLETED_NO_ADVANCE_GUARD_ID,
   formatWedgeRefusalNotice,
@@ -1535,8 +1536,43 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         : this.openUnitRun(decision.unitType, decision.unitId, reconciliation.stateSnapshot);
       if (typeof dispatchId !== "number") {
         this.clearPendingDispatch();
+        // ADR-047 (#2097): a rejected unit-run claim (lease held/blocked,
+        // degraded, or skip) is a non-advancing guard block just like every
+        // other blocked path above. It MUST register a stable liveness identity
+        // so adjudicateLiveness can record/trip the signature ledger. Without
+        // this, the blocked result reaches adjudicateLiveness with no
+        // pendingLivenessInput and degrades into the "semantic guard did not
+        // provide a stable identity" backstop-unavailable hard-stop — which
+        // /gsd doctor --fix cannot repair because nothing is corrupt.
+        if (dispatchId.kind === "blocked") {
+          this.journalTransition({
+            name: "advance-blocked",
+            reason: dispatchId.reason,
+            unitType: decision.unitType,
+            unitId: decision.unitId,
+          });
+        }
         this.postAdvanceRecord(dispatchId);
-        return dispatchId;
+        // Use a stable signature payload: lease-held reasons embed a volatile
+        // `until <expiresAt>` timestamp that advances on every holder
+        // heartbeat, which would defeat the ADR-047 occurrence-2 wedge trip.
+        const claimInputPayload = dispatchId.kind === "blocked"
+          ? stableClaimSignature(dispatchId.reason)
+          : buildDispatchKey(decision.unitType, decision.unitId);
+        return this.withLivenessInput(dispatchId, {
+          guardId: "unit-run-claim",
+          inputPayload: claimInputPayload,
+          // ADR-047 §5: a tripped wedge MUST carry a reachable recovery
+          // instruction. Without an explicit sanctionedExit the ledger falls
+          // back to the raw claim reason (e.g. `missing-worker`), which tells
+          // the operator nothing about how to clear the claim blocker.
+          sanctionedExit:
+            `Auto-mode could not claim a unit-run for ${decision.unitType} ${decision.unitId} ` +
+            `(${claimInputPayload}). Another live worker may hold the milestone lease, or the ` +
+            `owning worker is shutting down mid-retry. Inspect \`/gsd status\` for the active ` +
+            `UnitRun and lease holder, then re-run once the lease is released (or run ` +
+            `\`/gsd doctor\` if no worker is live).`,
+        });
       }
 
       this.status.phase = "running";
