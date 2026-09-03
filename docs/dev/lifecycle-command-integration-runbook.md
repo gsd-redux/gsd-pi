@@ -192,17 +192,17 @@ automatable failure returns to agent-owned repair. Work stops for a person only
 when access/authority is unavailable or a genuinely ambiguous product choice
 cannot be resolved from accepted decisions.
 
-## Resume after an agent-owned abort
+## Resume after an agent-owned abort or remediation
 
 Use `gsd_task_recovery_resume` only after the recorded cause has been repaired:
 
-1. Read the current abort and preserve its exact `recoveryActionId`.
+1. Read the current `abort` or `remediate` action and preserve its exact `recoveryActionId`.
 2. Repair the cause outside the failed dispatched unit and run the smallest
    meaningful verification.
 3. Call the tool with that action ID, a plain-language repair summary, and
    non-empty structured evidence. Keep replay identity in private Pi/MCP
    metadata; never add it to the public arguments.
-4. Resume orchestration. The next claim must name the aborted Attempt as its
+4. Resume orchestration. The next claim must name the recovered Attempt as its
    immediate predecessor and atomically consume the authorization.
 
 At successor claim, the database revalidates the causal Result and any current
@@ -211,7 +211,7 @@ evidence-backed failure verdict. A resume is valid only when its
 operation for the same lifecycle. The v39 migration applies the same
 current-head gate to recovery routes retained from v38.
 
-Do not cancel/reopen the Task, delete the abort, reset its budget, or edit the
+Do not cancel/reopen the Task, delete the Recovery Action, reset its budget, or edit the
 database directly. A stale action, duplicate resume, open blocker, running or
 later Attempt, mismatched Result, or missing repair evidence must fail without
 partial checkpoint or event residue.
@@ -246,7 +246,7 @@ reports are readable projections; they cannot authorize a lifecycle change.
 | Scenario | Required canonical evidence | Expected outcome |
 | --- | --- | --- |
 | Agent failure | Immutable failure observation and bounded Recovery Action; each retry is a fresh lineage-linked Attempt and terminal dispatch | Retry/repair/remediate until the budget selects abort; never ask the user for an objective failure |
-| Repaired abort | Exact current abort plus one `task.recovery.resume` operation, concrete repair evidence, and a successor claim that consumes it | One immediate successor only; the dispatched worker cannot self-authorize or reuse the event |
+| Repaired recovery | Exact current abort or remediation plus one `task.recovery.resume` operation, concrete repair evidence, and a successor claim that consumes it | One immediate successor only; the dispatched worker cannot self-authorize or reuse the event |
 | Genuine pause | Matching open user or external Blocker, Recovery Action, and work checkpoint | Ask one plain-language question, recommend the best route and why, allow pushback, then resolve or dismiss without consuming an agent budget |
 | Verified completion | Succeeded Result, current passing Technical Verdict/evidence, and `task.completion.publish` | Legacy `complete` and canonical `completed` commit once; projection failure cannot roll either backward |
 | Reopen/cancel | One Domain Operation, event, work checkpoint, semantic shadow payload, and Projection Work row | Reopen ends at `ready`; cancel ends at `cancelled`; all prior Attempts/Results remain immutable |

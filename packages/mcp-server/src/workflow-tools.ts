@@ -2500,7 +2500,7 @@ const taskReopenSchema = z.object(taskReopenParams);
 
 const taskRecoveryResumeParams = {
   projectDir: projectDirParam,
-  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort Recovery Action ID"),
+  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort or remediate Recovery Action ID"),
   repairSummary: nonEmptyString("repairSummary").describe("What was repaired and why retry is now safe"),
   evidence: unknownRecord.refine(
     (value) => Object.keys(value).length > 0,
@@ -3531,7 +3531,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_task_recovery_resume",
-    "Authorize one new Task Attempt after the current durable abort cause has been repaired.",
+    "Authorize one new Task Attempt after the current durable abort or remediation cause has been repaired.",
     taskRecoveryResumeParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskRecoveryResumeSchema, args);

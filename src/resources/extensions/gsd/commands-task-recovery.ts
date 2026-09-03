@@ -81,7 +81,7 @@ export async function handleTaskRecoveryResume(
       evidence: { operatorEvidence: evidence, source: "gsd-cli" },
     });
     ctx.ui.notify(
-      `Task recovery ${result.recoveryActionId} resumed — one repaired retry is authorized for Attempt ${result.attemptId}. Re-run /gsd auto.`,
+      `Task recovery ${result.recoveryActionId} resumed — one repaired continuation is authorized for Attempt ${result.attemptId}. Re-run /gsd auto.`,
       "success",
     );
   } catch (error) {

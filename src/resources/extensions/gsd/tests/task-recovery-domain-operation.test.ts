@@ -36,11 +36,20 @@ import {
   resolveTaskBlocker,
   terminateTaskWaiver,
 } from "../task-recovery-domain-operation.ts";
-import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
-import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  readTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 import { buildExecuteTaskPrompt, buildTaskRecoveryReplanPrompt } from "../auto-prompts.ts";
 import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-iteration.ts";
+import { runWithTaskExecutionAttempt } from "../auto/task-execution-cutover.ts";
 import { handleReplanTask } from "../tools/replan-task.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import { verifyExpectedArtifact, readTerminalTaskRecoveryAbort } from "../artifact-verification.ts";
@@ -226,6 +235,60 @@ test("/gsd recover authorizes an eligible task abort for a TUI operator", async 
   assert.equal(readTaskRecoveryRoute(scope.attemptId)?.resumeAuthorized, true);
   assert.ok(notifications.some(({ message, level }) =>
     level === "success" && message.includes(abort.recoveryActionId)));
+});
+
+test("gsd_task_recovery_resume authorizes a current remediate action", () => {
+  const scope = seedFailedAttempt();
+  const remediate = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/remediate/route"),
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+    owner: "agent",
+    classification: { failureKind: "verification-failed" },
+    summary: "The completed implementation needs an explicit verification remediation.",
+    evidence: { command: "pnpm test", exitCode: 1, verdict: "FAIL" },
+    rationale: "Record the verified remediation before continuing the Task.",
+  });
+  assert.equal(remediate.action, "remediate");
+  assert.deepEqual(readTaskRecoveryResumeEligibility(remediate.recoveryActionId), {
+    recoveryActionId: remediate.recoveryActionId,
+    eligible: true,
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+  });
+
+  const resumed = resumeTaskRecovery({
+    invocation: invocation("recovery/remediate/resume"),
+    recoveryActionId: remediate.recoveryActionId,
+    repairSummary: "Applied the verification remediation and confirmed the implementation is ready.",
+    evidence: { command: "pnpm test", exitCode: 0, verdict: "PASS" },
+  });
+
+  assert.equal(resumed.status, "committed");
+  assert.equal(readTaskRecoveryRoute(scope.attemptId)?.resumeAuthorized, true);
+  assert.deepEqual(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), {
+    action: "continue",
+    resumeAuthorized: true,
+    recoveryActionId: remediate.recoveryActionId,
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+    failureKind: "verification-failed",
+    summary: "The completed implementation needs an explicit verification remediation.",
+    evidence: { command: "pnpm test", exitCode: 1, verdict: "FAIL" },
+    rationale: "Record the verified remediation before continuing the Task.",
+    replanCompleted: false,
+    checkpoint: {
+      checkpointId: resumed.workCheckpointId,
+      confirmedContext: "Applied the verification remediation and confirmed the implementation is ready.",
+      unresolvedSummary: "",
+      evidenceSummary: '{"command":"pnpm test","exitCode":0,"verdict":"PASS"}',
+      suggestedNextAction: "Claim one new Task Attempt using the recorded repair evidence.",
+    },
+  });
 });
 
 for (const recoveryCase of [
@@ -1520,6 +1583,118 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     FROM workflow_execution_attempts
     WHERE retry_of_attempt_id = :attempt_id
   `, { ":attempt_id": secondFailure.attemptId }).count), 1);
+});
+
+test("dispatcher does not reject an abort whose resumed successor terminated", async () => {
+  const failed = seedFailedAttempt();
+  const aborted = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/terminated-successor/abort"),
+    attemptId: failed.attemptId,
+    resultId: failed.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "The original executor failed terminally.",
+    evidence: { source: "executor" },
+    rationale: "Require an explicit repaired successor.",
+  });
+  resumeTaskRecovery({
+    invocation: invocation("recovery/terminated-successor/resume"),
+    recoveryActionId: aborted.recoveryActionId,
+    repairSummary: "Repaired the executor and verified that a successor can start.",
+    evidence: { command: "pnpm test", exitCode: 0, verdict: "PASS" },
+  });
+  const successor = claimTaskAttempt({
+    invocation: invocation("recovery/terminated-successor/claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: insertClaimedDispatch(2),
+    retryOfAttemptId: failed.attemptId,
+  });
+  settleTaskAttempt({
+    invocation: invocation("recovery/terminated-successor/settle"),
+    attemptId: successor.attemptId,
+    outcome: "interrupted",
+    failureClass: "stale-worker",
+    summary: "The authorized successor was terminated during retry closeout.",
+    output: {},
+  });
+
+  assert.equal(
+    readTaskRecoveryResumeEligibility(aborted.recoveryActionId).failedGuard,
+    "already-resumed",
+  );
+  assert.equal(readTerminalTaskRecoveryAbort("M001", "S01", "T01"), null);
+
+  const milestoneDir = join(failed.basePath, ".gsd", "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  const taskDir = join(sliceDir, "tasks");
+  mkdirSync(taskDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# Recovery context\n");
+  writeFileSync(join(milestoneDir, "M001-RESEARCH.md"), "# Recovery research\n");
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), "# Recovery\n\n- [ ] **S01: Recovery operation**\n");
+  writeFileSync(join(sliceDir, "S01-CONTEXT.md"), "# Slice context\n");
+  writeFileSync(join(sliceDir, "S01-RESEARCH.md"), "# Slice research\n");
+  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n- [ ] **T01: Recover atomically**\n");
+  writeFileSync(join(taskDir, "T01-PLAN.md"), "# T01: Recover atomically\n");
+
+  const dispatch = await resolveDispatch({
+    basePath: failed.basePath,
+    mid: "M001",
+    midTitle: "Recovery",
+    state: {
+      activeMilestone: { id: "M001", title: "Recovery" },
+      activeSlice: { id: "S01", title: "Recovery operation" },
+      activeTask: { id: "T01", title: "Recover atomically" },
+      phase: "executing",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [],
+    },
+    prefs: undefined,
+  });
+
+  assert.equal(dispatch.action, "dispatch");
+  assert.ok(dispatch.action === "dispatch");
+  assert.equal(dispatch.unitType, "execute-task");
+  assert.equal(dispatch.unitId, "M001/S01/T01");
+
+  const stalePredecessor = readTaskAttempt(failed.attemptId);
+  assert.ok(stalePredecessor);
+  let latestReads = 0;
+  const cutover = await runWithTaskExecutionAttempt({
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    dispatchId: insertClaimedDispatch(3),
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    traceId: "trace-terminated-successor",
+    turnId: "turn-terminated-successor",
+    markCanonicalDispatchSettled() {},
+  }, async () => {
+    throw new Error("the interrupted successor must route before execution");
+  }, {
+    readLatestTaskAttempt(task) {
+      latestReads += 1;
+      return latestReads === 1 ? stalePredecessor : readLatestTaskAttempt(task);
+    },
+    readTerminalTaskRecoveryAbort(task) {
+      return readTerminalTaskRecoveryAbort(task.milestoneId, task.sliceId, task.taskId);
+    },
+    readTaskAttempt,
+    readTaskRecoveryRoute,
+    readTaskTechnicalVerdict,
+    claimTaskAttempt,
+    settleTaskAttempt,
+    routeTaskFailure(input) {
+      return recordFailureAndSelectRecovery(input);
+    },
+  });
+
+  assert.deepEqual(cutover, { action: "retry", reason: "task-recovery-repair" });
+  assert.ok(latestReads >= 3, "cutover must refresh and then evaluate the newer lineage head");
+  assert.equal(readTaskRecoveryRoute(successor.attemptId)?.action, "repair");
 });
 
 test("latest resumed abort supersedes an ancestor whose authorization was consumed", () => {

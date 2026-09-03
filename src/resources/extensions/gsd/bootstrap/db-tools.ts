@@ -2568,12 +2568,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		name: "gsd_task_recovery_resume",
 		label: "Resume Repaired Task",
 		description:
-			"Authorize exactly one new Task Attempt after an agent-owned recovery abort. " +
-			"Use only after repairing the recorded cause; the abort and retry budget remain in history.",
+			"Authorize exactly one new Task Attempt after an agent-owned recovery abort or remediation. " +
+			"Use only after repairing the recorded cause; the Recovery Action and retry budget remain in history.",
 		promptSnippet:
-			"Resume one Task after its durable abort cause has been repaired",
+			"Resume one Task after its durable abort or remediation cause has been repaired",
 		promptGuidelines: [
-			"Use the exact recoveryActionId returned by the current abort.",
+			"Use the exact recoveryActionId returned by the current abort or remediation.",
 			"Explain the repair in plain language and attach concrete verification evidence.",
 			"This authorization is consumed by the next lineage-linked Task Attempt and cannot be reused.",
 		],
@@ -2581,7 +2581,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			{
 				recoveryActionId: Type.String({
 					minLength: 1,
-					description: "Exact current abort Recovery Action ID",
+					description: "Exact current abort or remediate Recovery Action ID",
 				}),
 				repairSummary: Type.String({
 					minLength: 1,

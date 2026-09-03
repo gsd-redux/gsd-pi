@@ -166,9 +166,12 @@ function latestAttemptRecoveryContext(task: TaskCompletionIdentity): string {
     const route = readTaskRecoveryRoute(attempt.attemptId);
     const lever = route
       ? route.resumeAuthorized
-        ? ` Recovery action ${route.recoveryActionId} (${route.action}) authorizes resume — ` +
+        ? ` Recovery action ${route.recoveryActionId} (${route.action}) already authorizes its successor — ` +
+          "rerun `/gsd auto` to continue from the repair checkpoint."
+        : route.resumeEligibility?.eligible
+          ? ` Recovery action ${route.recoveryActionId} (${route.action}) is eligible for resume — ` +
           `call gsd_task_recovery_resume with recoveryActionId "${route.recoveryActionId}".`
-        : ` Recovery action ${route.recoveryActionId} (${route.action}) is recorded for this Attempt.`
+          : ` Recovery action ${route.recoveryActionId} (${route.action}) is recorded for this Attempt.`
       : "";
     return ` Latest Attempt ${attempt.attemptId} is${settled}.${lever}`;
   } catch {

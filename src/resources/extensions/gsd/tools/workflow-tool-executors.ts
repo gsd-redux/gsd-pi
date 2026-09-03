@@ -1113,7 +1113,7 @@ export async function executeTaskRecoveryResume(
   try {
     const result = resumeTaskRecovery({ invocation, ...params });
     return {
-      content: [{ type: "text", text: `Authorized one repaired Task retry for ${result.attemptId}.` }],
+      content: [{ type: "text", text: `Authorized one repaired Task continuation for ${result.attemptId}.` }],
       details: { operation: "task_recovery_resume", ...result },
     };
   } catch (err) {
