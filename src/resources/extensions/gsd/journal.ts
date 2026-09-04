@@ -54,6 +54,8 @@ export type JournalEventType =
   | "worktree-merge-failed"
   | "artifact-verification-retry"
   | "pre-execution-retry"
+  // #2119 — durable retry telemetry for execute-task deferred-closeout retries
+  | "verification-retry"
   // #4764 — worktree lifespan / divergence telemetry
   | "worktree-created"
   | "worktree-merged"

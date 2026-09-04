@@ -256,6 +256,126 @@ test("runFinalize still pauses a non-Task verification retry with a repeated fai
   assert.equal(pauseCalls, 1);
 });
 
+test("runFinalize keeps an execute-task deferred git-commit remediation retry agent-owned across repeated failure signatures", async (t) => {
+  // #2119: after publishVerifiedTask the task is DB-complete, and a hook-rejected
+  // deferred closeout commit returns "retry" from postUnitPostVerification with a
+  // `git-commit:` signature. That retry is bounded by its own remediation cap and
+  // must flow through the durable verification-retry policy — not the legacy
+  // duplicate-signature breaker, which would pause mid-remediation with the
+  // uncommitted work stranded in a paused state.
+  const base = mkdtempSync(join(tmpdir(), "gsd-finalize-git-commit-retry-"));
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const s = new AutoSession();
+  s.basePath = base;
+  s.currentUnit = {
+    type: "execute-task",
+    id: "M001/S01/T01",
+    startedAt: 1,
+  };
+  const signature = "git-commit:1:blocked by test hook";
+  s.verificationRetryFailureHashes.set(
+    "execute-task:M001/S01/T01",
+    hashVerificationFailureContext(signature),
+  );
+  let pauseCalls = 0;
+  const journalEvents: Array<{ eventType: string; data: Record<string, unknown> }> = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: (...args: unknown[]) => void, _timeout?: number, ...args: unknown[]) =>
+    originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+  t.after(() => {
+    globalThis.setTimeout = originalSetTimeout;
+  });
+
+  const result = await runFinalizeWithDeps(s, {
+    pauseAuto: async () => {
+      pauseCalls++;
+    },
+    emitJournalEvent: (event: { eventType: string; data: Record<string, unknown> }) => {
+      journalEvents.push(event);
+    },
+    postUnitPostVerification: async () => {
+      s.pendingVerificationRetry = {
+        unitId: "M001/S01/T01",
+        failureContext: "Git commit failed after task verification. blocked by test hook",
+        signature,
+        attempt: 1,
+      };
+      return "retry";
+    },
+  });
+
+  assert.deepEqual(result, { action: "continue" });
+  assert.equal(pauseCalls, 0, "git-commit remediation retries are bounded by their own cap, not the legacy duplicate-signature breaker");
+  assert.equal(s.pendingVerificationRetryDispatch?.unitType, "execute-task");
+  assert.equal(
+    s.pendingVerificationRetryDispatch?.unitId,
+    "M001/S01/T01",
+    "remediation re-dispatch must target the same published task with its failure context",
+  );
+  // #2119: the durable retry must be journaled as verification-retry, not the
+  // misleading pre-execution-retry label.
+  const retryEvents = journalEvents.filter((event) => event.eventType === "verification-retry");
+  assert.equal(retryEvents.length, 1, "the deferred closeout retry must emit a verification-retry journal event");
+  assert.equal(retryEvents[0]?.data.unitId, "M001/S01/T01");
+  assert.equal(retryEvents[0]?.data.attempt, 1);
+  assert.equal(
+    journalEvents.some((event) => event.eventType === "pre-execution-retry"),
+    false,
+    "execute-task closeout retries must not be mislabeled as pre-execution-retry",
+  );
+});
+
+test("runFinalize still pauses a non-task post-verification retry with a repeated failure signature", async (t) => {
+  // Planning units keep the legacy pre-execution-retry policy: a repeated
+  // failure signature must pause instead of re-dispatching (#2119 scope guard).
+  const base = mkdtempSync(join(tmpdir(), "gsd-finalize-preexec-retry-"));
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const s = new AutoSession();
+  s.basePath = base;
+  s.currentUnit = {
+    type: "plan-slice",
+    id: "M001/S01",
+    startedAt: 1,
+  };
+  s.verificationRetryFailureHashes.set(
+    "plan-slice:M001/S01",
+    hashVerificationFailureContext("pre-execution check: missing UAT section"),
+  );
+  let pauseCalls = 0;
+  const journalEvents: Array<{ eventType: string; data: Record<string, unknown> }> = [];
+
+  const result = await runFinalizeWithDeps(s, {
+    pauseAuto: async () => {
+      pauseCalls++;
+    },
+    emitJournalEvent: (event: { eventType: string; data: Record<string, unknown> }) => {
+      journalEvents.push(event);
+    },
+    postUnitPostVerification: async () => {
+      s.pendingVerificationRetry = {
+        unitId: "M001/S01",
+        failureContext: "pre-execution check: missing UAT section",
+        attempt: 2,
+      };
+      return "retry";
+    },
+  });
+
+  assert.deepEqual(result, { action: "break", reason: "duplicate-failure-context" });
+  assert.equal(pauseCalls, 1);
+  // Planning units keep the legacy pre-execution-retry telemetry.
+  const retryEvents = journalEvents.filter((event) => event.eventType === "pre-execution-retry");
+  assert.equal(retryEvents.length, 1);
+  assert.equal(retryEvents[0]?.data.unitId, "M001/S01");
+  assert.equal(retryEvents[0]?.data.attempt, 2);
+});
+
 test("runFinalize marks unit runtime finalized after successful finalize", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-finalize-runtime-"));
   const s = new AutoSession();

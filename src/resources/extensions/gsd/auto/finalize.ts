@@ -364,11 +364,20 @@ export async function runFinalize(
       debugLog("autoLoop", { phase: "sidecar-pre-execution-retry-skipped", iteration: ic.iteration });
     } else {
       const retryInfo = s.pendingVerificationRetry;
+      // #2119: an execute-task deferred-closeout retry (git-commit remediation
+      // after publishVerifiedTask, or post-publish source recapture) retries a
+      // published task and is bounded by its own policy — route it through the
+      // durable verification-retry gate instead of the legacy pre-execution
+      // breaker, which only recognizes plan/refine pre-execution retries. The
+      // journal event follows the phase so forensics see the durable retry.
+      const retryPhase = preUnitSnapshot?.type === "execute-task"
+        ? "verification-retry"
+        : "pre-execution-retry";
       deps.emitJournalEvent({
         ts: new Date().toISOString(),
         flowId: ic.flowId,
         seq: ic.nextSeq(),
-        eventType: "pre-execution-retry",
+        eventType: retryPhase,
         data: {
           unitType: preUnitSnapshot?.type,
           unitId: retryInfo?.unitId,
@@ -378,7 +387,7 @@ export async function runFinalize(
       const retryPolicyResult = await applyVerificationRetryPolicy(
         ic,
         preUnitSnapshot?.type,
-        "pre-execution-retry",
+        retryPhase,
       );
       if (retryPolicyResult) {
         clearFinalizingUnit();
@@ -386,7 +395,7 @@ export async function runFinalize(
       }
       rememberRetryDispatch(s, preUnitSnapshot, iterData);
       debugLog("autoLoop", {
-        phase: "pre-execution-retry",
+        phase: retryPhase,
         iteration: ic.iteration,
         unitType: preUnitSnapshot?.type,
         unitId: retryInfo?.unitId,
