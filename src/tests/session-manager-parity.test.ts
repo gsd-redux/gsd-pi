@@ -35,9 +35,9 @@
  *   detached-process kill fallback in cancelSessionByDir (.gsd/auto.lock +
  *   pid-registry with PID-reuse guard). The daemon owns its children via
  *   RpcClient and has no detached-process equivalent — porting that is option A
- *   (shared core) territory, out of scope for parity tests. Only the shared rule
- *   (no tracked session and no lock file -> identical "Session not found" error)
- *   is asserted.
+ *   (shared core) territory, out of scope for parity tests. MCP cleanup also
+ *   retains cancelled sessions for inspection, while daemon cleanup clears its
+ *   session map. Both host-specific outcomes are asserted below.
  * - startSession signatures differ by host shape: daemon takes an options object,
  *   mcp takes (projectDir, options). The harness below normalizes them.
  *
@@ -48,11 +48,13 @@
  * cancel, cleanup) execute unmodified.
  */
 
-import { describe, it, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { describe, it, beforeEach, afterEach, after, type TestContext } from 'node:test';
 
 import { RpcClient } from '@opengsd/rpc-client';
 
@@ -61,6 +63,9 @@ import { MAX_EVENTS as DAEMON_MAX_EVENTS, INIT_TIMEOUT_MS as DAEMON_INIT_TIMEOUT
 import { Logger as DaemonLogger } from '../../packages/daemon/src/logger.js';
 import { SessionManager as McpSessionManager } from '../../packages/mcp-server/src/session-manager.js';
 import { MAX_EVENTS as MCP_MAX_EVENTS, INIT_TIMEOUT_MS as MCP_INIT_TIMEOUT_MS } from '../../packages/mcp-server/src/types.js';
+
+const require = createRequire(import.meta.url);
+const childProcess = require('node:child_process') as typeof import('node:child_process');
 
 // ---------------------------------------------------------------------------
 // RpcClient prototype patch — recording fakes, real SessionManager code runs
@@ -211,6 +216,7 @@ after(() => {
   }
   for (const timer of longTimers) clearTimeout(timer);
   longTimers.length = 0;
+  globalThis.setTimeout = originalSetTimeout;
 });
 
 // ---------------------------------------------------------------------------
@@ -242,7 +248,6 @@ interface StartOptions {
 interface Harness {
   label: string;
   maxEvents: number;
-  initTimeoutMs: number;
   manager: DaemonSessionManager | McpSessionManager;
   start(projectDir: string, options?: StartOptions): Promise<string>;
   sessionByDir(projectDir: string): ParitySession | undefined;
@@ -254,13 +259,34 @@ interface Harness {
 }
 
 const FAKE_CLI = '/parity-fake-cli';
+const EXPECTED_INIT_TIMEOUT_MS = 30_000;
+
+function restoreEnvAfter(t: TestContext, names: readonly string[]): void {
+  const originalValues = new Map<string, string | undefined>();
+  for (const name of names) originalValues.set(name, process.env[name]);
+  t.after(() => {
+    for (const [name, value] of originalValues) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+}
+
+function trackSettlement(promise: Promise<unknown>): () => boolean {
+  let settled = false;
+  void promise.then(
+    () => { settled = true; },
+    () => { settled = true; }
+  );
+  return () => settled;
+}
 
 // Both startSession implementations race client.start()/init() against a module-
 // private timeout(INIT_TIMEOUT_MS=30_000) whose setTimeout keeps the test process
 // alive long after the tests finish. Track those long timers and clear them at
 // teardown so the suite exits promptly; nothing else in this file uses ≥20s timers.
 const longTimers: Array<NodeJS.Timeout> = [];
-const originalSetTimeout = globalThis.setTimeout.bind(globalThis);
+const originalSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = ((fn: never, ms?: number, ...rest: unknown[]) => {
   const timer = originalSetTimeout(fn, ms, ...rest);
   if ((ms ?? 0) >= 20_000) longTimers.push(timer);
@@ -273,7 +299,6 @@ async function createDaemonHarness(workDir: string): Promise<Harness> {
   return {
     label: 'daemon',
     maxEvents: DAEMON_MAX_EVENTS,
-    initTimeoutMs: DAEMON_INIT_TIMEOUT_MS,
     manager,
     start: (dir, options = {}) => manager.startSession({ projectDir: dir, cliPath: FAKE_CLI, ...options }),
     sessionByDir: (dir) => manager.getSessionByDir(dir) as unknown as ParitySession | undefined,
@@ -295,7 +320,6 @@ async function createMcpHarness(workDir: string): Promise<Harness> {
   return {
     label: 'mcp-server',
     maxEvents: MCP_MAX_EVENTS,
-    initTimeoutMs: MCP_INIT_TIMEOUT_MS,
     manager,
     start: (dir, options = {}) => manager.startSession(dir, { cliPath: FAKE_CLI, ...options }),
     sessionByDir: (dir) => manager.getSessionByDir(dir) as unknown as ParitySession | undefined,
@@ -358,8 +382,9 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
   });
 
   it('rejects an empty or whitespace projectDir', async () => {
-    await assert.rejects(() => h.start(''), /projectDir is required and cannot be empty/);
-    await assert.rejects(() => h.start('   '), /projectDir is required and cannot be empty/);
+    const expected = 'projectDir is required and cannot be empty';
+    await assert.rejects(() => h.start(''), (err: Error) => err.message === expected);
+    await assert.rejects(() => h.start('   '), (err: Error) => err.message === expected);
   });
 
   it('rejects a duplicate start while a session is active for the same dir', async () => {
@@ -368,12 +393,8 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
 
     await assert.rejects(
       () => h.start(dir),
-      (err: Error) => {
-        assert.match(err.message, /Session already active for /);
-        assert.ok(err.message.includes(firstId), 'error should name the active sessionId');
-        assert.ok(err.message.includes('status: running'), 'error should name the active status');
-        return true;
-      }
+      (err: Error) => err.message ===
+        `Session already active for ${resolve(dir)} (sessionId: ${firstId}, status: running)`
     );
   });
 
@@ -383,17 +404,13 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
 
     await assert.rejects(
       () => h.start(dir),
-      (err: Error) => {
-        assert.ok(err.message.startsWith(`Failed to start session for ${resolve(dir)}: `));
-        assert.ok(err.message.includes('Connection refused'));
-        return true;
-      }
+      (err: Error) => err.message === `Failed to start session for ${resolve(dir)}: Connection refused`
     );
 
     const session = h.sessionByDir(dir);
     assert.ok(session, 'failed session is kept for inspection');
     assert.equal(session.status, 'error');
-    assert.ok(session.error?.includes('Connection refused'));
+    assert.equal(session.error, 'Connection refused');
     assert.ok(h.recorderOf(session.client).stopped, 'client is reclaimed after failed start');
 
     // A failed start must not brick the dir: a fresh start is allowed on both sides.
@@ -408,17 +425,13 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
 
     await assert.rejects(
       () => h.start(dir),
-      (err: Error) => {
-        assert.ok(err.message.startsWith(`Failed to start session for ${resolve(dir)}: `));
-        assert.ok(err.message.includes('spawn failed'));
-        return true;
-      }
+      (err: Error) => err.message === `Failed to start session for ${resolve(dir)}: spawn failed`
     );
 
     const session = h.sessionByDir(dir)!;
     const rec = h.recorderOf(session.client);
     assert.equal(session.status, 'error');
-    assert.ok(session.error?.includes('spawn failed'));
+    assert.equal(session.error, 'spawn failed');
     assert.ok(rec.started, 'start was attempted');
     assert.equal(rec.sessionId, '', 'init must not run after a failed start');
     assert.ok(rec.stopped, 'client is reclaimed after failed start');
@@ -430,17 +443,13 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
 
     await assert.rejects(
       () => h.start(dir),
-      (err: Error) => {
-        assert.ok(err.message.startsWith(`Failed to start session for ${resolve(dir)}: `));
-        assert.ok(err.message.includes('agent went away'));
-        return true;
-      }
+      (err: Error) => err.message === `Failed to start session for ${resolve(dir)}: agent went away`
     );
 
     const session = h.sessionByDir(dir)!;
     const rec = h.recorderOf(session.client);
     assert.equal(session.status, 'error');
-    assert.ok(session.error?.includes('agent went away'));
+    assert.equal(session.error, 'agent went away');
     assert.ok(rec.stopped);
     // The failure happened at the prompt stage: init had already succeeded.
     assert.ok(rec.sessionId !== '');
@@ -458,17 +467,18 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
     // Per-test mock clock: restored automatically even if an assertion throws.
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const startPromise = h.start(dir);
+    const isSettled = trackSettlement(startPromise);
     // Let startSession reach its start() race before advancing the mock clock.
     await new Promise((r) => setImmediate(r));
-    t.mock.timers.tick(h.initTimeoutMs);
+    t.mock.timers.tick(EXPECTED_INIT_TIMEOUT_MS - 1);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(isSettled(), false);
+    t.mock.timers.tick(1);
 
     await assert.rejects(
       () => startPromise,
-      (err: Error) => {
-        assert.ok(err.message.startsWith(`Failed to start session for ${resolve(dir)}: `));
-        assert.ok(err.message.includes(`RpcClient.start() timed out after ${h.initTimeoutMs}ms`));
-        return true;
-      }
+      (err: Error) => err.message ===
+        `Failed to start session for ${resolve(dir)}: RpcClient.start() timed out after ${EXPECTED_INIT_TIMEOUT_MS}ms`
     );
 
     const session = h.sessionByDir(dir)!;
@@ -482,17 +492,18 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
     hangNextSessionInit(); // init() never settles — the timeout must win
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const startPromise = h.start(dir);
+    const isSettled = trackSettlement(startPromise);
     // Let startSession reach the init() race before advancing the mock clock.
     await new Promise((r) => setImmediate(r));
-    t.mock.timers.tick(h.initTimeoutMs);
+    t.mock.timers.tick(EXPECTED_INIT_TIMEOUT_MS - 1);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(isSettled(), false);
+    t.mock.timers.tick(1);
 
     await assert.rejects(
       () => startPromise,
-      (err: Error) => {
-        assert.ok(err.message.startsWith(`Failed to start session for ${resolve(dir)}: `));
-        assert.ok(err.message.includes(`RpcClient.init() timed out after ${h.initTimeoutMs}ms`));
-        return true;
-      }
+      (err: Error) => err.message ===
+        `Failed to start session for ${resolve(dir)}: RpcClient.init() timed out after ${EXPECTED_INIT_TIMEOUT_MS}ms`
     );
 
     const session = h.sessionByDir(dir)!;
@@ -500,28 +511,24 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
     assert.ok(h.recorderOf(session.client).stopped);
   });
 
-  it('surfaces CLI-resolution failure unwrapped from startSession and tracks nothing', async () => {
+  it('surfaces CLI-resolution failure unwrapped from startSession and tracks nothing', async (t) => {
     const dir = join(workDir, 'cli-resolution-fail');
-    const prevCliPath = process.env['GSD_CLI_PATH'];
-    const prevPath = process.env['PATH'];
+    restoreEnvAfter(t, ['GSD_CLI_PATH', 'PATH']);
     delete process.env['GSD_CLI_PATH'];
     process.env['PATH'] = join(workDir, 'no-such-bin');
-    try {
-      // Bypass the harness's FAKE_CLI default: resolution must run exactly as
-      // production invokes it (no cliPath option).
-      const startPromise = h.label === 'daemon'
-        ? (h.manager as DaemonSessionManager).startSession({ projectDir: dir })
-        : (h.manager as McpSessionManager).startSession(dir);
-      await assert.rejects(
-        () => startPromise,
-        (err: Error) =>
-          err.message === 'Cannot find GSD CLI. Set GSD_CLI_PATH environment variable or ensure `gsd` is in PATH.'
-      );
-      assert.equal(h.sessionByDir(dir), undefined, 'nothing is tracked when CLI resolution fails');
-    } finally {
-      if (prevCliPath !== undefined) process.env['GSD_CLI_PATH'] = prevCliPath;
-      process.env['PATH'] = prevPath ?? '';
-    }
+
+    // Bypass the harness's FAKE_CLI default: resolution must run exactly as
+    // production invokes it (no cliPath option).
+    const startPromise = h.label === 'daemon'
+      ? (h.manager as DaemonSessionManager).startSession({ projectDir: dir })
+      : (h.manager as McpSessionManager).startSession(dir);
+    await assert.rejects(
+      () => startPromise,
+      (err: Error) =>
+        err.message === 'Cannot find GSD CLI. Set GSD_CLI_PATH environment variable or ensure `gsd` is in PATH.'
+    );
+    assert.equal(h.sessionByDir(dir), undefined, 'nothing is tracked when CLI resolution fails');
+
     // With resolution out of the way (harness injects the fake CLI), the dir starts fine.
     const retryId = await h.start(dir);
     assert.equal(h.sessionByDir(dir)?.sessionId, retryId);
@@ -567,60 +574,55 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
 
   // ---- CLI resolution (issue drift #1) ----
 
-  it('resolveCLIPath: GSD_CLI_PATH env wins over PATH', () => {
+  it('resolveCLIPath: GSD_CLI_PATH env wins over PATH', (t) => {
     const fakeCli = join(workDir, 'cli-from-env');
     writeFileSync(fakeCli, '#!/bin/sh\n');
     chmodSync(fakeCli, 0o755);
+    const binDir = join(workDir, 'bin');
+    const pathCli = join(binDir, 'gsd');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(pathCli, '#!/bin/sh\n');
+    chmodSync(pathCli, 0o755);
 
-    const prevCliPath = process.env['GSD_CLI_PATH'];
-    const prevPath = process.env['PATH'];
+    restoreEnvAfter(t, ['GSD_CLI_PATH', 'PATH']);
     process.env['GSD_CLI_PATH'] = fakeCli;
-    // A `gsd` on PATH must NOT win over the env var.
-    process.env['PATH'] = workDir;
-    try {
-      assert.equal(resolve(DaemonSessionManager.resolveCLIPath()), resolve(fakeCli));
-      assert.equal(resolve(McpSessionManager.resolveCLIPath()), resolve(fakeCli));
-    } finally {
-      if (prevCliPath === undefined) delete process.env['GSD_CLI_PATH'];
-      else process.env['GSD_CLI_PATH'] = prevCliPath;
-      process.env['PATH'] = prevPath ?? '';
-    }
+    process.env['PATH'] = binDir;
+
+    assert.equal(resolve(DaemonSessionManager.resolveCLIPath()), resolve(fakeCli));
+    assert.equal(resolve(McpSessionManager.resolveCLIPath()), resolve(fakeCli));
   });
 
-  it('resolveCLIPath: PATHEXT-aware PATH scan without relying on `which`', () => {
+  it('resolveCLIPath: PATHEXT-aware PATH scan without relying on `which`', (t) => {
     const binDir = join(workDir, 'bin');
     mkdirSync(binDir, { recursive: true });
-    const fakeCli = join(binDir, process.platform === 'win32' ? 'gsd.cmd' : 'gsd');
-    writeFileSync(fakeCli, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n');
+    const fakeCli = join(binDir, 'gsd.EXE');
+    writeFileSync(fakeCli, '@echo off\r\n');
     chmodSync(fakeCli, 0o755);
 
-    const prevCliPath = process.env['GSD_CLI_PATH'];
-    const prevPath = process.env['PATH'];
+    restoreEnvAfter(t, ['GSD_CLI_PATH', 'PATH', 'PATHEXT']);
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    assert.ok(platformDescriptor);
+    t.after(() => {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    });
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
     delete process.env['GSD_CLI_PATH'];
     process.env['PATH'] = binDir;
-    try {
-      assert.equal(resolve(DaemonSessionManager.resolveCLIPath()), resolve(fakeCli));
-      assert.equal(resolve(McpSessionManager.resolveCLIPath()), resolve(fakeCli));
-    } finally {
-      if (prevCliPath !== undefined) process.env['GSD_CLI_PATH'] = prevCliPath;
-      process.env['PATH'] = prevPath ?? '';
-    }
+    process.env['PATHEXT'] = '.EXE';
+
+    assert.equal(resolve(DaemonSessionManager.resolveCLIPath()), resolve(fakeCli));
+    assert.equal(resolve(McpSessionManager.resolveCLIPath()), resolve(fakeCli));
   });
 
-  it('resolveCLIPath: identical error when nothing is found', () => {
-    const prevCliPath = process.env['GSD_CLI_PATH'];
-    const prevPath = process.env['PATH'];
+  it('resolveCLIPath: identical error when nothing is found', (t) => {
+    restoreEnvAfter(t, ['GSD_CLI_PATH', 'PATH']);
     delete process.env['GSD_CLI_PATH'];
     process.env['PATH'] = join(workDir, 'empty-nonexistent-bin');
     const expected =
       'Cannot find GSD CLI. Set GSD_CLI_PATH environment variable or ensure `gsd` is in PATH.';
-    try {
-      assert.throws(() => DaemonSessionManager.resolveCLIPath(), (err: Error) => err.message === expected);
-      assert.throws(() => McpSessionManager.resolveCLIPath(), (err: Error) => err.message === expected);
-    } finally {
-      if (prevCliPath !== undefined) process.env['GSD_CLI_PATH'] = prevCliPath;
-      process.env['PATH'] = prevPath ?? '';
-    }
+
+    assert.throws(() => DaemonSessionManager.resolveCLIPath(), (err: Error) => err.message === expected);
+    assert.throws(() => McpSessionManager.resolveCLIPath(), (err: Error) => err.message === expected);
   });
 
   // ---- Terminal / paused / blocker notification detection ----
@@ -976,6 +978,14 @@ function registerSharedScenarios(create: (workDir: string) => Promise<Harness>):
       assert.equal(session.status, 'cancelled');
       assert.ok(h.recorderOf(session.client).stopped);
     }
+
+    // Intentional host divergence: daemon cleanup drops its map, while MCP
+    // keeps cancelled sessions addressable for post-cleanup inspection.
+    if (h.label === 'daemon') {
+      assert.equal(h.sessionById(running.sessionId), undefined);
+    } else {
+      assert.equal(h.sessionById(running.sessionId), running);
+    }
   });
 }
 
@@ -990,6 +1000,22 @@ describe('SessionManager parity — daemon copy', () => {
 describe('SessionManager parity — mcp-server copy', () => {
   registerSharedScenarios(createMcpHarness);
 });
+
+async function createDocumentedHarnesses(t: TestContext): Promise<{
+  workDir: string;
+  daemon: Harness;
+  mcp: Harness;
+}> {
+  const workDir = mkdtempSync(join(tmpdir(), 'sm-parity-documented-'));
+  const daemon = await createDaemonHarness(workDir);
+  const mcp = await createMcpHarness(workDir);
+  t.after(async () => {
+    await daemon.dispose();
+    await mcp.dispose();
+    rmSync(workDir, { recursive: true, force: true });
+  });
+  return { workDir, daemon, mcp };
+}
 
 describe('SessionManager parity — documented surface', () => {
   it('both copies expose the same shared API surface', () => {
@@ -1016,5 +1042,199 @@ describe('SessionManager parity — documented surface', () => {
     // divergence deliberate: changing one requires updating this test consciously.
     assert.equal(DAEMON_MAX_EVENTS, 100);
     assert.equal(MCP_MAX_EVENTS, 50);
+  });
+
+  it('both copies retain the shared 30000ms initialization timeout', () => {
+    assert.equal(DAEMON_INIT_TIMEOUT_MS, EXPECTED_INIT_TIMEOUT_MS);
+    assert.equal(MCP_INIT_TIMEOUT_MS, EXPECTED_INIT_TIMEOUT_MS);
+  });
+
+  it('daemon alone exposes lifecycle events and projectName', async (t) => {
+    const { workDir, daemon, mcp } = await createDocumentedHarnesses(t);
+    const daemonManager = daemon.manager as DaemonSessionManager;
+    const mcpManager = mcp.manager as McpSessionManager;
+    const lifecycle: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    daemonManager.on('session:started', (payload) => lifecycle.push({ type: 'started', payload }));
+    daemonManager.on('session:cancelled', (payload) => lifecycle.push({ type: 'cancelled', payload }));
+
+    assert.equal(daemonManager instanceof EventEmitter, true);
+    assert.equal(mcpManager instanceof EventEmitter, false);
+
+    const projectDir = join(workDir, 'named-project');
+    const projectName = basename(projectDir);
+    const daemonId = await daemon.start(projectDir);
+    const daemonSession = daemon.sessionById(daemonId) as ParitySession & { projectName: string };
+    assert.equal(daemonSession.projectName, projectName);
+    assert.equal(daemonManager.getResult(daemonId)['projectName'], projectName);
+
+    const mcpId = await mcp.start(projectDir);
+    assert.equal(Object.hasOwn(mcp.sessionById(mcpId)!, 'projectName'), false);
+    assert.equal(Object.hasOwn(mcpManager.getResult(mcpId), 'projectName'), false);
+
+    await daemonManager.cancelSession(daemonId);
+    assert.deepEqual(lifecycle, [
+      {
+        type: 'started',
+        payload: {
+          sessionId: daemonId,
+          projectDir: resolve(projectDir),
+          projectName,
+        },
+      },
+      {
+        type: 'cancelled',
+        payload: {
+          sessionId: daemonId,
+          projectDir: resolve(projectDir),
+          projectName,
+        },
+      },
+    ]);
+  });
+
+  it('pins each host-specific session collection API', async (t) => {
+    const { workDir, daemon, mcp } = await createDocumentedHarnesses(t);
+    const daemonManager = daemon.manager as DaemonSessionManager;
+    const mcpManager = mcp.manager as McpSessionManager;
+
+    assert.equal('getOnlySession' in daemonManager, false);
+    assert.equal('listSessions' in daemonManager, false);
+    assert.equal('getAllSessions' in mcpManager, false);
+    assert.deepEqual(daemonManager.getAllSessions(), []);
+    assert.equal(mcpManager.getOnlySession(), undefined);
+    assert.deepEqual(mcpManager.listSessions(), []);
+
+    const daemonId = await daemon.start(join(workDir, 'daemon-collection'));
+    const firstMcpId = await mcp.start(join(workDir, 'mcp-collection-a'));
+    assert.deepEqual(daemonManager.getAllSessions().map((session) => session.sessionId), [daemonId]);
+    assert.equal(mcpManager.getOnlySession()?.sessionId, firstMcpId);
+    assert.deepEqual(mcpManager.listSessions().map((session) => session.sessionId), [firstMcpId]);
+
+    const secondMcpId = await mcp.start(join(workDir, 'mcp-collection-b'));
+    assert.equal(mcpManager.getOnlySession(), undefined);
+    assert.deepEqual(mcpManager.listSessions().map((session) => session.sessionId), [firstMcpId, secondMcpId]);
+  });
+
+  it('pins daemon terminal retention and mcp inline replacement', async (t) => {
+    const { workDir, daemon, mcp } = await createDocumentedHarnesses(t);
+    const daemonManager = daemon.manager as DaemonSessionManager;
+    const mcpManager = mcp.manager as McpSessionManager;
+    const daemonIds: string[] = [];
+    const mcpIds: string[] = [];
+
+    for (let index = 0; index < 51; index += 1) {
+      const daemonId = await daemon.start(join(workDir, `daemon-terminal-${index}`));
+      const daemonSession = daemon.sessionById(daemonId)!;
+      daemon.emit(daemonSession, {
+        type: 'extension_ui_request',
+        id: `daemon-done-${index}`,
+        method: 'notify',
+        message: 'Auto-mode stopped: done',
+      });
+      daemonIds.push(daemonId);
+
+      const mcpId = await mcp.start(join(workDir, `mcp-terminal-${index}`));
+      const mcpSession = mcp.sessionById(mcpId)!;
+      mcp.emit(mcpSession, {
+        type: 'extension_ui_request',
+        id: `mcp-done-${index}`,
+        method: 'notify',
+        message: 'Auto-mode stopped: done',
+      });
+      mcpIds.push(mcpId);
+    }
+
+    assert.equal(daemonManager.getAllSessions().length, 50);
+    assert.equal(daemon.sessionById(daemonIds[0]), undefined);
+    assert.equal(daemon.sessionById(daemonIds[50])?.sessionId, daemonIds[50]);
+    assert.equal(mcpManager.listSessions().length, 51);
+    assert.equal(mcp.sessionById(mcpIds[0])?.sessionId, mcpIds[0]);
+
+    const firstMcpDir = join(workDir, 'mcp-terminal-0');
+    const replacementId = await mcp.start(firstMcpDir);
+    assert.equal(mcpManager.listSessions().length, 51);
+    assert.equal(mcp.sessionById(mcpIds[0]), undefined);
+    assert.equal(mcp.sessionByDir(firstMcpDir)?.sessionId, replacementId);
+  });
+
+  it('mcp signals a guarded detached auto.lock PID while daemon has no fallback', async (t) => {
+    const { workDir: projectDir, daemon, mcp } = await createDocumentedHarnesses(t);
+    mkdirSync(join(projectDir, '.gsd'), { recursive: true });
+    const lockPath = join(projectDir, '.gsd', 'auto.lock');
+    const recordedMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const startedAt = new Date(recordedMs).toISOString();
+    const stalePid = 7101;
+    const foreignPid = 7102;
+    const detachedPid = 7103;
+    const snapshots = new Map([
+      [stalePid, { startMs: Date.parse('2027-01-01T00:00:00.000Z'), cwd: projectDir }],
+      [foreignPid, { startMs: recordedMs, cwd: join(projectDir, '..', 'foreign-project') }],
+      [detachedPid, { startMs: recordedMs, cwd: projectDir }],
+    ]);
+    function writeLock(pid: number): void {
+      writeFileSync(lockPath, JSON.stringify({ pid, startedAt }));
+    }
+
+    const mutableChildProcess = childProcess as typeof childProcess & {
+      execFileSync: typeof childProcess.execFileSync;
+    };
+    const originalExecFileSync = mutableChildProcess.execFileSync;
+    mutableChildProcess.execFileSync = ((command: string, args: string[]) => {
+      const invocation = args.join(' ');
+      const pid = Number(/(?:-p\s+|ProcessId=|\$pid=)(\d+)/.exec(invocation)?.[1]);
+      const snapshot = snapshots.get(pid);
+      if (!snapshot) throw new Error(`Unexpected process probe: ${command} ${invocation}`);
+      if (command === 'ps' || invocation.includes('CreationDate')) {
+        return command === 'ps' ? new Date(snapshot.startMs).toISOString() : String(snapshot.startMs);
+      }
+      if (command === 'lsof') return `p${pid}\nn${snapshot.cwd}\n`;
+      if (command === 'pwdx') return `${pid}: ${snapshot.cwd}`;
+      if (command === 'powershell.exe') return snapshot.cwd;
+      throw new Error(`Unexpected process probe: ${command} ${invocation}`);
+    }) as typeof childProcess.execFileSync;
+    syncBuiltinESMExports();
+    t.after(() => {
+      mutableChildProcess.execFileSync = originalExecFileSync;
+      syncBuiltinESMExports();
+    });
+
+    const signals: Array<{ pid: number; signal?: NodeJS.Signals | number }> = [];
+    t.mock.method(process, 'kill', (pid: number, signal?: NodeJS.Signals | number) => {
+      signals.push({ pid, signal });
+      return true;
+    });
+
+    writeLock(stalePid);
+
+    await assert.rejects(
+      () => daemon.manager.cancelSessionByDir(projectDir),
+      (err: Error) => err.message === `Session not found for projectDir: ${projectDir}`
+    );
+    assert.deepEqual(signals, []);
+
+    await assert.rejects(
+      () => mcp.manager.cancelSessionByDir(projectDir),
+      (err: Error) => err.message === `Session not found for projectDir: ${projectDir}`
+    );
+    assert.deepEqual(signals, [{ pid: stalePid, signal: 0 }]);
+
+    writeLock(foreignPid);
+    await assert.rejects(
+      () => mcp.manager.cancelSessionByDir(projectDir),
+      (err: Error) => err.message === `Session not found for projectDir: ${projectDir}`
+    );
+    assert.deepEqual(signals, [
+      { pid: stalePid, signal: 0 },
+      { pid: foreignPid, signal: 0 },
+    ]);
+
+    writeLock(detachedPid);
+    await mcp.manager.cancelSessionByDir(projectDir);
+    assert.deepEqual(signals, [
+      { pid: stalePid, signal: 0 },
+      { pid: foreignPid, signal: 0 },
+      { pid: detachedPid, signal: 0 },
+      { pid: detachedPid, signal: 'SIGTERM' },
+    ]);
   });
 });
