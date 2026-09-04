@@ -1716,7 +1716,7 @@ test("autoLoop aborts the active unit turn when dispatch crashes", async () => {
   assert.ok(abortCalls > 0, "crashed unit closeout must abort the active SDK turn");
 });
 
-test("a verification retry whose dispatch fails pre-claim is cleared and auto-mode pauses (#2127)", async () => {
+test("a verification retry whose dispatch fails pre-claim is cleared and auto-mode pauses (#2127)", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -1727,6 +1727,7 @@ test("a verification retry whose dispatch fails pre-claim is cleared and auto-mo
   };
   const pi = makeMockPi();
   const s = makeLoopSession();
+  t.after(() => rmSync(s.basePath, { recursive: true, force: true }));
   s.pendingVerificationRetry = {
     unitId: "M001/S01/T01",
     failureContext: "git commit hook rejected the staged task changes",
