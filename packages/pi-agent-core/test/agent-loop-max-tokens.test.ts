@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { MAX_LENGTH_CONTINUATIONS, agentLoop } from "../src/agent-loop.ts";
+import { agentLoop } from "../src/agent-loop.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
 
 const CONTINUATION_TEXT = "Your previous response was cut off at the output limit. Continue exactly where you left off.";
@@ -81,7 +81,7 @@ function identityConverter(messages: AgentMessage[]): Message[] {
 	return messages.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult") as Message[];
 }
 
-function createEchoTool(executed: string[]): AgentTool<any, { value: string }> {
+function createEchoTool(executed: string[], terminate = false): AgentTool<any, { value: string }> {
 	const toolSchema = Type.Object({ value: Type.String() });
 	return {
 		name: "echo",
@@ -93,6 +93,7 @@ function createEchoTool(executed: string[]): AgentTool<any, { value: string }> {
 			return {
 				content: [{ type: "text", text: `echoed: ${params.value}` }],
 				details: { value: params.value },
+				terminate,
 			};
 		},
 	};
@@ -177,6 +178,17 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 
 		// Continuation message was emitted to consumers.
 		expect(continuations(events)).toHaveLength(1);
+		const truncatedTurnEndIndex = events.findIndex(
+			(event) => event.type === "turn_end" && event.message.role === "assistant" && event.message.stopReason === "length",
+		);
+		const continuationStartIndex = events.findIndex(
+			(event) =>
+				event.type === "message_start" &&
+				event.message.role === "user" &&
+				JSON.stringify(event.message.content).includes(CONTINUATION_TEXT),
+		);
+		expect(truncatedTurnEndIndex).toBeGreaterThan(-1);
+		expect(continuationStartIndex).toBeGreaterThan(truncatedTurnEndIndex);
 
 		// The run ended with the model's clean completion, not the truncation.
 		const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
@@ -220,19 +232,104 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 		const messages = await stream.result();
 
 		// Initial call + one per injected continuation, then halt.
-		expect(streamCallCount).toBe(MAX_LENGTH_CONTINUATIONS + 1);
+		expect(streamCallCount).toBe(4);
 
-		// Exactly MAX_LENGTH_CONTINUATIONS continuation messages were injected.
-		expect(continuations(events)).toHaveLength(MAX_LENGTH_CONTINUATIONS);
+		// Exactly three continuation messages were injected.
+		expect(continuations(events)).toHaveLength(3);
 
 		// The loop surfaced a terminal error instead of ending cleanly.
 		const lastMessage = messages[messages.length - 1];
 		expect(lastMessage.role).toBe("assistant");
 		expect(lastMessage.stopReason).toBe("error");
 		expect(lastMessage.errorMessage).toContain("Provider stop_reason: length");
+		expect(lastMessage.errorMessage).toContain("continuation cap (3) exhausted");
 		expect(lastMessage.errorMessage).toContain("continuing was halted");
 
 		// The stream ended with agent_end (clean drain, no hang).
+		expect(events[events.length - 1].type).toBe("agent_end");
+	});
+
+	it("surfaces a terminal error when the stop hook halts an injected continuation", async () => {
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			shouldStopAfterTurn: () => true,
+		};
+
+		let streamCallCount = 0;
+		const streamFn = () => {
+			streamCallCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "length",
+					message: createAssistantMessage([{ type: "text", text: "partial" }], "length", createUsage(5)),
+				});
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
+		expect(streamCallCount).toBe(1);
+		expect(continuations(events)).toHaveLength(1);
+		expect(lastMessage.role).toBe("assistant");
+		expect(lastMessage.stopReason).toBe("error");
+		expect(lastMessage.errorMessage).toContain("stop hook halted the continuation");
+		expect(events[events.length - 1].type).toBe("agent_end");
+	});
+
+	it("honors tool termination after a length-truncated tool-call turn", async () => {
+		const executed: string[] = [];
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [createEchoTool(executed, true)],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let streamCallCount = 0;
+		const streamFn = () => {
+			streamCallCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "length",
+					message: createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						"length",
+						createUsage(5),
+					),
+				});
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		await stream.result();
+		expect(streamCallCount).toBe(1);
+		expect(executed).toEqual(["hello"]);
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
 

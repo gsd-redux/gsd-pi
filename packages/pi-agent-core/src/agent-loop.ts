@@ -45,7 +45,7 @@ export const MAX_CONSECUTIVE_VALIDATION_FAILURES = 3;
  * cap (stopReason "length"), so a provider that always truncates cannot spin
  * the loop (and its cost) forever.
  */
-export const MAX_LENGTH_CONTINUATIONS = 3;
+const MAX_LENGTH_CONTINUATIONS = 3;
 
 /** Prompt injected after a length-truncated assistant turn so the model resumes. */
 const LENGTH_CONTINUATION_PROMPT =
@@ -59,6 +59,25 @@ const ZERO_USAGE = {
 	totalTokens: 0,
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } as const;
+
+function createLengthStopMessage(config: AgentLoopConfig, haltedBecause: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [
+			{
+				type: "text",
+				text: `Agent stopped: provider returned stop_reason "length" and continuation was halted (${haltedBecause}).`,
+			},
+		],
+		api: config.model.api,
+		provider: config.model.provider,
+		model: config.model.id,
+		usage: ZERO_USAGE,
+		stopReason: "error",
+		errorMessage: `Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
+		timestamp: Date.now(),
+	};
+}
 
 /**
  * Close a loop stream after `runAgentLoop*` threw outside the per-turn error
@@ -302,23 +321,8 @@ async function runLoop(
 						? message.errorMessage
 							? `provider error: ${message.errorMessage}`
 							: "no output was generated (context overflow, not output truncation)"
-						: `output cap hit ${MAX_LENGTH_CONTINUATIONS} times`;
-					const stopMessage: AssistantMessage = {
-						role: "assistant",
-						content: [
-							{
-								type: "text",
-								text: `Agent stopped: provider returned stop_reason "length" and continuation was halted (${haltedBecause}).`,
-							},
-						],
-						api: config.model.api,
-						provider: config.model.provider,
-						model: config.model.id,
-						usage: ZERO_USAGE,
-						stopReason: "error",
-						errorMessage: `Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
-						timestamp: Date.now(),
-					};
+						: `continuation cap (${MAX_LENGTH_CONTINUATIONS}) exhausted`;
+					const stopMessage = createLengthStopMessage(config, haltedBecause);
 					await emit({ type: "turn_end", message, toolResults: [] });
 					await emit({ type: "message_start", message: stopMessage });
 					await emit({ type: "message_end", message: stopMessage });
@@ -411,6 +415,8 @@ async function runLoop(
 				}
 			}
 
+			await emit({ type: "turn_end", message, toolResults });
+
 			if (continueAfterTruncation) {
 				// Injected after the tool results so providers that require toolResult
 				// messages to directly follow the assistant toolCall message accept the
@@ -424,11 +430,10 @@ async function runLoop(
 				newMessages.push(continuationMessage);
 				await emit({ type: "message_start", message: continuationMessage });
 				await emit({ type: "message_end", message: continuationMessage });
-				// A truncated turn without tool calls would otherwise end the loop here.
-				hasMoreToolCalls = true;
+				if (toolCalls.length === 0) {
+					hasMoreToolCalls = true;
+				}
 			}
-
-			await emit({ type: "turn_end", message, toolResults });
 
 			const nextTurnContext = {
 				message,
@@ -451,14 +456,21 @@ async function runLoop(
 				};
 			}
 
-			if (
-				await config.shouldStopAfterTurn?.({
-					message,
-					toolResults,
-					context: currentContext,
-					newMessages,
-				})
-			) {
+			const shouldStopAfterTurn = await config.shouldStopAfterTurn?.({
+				message,
+				toolResults,
+				context: currentContext,
+				newMessages,
+			});
+			if (shouldStopAfterTurn) {
+				if (continueAfterTruncation) {
+					const stopMessage = createLengthStopMessage(config, "stop hook halted the continuation");
+					await emit({ type: "message_start", message: stopMessage });
+					await emit({ type: "message_end", message: stopMessage });
+					newMessages.push(stopMessage);
+					currentContext.messages.push(stopMessage);
+					await emit({ type: "turn_end", message: stopMessage, toolResults: [] });
+				}
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
