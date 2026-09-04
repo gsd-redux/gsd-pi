@@ -201,6 +201,8 @@ describe('hasBrowserRequiredText — database snapshot wording', () => {
     assert.ok(!hasBrowserRequiredText('snapshot create'), 'snapshot + DB-CLI verb must not escalate');
     assert.ok(!hasBrowserRequiredText('snapshot restore-check'), 'snapshot + DB-CLI verb must not escalate');
     assert.ok(!hasBrowserRequiredText('snapshot_operation'), 'identifier-shaped name must not escalate');
+    assert.ok(!hasBrowserRequiredText('db snapshot'), 'database snapshot must not escalate');
+    assert.ok(!hasBrowserRequiredText('backup snapshot'), 'backup snapshot must not escalate');
     assert.ok(
       !hasBrowserRequiredText('purge / snapshot / export / import / restore-check crash-injection chain'),
       'DB snapshot operation chain must not escalate',

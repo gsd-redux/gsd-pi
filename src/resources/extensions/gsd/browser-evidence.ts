@@ -24,7 +24,7 @@ const DB_SNAPSHOT_VERB = String.raw`(?:create|restore|export|purge|import|prune|
 
 export const BROWSER_REQUIREMENT_RE = new RegExp(
   String.raw`\b(?:file://|localhost|playwright|chrome|screenshot|${BROWSER_TOOL_SIGNAL})\b` +
-    String.raw`|\bsnapshot\b(?!\s+(?:${DB_SNAPSHOT_VERB})\b)(?![^.;:!?]{0,60}\b${DB_SNAPSHOT_TERMS}\b)(?<!\b${DB_SNAPSHOT_TERMS}\b[^.;:!?]{0,60})` +
+    String.raw`|(?<!\b${DB_SNAPSHOT_TERMS}\b[^.;:!?]{0,60})\bsnapshot\b(?!\s+(?:${DB_SNAPSHOT_VERB})\b)(?![^.;:!?]{0,60}\b${DB_SNAPSHOT_TERMS}\b)` +
     String.raw`|\bin\s+(?:the\s+)?browser\b` +
     String.raw`|\b(?:open|launch|navigate|load|visit|serve|start)\b.{0,80}\b(?:browser|page|localhost|file://)\b|\bbrowser\s+(?:check|session|test|uat|tool|automation|interaction|flow)\b`,
   "i",
