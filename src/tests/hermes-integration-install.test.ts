@@ -8,7 +8,15 @@ import { parse as parseYaml } from 'yaml'
 
 import { installHermesPlugin, parseHermesInstallArgs, renderGsdYaml } from '../hermes-integration-install.ts'
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
+// Walk up to the real worktree root: the compiled unit runner executes this
+// file from dist-test, where a static relative path would resolve to the wrong
+// tree (dist-test has no packages/*/bin).
+let repoRoot = resolve(dirname(fileURLToPath(import.meta.url)))
+while (!existsSync(join(repoRoot, '.git'))) {
+  const parent = dirname(repoRoot)
+  if (parent === repoRoot) throw new Error('could not locate worktree root from test file')
+  repoRoot = parent
+}
 
 test('parseHermesInstallArgs resolves Hermes home and project paths', () => {
   const opts = parseHermesInstallArgs([
