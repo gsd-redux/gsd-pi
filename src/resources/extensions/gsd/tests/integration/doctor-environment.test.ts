@@ -2,17 +2,6 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 /**
  * doctor-environment.test.ts — Tests for environment health checks (#1221).
- *
- * Tests:
- *   - Node version detection
- *   - Dependencies installed check
- *   - Env file detection
- *   - Port conflict detection
- *   - Disk space check
- *   - Docker detection
- *   - Project tool detection
- *   - Doctor issue conversion
- *   - Report formatting
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
@@ -367,8 +356,6 @@ describe('doctor-environment', async () => {
 
     // ── Full environment checks include git remote ─────────────────────
     test('env: runFullEnvironmentChecks includes git remote', () => {
-      // runFullEnvironmentChecks adds git remote check
-      // We can't easily test this without a real git repo, but verify it doesn't throw
       const dir = createProjectDir();
       cleanups.push(dir);
       const results = runFullEnvironmentChecks(dir);
