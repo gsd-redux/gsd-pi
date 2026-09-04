@@ -223,6 +223,42 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
+	it("compacts and retries a zero-output length overflow", async () => {
+		const harness = await createHarness({
+			models: [{ id: "xiaomi", contextWindow: 100 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "overflow context compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "length" }),
+			fauxAssistantMessage("recovered after compaction"),
+		]);
+
+		await harness.session.prompt("x".repeat(800));
+
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({ reason: "overflow", willRetry: true }),
+		);
+		expect(harness.faux.state.callCount).toBe(2);
+		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
+		expect(lastMessage?.role).toBe("assistant");
+		if (lastMessage?.role === "assistant") {
+			expect(lastMessage.stopReason).toBe("stop");
+			expect(lastMessage.content).toEqual([{ type: "text", text: "recovered after compaction" }]);
+		}
+	});
+
 	it("cancels retry sleep when abortRetry is called", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 100 } } });
 		harnesses.push(harness);

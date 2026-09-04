@@ -10,6 +10,7 @@ import {
 	createToolSearchShimResult,
 	EventStream,
 	isAgentToolName,
+	isContextOverflow,
 	isEmptyPathToolArguments,
 	isToolSearchToolName,
 	normalizeToolResultContent,
@@ -60,7 +61,12 @@ const ZERO_USAGE = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 } as const;
 
-function createLengthStopMessage(sourceMessage: AssistantMessage, haltedBecause: string): AssistantMessage {
+function createLengthStopMessage(
+	sourceMessage: AssistantMessage,
+	haltedBecause: string,
+	contextOverflow = false,
+): AssistantMessage {
+	const overflowMarker = contextOverflow ? " [context_length_exceeded]" : "";
 	return {
 		role: "assistant",
 		content: [
@@ -74,7 +80,7 @@ function createLengthStopMessage(sourceMessage: AssistantMessage, haltedBecause:
 		model: sourceMessage.model,
 		usage: ZERO_USAGE,
 		stopReason: "error",
-		errorMessage: `[length-halt] Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
+		errorMessage: `[length-halt]${overflowMarker} Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
 		timestamp: Date.now(),
 	};
 }
@@ -307,6 +313,7 @@ async function runLoop(
 			// error instead of presenting the truncation as a clean stop.
 			let continueAfterTruncation = false;
 			let lengthHaltReason: string | undefined;
+			let lengthHaltIsContextOverflow = false;
 			if (message.stopReason === "length") {
 				// Only a pure truncation is continuable. A zero-output length stop is
 				// silent context overflow (pi-ai isContextOverflow case 3), and a length
@@ -315,6 +322,7 @@ async function runLoop(
 				// cap message.
 				const isOutputTruncation = !message.errorMessage && message.usage.output > 0;
 				if (!isOutputTruncation) {
+					lengthHaltIsContextOverflow = isContextOverflow(message, config.model.contextWindow);
 					lengthHaltReason = message.errorMessage
 						? `provider error: ${message.errorMessage}`
 						: "no output was generated (context overflow, not output truncation)";
@@ -417,7 +425,7 @@ async function runLoop(
 
 			await emit({ type: "turn_end", message, toolResults });
 			if (lengthHaltReason !== undefined) {
-				const stopMessage = createLengthStopMessage(message, lengthHaltReason);
+				const stopMessage = createLengthStopMessage(message, lengthHaltReason, lengthHaltIsContextOverflow);
 				await emit({ type: "message_start", message: stopMessage });
 				await emit({ type: "message_end", message: stopMessage });
 				newMessages.push(stopMessage);
