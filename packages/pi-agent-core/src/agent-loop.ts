@@ -74,7 +74,7 @@ function createLengthStopMessage(sourceMessage: AssistantMessage, haltedBecause:
 		model: sourceMessage.model,
 		usage: ZERO_USAGE,
 		stopReason: "error",
-		errorMessage: `Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
+		errorMessage: `[length-halt] Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
 		timestamp: Date.now(),
 	};
 }

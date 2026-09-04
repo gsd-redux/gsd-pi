@@ -202,6 +202,27 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
+	it("does not retry a terminal length halt with retryable provider text", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("partial", { stopReason: "length", errorMessage: "rate limit" }),
+			fauxAssistantMessage("unexpected retry"),
+		]);
+
+		await harness.session.prompt("test");
+
+		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
+		expect(lastMessage?.role).toBe("assistant");
+		if (lastMessage?.role !== "assistant") throw new Error("Expected a terminal assistant message");
+		expect(lastMessage.stopReason).toBe("error");
+		expect(lastMessage.errorMessage).toContain("[length-halt] Provider stop_reason: length");
+		expect(lastMessage.errorMessage).toContain("provider error: rate limit");
+		expect(harness.session.isRetryableError(lastMessage)).toBe(false);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
 	it("cancels retry sleep when abortRetry is called", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 100 } } });
 		harnesses.push(harness);
