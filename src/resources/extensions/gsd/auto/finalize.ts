@@ -364,12 +364,10 @@ export async function runFinalize(
       debugLog("autoLoop", { phase: "sidecar-pre-execution-retry-skipped", iteration: ic.iteration });
     } else {
       const retryInfo = s.pendingVerificationRetry;
-      // #2119: an execute-task deferred-closeout retry (git-commit remediation
-      // after publishVerifiedTask, or post-publish source recapture) retries a
-      // published task and is bounded by its own policy — route it through the
-      // durable verification-retry gate instead of the legacy pre-execution
-      // breaker, which only recognizes plan/refine pre-execution retries. The
-      // journal event follows the phase so forensics see the durable retry.
+      // #2119: execute-task retries returned after publishVerifiedTask belong
+      // to the durable verification-retry phase. Git-commit remediation supplies
+      // retry context and its own cap; source recapture without context still
+      // fails closed in the policy. Plan/refine retries keep the legacy phase.
       const retryPhase = preUnitSnapshot?.type === "execute-task"
         ? "verification-retry"
         : "pre-execution-retry";
