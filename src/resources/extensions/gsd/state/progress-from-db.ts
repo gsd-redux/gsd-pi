@@ -9,6 +9,7 @@ import { ensureExistingWorkflowDbOpen } from "./derive/db-open.js";
 import {
   getHierarchyCompletionCounts,
   getInFlightSliceCount,
+  getProgressHierarchyDetails,
   getMilestoneStatusCounts,
   getProjectAuthorityVersion,
   isDbAvailable,
@@ -36,6 +37,20 @@ export interface DbProgressResult {
   requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
   blockers: string[];
   nextAction: string;
+  milestoneDetails?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    truncated: boolean;
+    slices: Array<{
+      id: string;
+      title: string;
+      status: string;
+      truncated: boolean;
+      tasks: Array<{ id: string; title: string; status: string }>;
+    }>;
+  }>;
+  milestoneDetailsTruncated?: boolean;
 }
 
 function toRef(value: { id: string; title: string } | null): { id: string; title: string } | null {
@@ -84,6 +99,7 @@ function readProgressHierarchy(): ProgressHierarchy {
 function buildProgressResult(
   state: GSDState,
   hierarchy: ReturnType<typeof readProgressHierarchy>,
+  details: ReturnType<typeof getProgressHierarchyDetails>,
 ): DbProgressResult {
   const slicesDone = hierarchy.counts.slices;
   const slicesTotal = hierarchy.counts.slicesTotal;
@@ -118,6 +134,8 @@ function buildProgressResult(
         : null,
     blockers: [...state.blockers],
     nextAction: state.nextAction,
+    milestoneDetails: details.milestones,
+    milestoneDetailsTruncated: details.milestonesTruncated,
   };
 }
 
@@ -142,7 +160,7 @@ export async function readProgressFromDb(basePath: string): Promise<DbProgressRe
   for (let attempt = 1; ; attempt++) {
     const before = readProgressStabilityToken();
     const state = await deriveState(basePath);
-    const result = buildProgressResult(state, readProgressHierarchy());
+    const result = buildProgressResult(state, readProgressHierarchy(), getProgressHierarchyDetails());
     const after = readProgressStabilityToken();
 
     if (stabilityTokensMatch(before, after)) return result;

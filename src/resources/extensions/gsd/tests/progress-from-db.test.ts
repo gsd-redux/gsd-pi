@@ -124,6 +124,8 @@ test("readProgressFromDb emits exactly the ProgressResult key set", async (t) =>
     "requirements",
     "blockers",
     "nextAction",
+    "milestoneDetails",
+    "milestoneDetailsTruncated",
   ]);
   assert.deepEqual(Object.keys(result.milestones), ["total", "done", "active", "pending", "parked"]);
   assert.deepEqual(Object.keys(result.slices), ["total", "done", "active", "pending"]);
@@ -154,6 +156,7 @@ test("readProgressFromDb derives refs, project-wide counts, and requirements fro
   assert.deepEqual(result.blockers, []);
   assert.equal(typeof result.nextAction, "string");
   assert.ok(result.nextAction.length > 0);
+  assert.equal(result.milestoneDetails?.[0]?.slices[0]?.tasks[0]?.id, "T01");
 });
 
 test("readProgressFromDb keeps milestone counts project-wide under a milestone lock", async (t) => {

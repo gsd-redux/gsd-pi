@@ -926,6 +926,106 @@ export function getTasksBySliceIds(
   return bySlice;
 }
 
+export interface ProgressHierarchyDetails {
+  milestones: Array<{
+    id: string;
+    title: string;
+    status: string;
+    truncated: boolean;
+    slices: Array<{
+      id: string;
+      title: string;
+      status: string;
+      truncated: boolean;
+      tasks: Array<{ id: string; title: string; status: string }>;
+    }>;
+  }>;
+  milestonesTruncated: boolean;
+}
+
+/** Read a bounded project hierarchy for compact integration consumers. */
+export function getProgressHierarchyDetails(): ProgressHierarchyDetails {
+  const db = getDbOrNull();
+  if (!db) return { milestones: [], milestonesTruncated: false };
+
+  const milestones = db.prepare(
+    "SELECT id, title, status FROM milestones ORDER BY CASE WHEN sequence > 0 THEN 0 ELSE 1 END, sequence, id LIMIT 51",
+  ).all() as Array<{ id: string; title: string; status: string }>;
+  const selectedMilestones = milestones.slice(0, 50);
+  if (selectedMilestones.length === 0) return { milestones: [], milestonesTruncated: false };
+
+  const milestonePlaceholders = selectedMilestones.map((_, index) => `:mid${index}`).join(",");
+  const milestoneParams: Record<string, string> = {};
+  selectedMilestones.forEach((milestone, index) => {
+    milestoneParams[`:mid${index}`] = milestone.id;
+  });
+  const slices = db.prepare(
+    `SELECT milestone_id, id, title, status, sequence, row_number
+       FROM (
+         SELECT milestone_id, id, title, status, sequence,
+                ROW_NUMBER() OVER (PARTITION BY milestone_id ORDER BY sequence, id) AS row_number
+           FROM slices
+          WHERE milestone_id IN (${milestonePlaceholders})
+       )
+      WHERE row_number <= 51
+      ORDER BY milestone_id, sequence, id`,
+  ).all(milestoneParams) as Array<Record<string, unknown>>;
+  const selectedSlices = slices.filter((slice) => Number(slice.row_number) <= 50);
+  const sliceKeys = selectedSlices.map((slice) => ({
+    milestoneId: String(slice.milestone_id),
+    sliceId: String(slice.id),
+  }));
+  const tasks: Array<Record<string, unknown>> = [];
+  for (let start = 0; start < sliceKeys.length; start += 400) {
+    const chunk = sliceKeys.slice(start, start + 400);
+    const taskClauses = chunk.map((slice, index) => `(milestone_id = :taskMid${index} AND slice_id = :taskSid${index})`).join(" OR ");
+    const taskParams: Record<string, string> = {};
+    chunk.forEach((slice, index) => {
+      taskParams[`:taskMid${index}`] = slice.milestoneId;
+      taskParams[`:taskSid${index}`] = slice.sliceId;
+    });
+    const rows = db.prepare(
+      `SELECT milestone_id, slice_id, id, title, status, sequence, row_number
+         FROM (
+           SELECT milestone_id, slice_id, id, title, status, sequence,
+                  ROW_NUMBER() OVER (PARTITION BY milestone_id, slice_id ORDER BY sequence, id) AS row_number
+             FROM tasks
+            WHERE ${taskClauses}
+         )
+        WHERE row_number <= 51
+        ORDER BY milestone_id, slice_id, sequence, id`,
+    ).all(taskParams) as Array<Record<string, unknown>>;
+    tasks.push(...rows);
+  }
+
+  return {
+    milestones: selectedMilestones.map((milestone) => {
+      const milestoneSlices = slices.filter((slice) => String(slice.milestone_id) === milestone.id);
+      return {
+        ...milestone,
+        truncated: milestoneSlices.some((slice) => Number(slice.row_number) > 50),
+        slices: milestoneSlices.filter((slice) => Number(slice.row_number) <= 50).map((slice) => {
+          const milestoneId = String(slice.milestone_id);
+          const sliceId = String(slice.id);
+          const sliceTasks = tasks.filter((task) => String(task.milestone_id) === milestoneId && String(task.slice_id) === sliceId);
+          return {
+            id: sliceId,
+            title: String(slice.title ?? ""),
+            status: String(slice.status ?? ""),
+            truncated: sliceTasks.some((task) => Number(task.row_number) > 50),
+            tasks: sliceTasks.filter((task) => Number(task.row_number) <= 50).map((task) => ({
+              id: String(task.id ?? ""),
+              title: String(task.title ?? ""),
+              status: String(task.status ?? ""),
+            })),
+          };
+        }),
+      };
+    }),
+    milestonesTruncated: milestones.length > 50,
+  };
+}
+
 /** Dispatch-eligibility shape consumed by decision-path callers (ADR-017). */
 export interface MilestoneSliceSummary {
   id: string;
