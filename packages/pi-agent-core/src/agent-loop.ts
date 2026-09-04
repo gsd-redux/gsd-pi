@@ -323,9 +323,13 @@ async function runLoop(
 				const isOutputTruncation = !message.errorMessage && message.usage.output > 0;
 				if (!isOutputTruncation) {
 					lengthHaltIsContextOverflow = isContextOverflow(message, config.model.contextWindow);
-					lengthHaltReason = message.errorMessage
-						? `provider error: ${message.errorMessage}`
-						: "no output was generated (context overflow, not output truncation)";
+					if (message.errorMessage) {
+						lengthHaltReason = `provider error: ${message.errorMessage}`;
+					} else if (lengthHaltIsContextOverflow) {
+						lengthHaltReason = "no output was generated (context overflow, not output truncation)";
+					} else {
+						lengthHaltReason = "no output was generated";
+					}
 				} else if (lengthContinuations < MAX_LENGTH_CONTINUATIONS) {
 					continueAfterTruncation = true;
 				} else {

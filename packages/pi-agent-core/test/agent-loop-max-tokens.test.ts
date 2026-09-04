@@ -458,10 +458,7 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
 
-	it("does not continue a zero-output length stop (silent context overflow)", async () => {
-		// pi-ai classifies length + output=0 as context overflow (isContextOverflow
-		// case 3): the provider truncated the INPUT, leaving no room to generate.
-		// Continuing would grow the context further, so halt with a terminal error.
+	it("does not label an unclassified zero-output length stop as context overflow", async () => {
 		const context: AgentContext = {
 			systemPrompt: "",
 			messages: [],
@@ -498,6 +495,9 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 		expect(lastMessage.role).toBe("assistant");
 		expect(lastMessage.stopReason).toBe("error");
 		expect(lastMessage.errorMessage).toContain("no output was generated");
+		expect(lastMessage.errorMessage).not.toContain("context overflow");
+		const terminalText = lastMessage.content.find((content) => content.type === "text");
+		expect(terminalText?.text).not.toContain("context overflow");
 		expect(lastMessage.errorMessage).toContain("continuing was halted");
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
