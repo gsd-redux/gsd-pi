@@ -973,9 +973,13 @@ async function executePreparedToolCall(
 		// execution against abort: once aborted, stop awaiting the tool and finalize
 		// it as aborted. The tool's own promise keeps running in the background, but
 		// the turn completes and every tool_execution_start gets a paired _end.
-		const outcome: ExecutedToolCallOutcome = signal
-			? await raceToolExecutionAgainstAbort(execution, signal)
-			: { result: await execution, isError: false };
+		let outcome: ExecutedToolCallOutcome;
+		if (signal) {
+			outcome = await raceToolExecutionAgainstAbort(execution, signal);
+		} else {
+			const result = await execution;
+			outcome = { result, isError: result?.isError ?? false };
+		}
 		await Promise.all(updateEvents);
 		return outcome;
 	} catch (error) {
@@ -1004,7 +1008,7 @@ async function raceToolExecutionAgainstAbort(
 	// later settlement so a background rejection does not surface as an unhandled
 	// rejection after the turn has moved on.
 	const guardedExecution = execution.then(
-		(result) => ({ result, isError: false }) satisfies ExecutedToolCallOutcome,
+		(result) => ({ result, isError: result?.isError ?? false }) satisfies ExecutedToolCallOutcome,
 		(error) => ({
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
@@ -1085,6 +1089,7 @@ function normalizeAgentToolResult(result: Partial<AgentToolResult<any>> | undefi
 	return {
 		content: normalizeToolResultContent(result?.content),
 		details: result?.details,
+		isError: result?.isError,
 		terminate: result?.terminate,
 	};
 }
