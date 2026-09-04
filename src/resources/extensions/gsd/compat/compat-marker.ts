@@ -194,8 +194,8 @@ export function recordCompatProjectionWrite(
   entities: string[],
 ): void {
   const projectionPath = deriveCompatProjectionKey(filePath, [join(basePath, ".gsd")]);
-  // An unsafe derived key (target resolving outside .gsd/) must never enter
-  // the marker: one poisoned key invalidates the whole marker on read (#2130).
+  // Projection keys are resolved under .gsd; never persist one that escapes
+  // that root.
   if (!isSafeProjectionKey(projectionPath)) return;
   const marker = readCompatMarker(basePath);
   marker.projections[projectionPath] = {
