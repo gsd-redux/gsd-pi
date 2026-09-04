@@ -107,9 +107,20 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 			messages: [],
 			tools: [createEchoTool(executed)],
 		};
+		let replacedContext = false;
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
+			prepareNextTurn: ({ context: currentContext }) => {
+				if (replacedContext) return undefined;
+				replacedContext = true;
+				return {
+					context: {
+						...currentContext,
+						messages: currentContext.messages.filter((message) => message.role !== "user"),
+					},
+				};
+			},
 		};
 
 		let callIndex = 0;
@@ -351,6 +362,53 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 		expect(lastMessage.role).toBe("assistant");
 		expect(lastMessage.stopReason).toBe("error");
 		expect(lastMessage.errorMessage).toContain("tool termination requested");
+		expect(events[events.length - 1].type).toBe("agent_end");
+	});
+
+	it("lets the schema breaker stop repeated truncated validation failures", async () => {
+		const executed: string[] = [];
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [createEchoTool(executed)],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let streamCallCount = 0;
+		const streamFn = () => {
+			streamCallCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				stream.push({
+					type: "done",
+					reason: "length",
+					message: createAssistantMessage(
+						[{ type: "toolCall", id: `invalid-${streamCallCount}`, name: "echo", arguments: {} }],
+						"length",
+						createUsage(5),
+					),
+				});
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("hello")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
+		expect(streamCallCount).toBe(3);
+		expect(executed).toHaveLength(0);
+		expect(continuations(events)).toHaveLength(2);
+		expect(lastMessage.role).toBe("assistant");
+		expect(lastMessage.stopReason).toBe("error");
+		expect(lastMessage.errorMessage).toContain("Schema overload");
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
 

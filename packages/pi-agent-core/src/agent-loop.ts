@@ -381,6 +381,8 @@ async function runLoop(
 					await emit({ type: "message_start", message: retryMessage });
 					await emit({ type: "message_end", message: retryMessage });
 				} else if (overload.trip && lengthHaltReason === undefined) {
+					// A length stop after repeated preparation errors is surfaced by the
+					// schema breaker—loud, not silent—so no continuation is injected here.
 					const stopMessage: AssistantMessage = {
 						role: "assistant",
 						content: [
@@ -425,25 +427,6 @@ async function runLoop(
 				return;
 			}
 
-			if (continueAfterTruncation) {
-				lengthContinuations++;
-				// Injected after the tool results so providers that require toolResult
-				// messages to directly follow the assistant toolCall message accept the
-				// context on the next stream call.
-				const continuationMessage: AgentMessage = {
-					role: "user",
-					content: [{ type: "text", text: LENGTH_CONTINUATION_PROMPT }],
-					timestamp: Date.now(),
-				};
-				currentContext.messages.push(continuationMessage);
-				newMessages.push(continuationMessage);
-				await emit({ type: "message_start", message: continuationMessage });
-				await emit({ type: "message_end", message: continuationMessage });
-				if (toolCalls.length === 0) {
-					hasMoreToolCalls = true;
-				}
-			}
-
 			const nextTurnContext = {
 				message,
 				toolResults,
@@ -463,6 +446,25 @@ async function runLoop(
 								? undefined
 								: nextTurnSnapshot.thinkingLevel,
 				};
+			}
+
+			if (continueAfterTruncation) {
+				lengthContinuations++;
+				// Injected after the tool results so providers that require toolResult
+				// messages to directly follow the assistant toolCall message accept the
+				// context on the next stream call.
+				const continuationMessage: AgentMessage = {
+					role: "user",
+					content: [{ type: "text", text: LENGTH_CONTINUATION_PROMPT }],
+					timestamp: Date.now(),
+				};
+				currentContext.messages.push(continuationMessage);
+				newMessages.push(continuationMessage);
+				await emit({ type: "message_start", message: continuationMessage });
+				await emit({ type: "message_end", message: continuationMessage });
+				if (toolCalls.length === 0) {
+					hasMoreToolCalls = true;
+				}
 			}
 
 			const shouldStopAfterTurn = await config.shouldStopAfterTurn?.({
