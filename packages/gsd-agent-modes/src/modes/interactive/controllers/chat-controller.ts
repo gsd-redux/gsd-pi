@@ -331,10 +331,14 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						host.chatContainer.addChild(host.streamingComponent);
 						markFirstVisibleAssistantOutput(host, "message_end_only");
 						reconcileChatTurnConnections(host.chatContainer.children);
-						// Ensure the newly created component renders immediately
-						// (flushPendingStreamingWork runs after this block, but
-						// an explicit requestRender here prevents a race where
-						// the component exists but hasn't painted yet).
+						// Ensure the newly created component paints immediately.
+						// flushPendingStreamingWork() runs later in this same
+						// handler and calls requestRender() again, but an
+						// explicit call here prevents a race where the component
+						// has been added to the DOM but hasn't painted yet —
+						// the user would see a blank space briefly before the
+						// final render. Keeping this is safe because requestRender()
+						// is a no-op when a render is already pending.
 						host.ui.requestRender();
 					}
 					if (host.streamingComponent) {

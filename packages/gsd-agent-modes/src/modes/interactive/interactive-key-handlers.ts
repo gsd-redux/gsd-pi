@@ -389,19 +389,23 @@ export function toggleThinkingBlockVisibility(host: InteractiveModeDelegateHost)
 		const prevClearOnShrink = host.ui.getClearOnShrink();
 		host.ui.setClearOnShrink(false);
 
-		// Rebuild chat from session messages
-		host.chatContainer.clear();
-		host.rebuildChatFromMessages();
+		try {
+			// Rebuild chat from session messages
+			host.chatContainer.clear();
+			host.rebuildChatFromMessages();
 
-		// If streaming, re-add the streaming component with updated visibility and re-render
-		if (host.streamingComponent && host.streamingMessage) {
-			host.streamingComponent.setHideThinkingBlock(host.hideThinkingBlock);
-			host.streamingComponent.updateContent(host.streamingMessage);
-			host.chatContainer.addChild(host.streamingComponent);
+			// If streaming, re-add the streaming component with updated visibility
+			if (host.streamingComponent && host.streamingMessage) {
+				host.streamingComponent.setHideThinkingBlock(host.hideThinkingBlock);
+				host.streamingComponent.updateContent(host.streamingMessage);
+				host.chatContainer.addChild(host.streamingComponent);
+			}
+		} finally {
+			// Always restore the previous clearOnShrink value, even if
+			// rebuildChatFromMessages() throws — otherwise the TUI is left
+			// with shrink-clearing permanently disabled.
+			host.ui.setClearOnShrink(prevClearOnShrink);
 		}
-
-		// Restore shrink debounce setting
-		host.ui.setClearOnShrink(prevClearOnShrink);
 
 		host.showStatus(`Thinking blocks: ${host.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
