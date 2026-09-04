@@ -261,7 +261,15 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					}
 				}
 
-					runSegmentWalker(host, rs, timestampFormat);
+				// Run the segment walker synchronously on each delta so the TUI's
+				// built-in render throttling (requestRender guard + 16ms interval)
+				// naturally batches renders into 16ms windows. This produces
+				// incremental, visible streaming instead of a single block at the
+				// end of the microtask queue drain. The queueMicrotask() wrapper
+				// was counterproductive: it batched all walker runs together before
+				// any render could fire, making the user see nothing until the
+				// entire microtask batch completed.
+				runSegmentWalker(host, rs, timestampFormat);
 
 				// Update index: fully processed blocks won't need re-scanning.
 				// Keep the last block's index (it may still be accumulating data),
@@ -282,11 +290,10 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// render so the beginning of the response is visible right away.
 				// Subsequent deltas are throttled by the TUI's requestRender()
 				// guard (no-op when a render is already pending) and the
-				// 16ms minimum render interval — the debounce from #1686 was
-				// dead code (timer resets on every delta, never fires during
-				// continuous streaming). See .gsd/issue-streaming-render-starvation.md
+				// 16ms minimum render interval — producing incremental streaming.
 				host.ui.requestRender();
 			}
+
 			break;
 
 		case "message_end":
