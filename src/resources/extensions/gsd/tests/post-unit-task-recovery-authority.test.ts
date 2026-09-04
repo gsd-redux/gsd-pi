@@ -24,7 +24,7 @@ import {
 } from "../task-execution-domain-operation.ts";
 import { cleanup, makeTempRepo } from "./test-utils.ts";
 
-function createTaskContext(basePath: string, pauseCalls: string[]): PostUnitContext {
+function createTaskContext(basePath: string, pauseCalls: string[], notifyCalls: string[] = []): PostUnitContext {
   const session = new AutoSession();
   session.active = true;
   session.basePath = basePath;
@@ -36,7 +36,13 @@ function createTaskContext(basePath: string, pauseCalls: string[]): PostUnitCont
 
   return {
     s: session,
-    ctx: { ui: { notify: () => {} } } as unknown as PostUnitContext["ctx"],
+    ctx: {
+      ui: {
+        notify: (message: string) => {
+          notifyCalls.push(message);
+        },
+      },
+    } as unknown as PostUnitContext["ctx"],
     pi: {} as PostUnitContext["pi"],
     buildSnapshotOpts: () => ({}),
     lockBase: () => basePath,
@@ -135,6 +141,62 @@ test("DB-backed execute-task deterministic errors cannot write an artifact place
   assert.equal(pctx.s.pendingVerificationRetry, null);
   assert.equal(pctx.s.lastToolInvocationError, null);
   assert.deepEqual(pauseCalls, []);
+});
+
+// ── #2131: a schema-rejected gsd_task_complete records a deterministic
+// invocation error. The durable-authority branch used to clear it before any
+// classification could act, so the unit was re-dispatched with unchanged
+// inputs, failed host verification with a cause-agnostic throw, and wedged via
+// the ADR-047 liveness backstop. The deterministic record must survive the
+// durable path so the existing #2883 pause fires with the actual cause.
+test("schema-rejected gsd_task_complete pauses with the deterministic cause (#2131)", async (t) => {
+  const basePath = scaffoldDbBackedTask();
+  t.after(() => {
+    closeDatabase();
+    cleanup(basePath);
+  });
+  const pauseCalls: string[] = [];
+  const notifyCalls: string[] = [];
+  const pctx = createTaskContext(basePath, pauseCalls, notifyCalls);
+  pctx.s.lastToolInvocationError =
+    'gsd_task_complete: Validation failed for tool "gsd_task_complete": sliceId: must have required properties sliceId';
+
+  const result = await postUnitPreVerification(pctx, {
+    skipSettleDelay: true,
+    skipWorktreeSync: true,
+  });
+
+  assert.equal(result, "dispatched");
+  assert.equal(pauseCalls.length, 1, "auto-mode must pause instead of re-dispatching the unit");
+  assert.equal(pctx.s.lastToolInvocationError, null);
+  assert.deepEqual(notifyCalls, [
+    'Tool invocation/runtime failed for execute-task: gsd_task_complete: Validation failed for tool "gsd_task_complete": sliceId: must have required properties sliceId. Retrying cannot resolve this deterministic failure — pausing auto-mode.',
+  ]);
+});
+
+test("durable execute-task transient tool-unavailable error keeps deferring to durable authority", async (t) => {
+  const basePath = scaffoldDbBackedTask();
+  t.after(() => {
+    closeDatabase();
+    cleanup(basePath);
+  });
+  const pauseCalls: string[] = [];
+  const notifyCalls: string[] = [];
+  const pctx = createTaskContext(basePath, pauseCalls, notifyCalls);
+  pctx.s.lastToolInvocationError =
+    "No such tool available: mcp__gsd-workflow__gsd_task_complete";
+
+  const result = await postUnitPreVerification(pctx, {
+    skipSettleDelay: true,
+    skipWorktreeSync: true,
+  });
+
+  // Transient MCP startup race: still cleared for the durable authority's own
+  // bounded retry — no pause, no reclassification.
+  assert.equal(result, "continue");
+  assert.equal(pctx.s.lastToolInvocationError, null);
+  assert.deepEqual(pauseCalls, []);
+  assert.deepEqual(notifyCalls, []);
 });
 
 // ── #1971: a staged Attempt awaiting host verification must not reset the
