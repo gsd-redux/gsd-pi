@@ -781,6 +781,7 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   makeTreeWritable(agentDir)
 
   afterResourceSyncForTests?.()
+  // ABA note: a concurrent mutation of the bundled tree during the copy window that reverts before the next launch can leave one stale installed file undetected; snapshot-copy semantics are out of scope for this convenience sync.
   writeManagedResourceManifest(agentDir, currentHash)
   ensureRegistryEntries(join(agentDir, 'extensions'))
 }
