@@ -13,6 +13,7 @@ import {
 	getSessionTotalTokens,
 	hasSessionTokenStats,
 } from "./rpc-display.js";
+import { applySectionCollapseState } from "./section-state.js";
 
 /**
  * Send a message through VS Code's Chat panel so the user sees the response.
@@ -689,15 +690,10 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		const vscode = acquireVsCodeApi();
 		const stored = vscode.getState() || {};
 
-		// Restore persisted section state after each WebView rerender.
-		document.querySelectorAll('.section').forEach(s => {
-			const id = s.dataset.section;
-			if (id && stored[id] === 'collapsed') {
-				s.classList.add('collapsed');
-			} else if (id && stored[id] === 'open') {
-				s.classList.remove('collapsed');
-			}
-		});
+		// Restore collapsed state — the helper is interpolated by source so the
+		// webview and the unit tests share the exact same decision logic
+		// (build is plain tsc, so the emitted function body is stable).
+		(${applySectionCollapseState})(document.querySelectorAll('.section'), stored);
 
 		document.addEventListener('click', (e) => {
 			// Section toggle
