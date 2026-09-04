@@ -733,7 +733,7 @@ function interpretFlatArtifact(
     const summaryId = frontmatterField(file, "id")?.value;
     const summarySlice = frontmatterField(file, "slice")?.value;
     const summaryTask = frontmatterField(file, "task")?.value;
-    if (summaryId !== undefined && /^(?:S\d+|M\d+)/u.test(summaryId)) {
+    if (summaryId !== undefined && summaryTask === undefined && /^(?:S\d+|M\d+)/u.test(summaryId)) {
       preserveHeading(file, candidates, "flat-non-task-summary-preserved", {
         reason: "non-task-summary",
         id: summaryId,
