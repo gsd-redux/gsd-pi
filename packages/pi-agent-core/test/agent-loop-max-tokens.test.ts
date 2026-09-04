@@ -37,12 +37,12 @@ function createUsage(output = 0) {
 	};
 }
 
-function createModel(): Model<"openai-responses"> {
+function createModel(id = "mock", provider = "openai"): Model<"openai-responses"> {
 	return {
-		id: "mock",
-		name: "mock",
+		id,
+		name: id,
 		api: "openai-responses",
-		provider: "openai",
+		provider,
 		baseUrl: "https://example.invalid",
 		reasoning: false,
 		input: ["text"],
@@ -214,10 +214,14 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 			const stream = new MockAssistantStream();
 			queueMicrotask(() => {
 				// Provider always truncates: the loop must not spin forever.
+				const content: AssistantMessage["content"] =
+					streamCallCount === 4
+						? [{ type: "toolCall", id: "tool-at-cap", name: "echo", arguments: { value: "at-cap" } }]
+						: [{ type: "text", text: "partial narrati" }];
 				stream.push({
 					type: "done",
 					reason: "length",
-					message: createAssistantMessage([{ type: "text", text: "partial narrati" }], "length", createUsage(12)),
+					message: createAssistantMessage(content, "length", createUsage(12)),
 				});
 			});
 			return stream;
@@ -236,6 +240,8 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 
 		// Exactly three continuation messages were injected.
 		expect(continuations(events)).toHaveLength(3);
+		expect(executed).toEqual(["at-cap"]);
+		expect(messages.slice(-3).map((message) => message.role)).toEqual(["assistant", "toolResult", "assistant"]);
 
 		// The loop surfaced a terminal error instead of ending cleanly.
 		const lastMessage = messages[messages.length - 1];
@@ -250,14 +256,16 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 	});
 
 	it("surfaces a terminal error when the stop hook halts an injected continuation", async () => {
+		const sourceModel = createModel("source-model", "source-provider");
 		const context: AgentContext = {
 			systemPrompt: "",
 			messages: [],
 			tools: [],
 		};
 		const config: AgentLoopConfig = {
-			model: createModel(),
+			model: sourceModel,
 			convertToLlm: identityConverter,
+			prepareNextTurn: () => ({ model: createModel("next-model", "next-provider") }),
 			shouldStopAfterTurn: () => true,
 		};
 
@@ -269,7 +277,11 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 				stream.push({
 					type: "done",
 					reason: "length",
-					message: createAssistantMessage([{ type: "text", text: "partial" }], "length", createUsage(5)),
+					message: {
+						...createAssistantMessage([{ type: "text", text: "partial" }], "length", createUsage(5)),
+						model: sourceModel.id,
+						provider: sourceModel.provider,
+					},
 				});
 			});
 			return stream;
@@ -288,6 +300,9 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 		expect(lastMessage.role).toBe("assistant");
 		expect(lastMessage.stopReason).toBe("error");
 		expect(lastMessage.errorMessage).toContain("stop hook halted the continuation");
+		expect(lastMessage.api).toBe(sourceModel.api);
+		expect(lastMessage.provider).toBe(sourceModel.provider);
+		expect(lastMessage.model).toBe(sourceModel.id);
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
 
@@ -327,9 +342,15 @@ describe("agent loop stopReason=length (max_tokens truncation)", () => {
 			events.push(event);
 		}
 
-		await stream.result();
+		const messages = await stream.result();
+		const lastMessage = messages[messages.length - 1];
 		expect(streamCallCount).toBe(1);
 		expect(executed).toEqual(["hello"]);
+		expect(continuations(events)).toHaveLength(0);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		expect(lastMessage.role).toBe("assistant");
+		expect(lastMessage.stopReason).toBe("error");
+		expect(lastMessage.errorMessage).toContain("tool termination requested");
 		expect(events[events.length - 1].type).toBe("agent_end");
 	});
 
