@@ -2,9 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { installHermesPlugin, parseHermesInstallArgs } from '../hermes-integration-install.ts'
+import { installHermesPlugin, parseHermesInstallArgs, renderGsdYaml } from '../hermes-integration-install.ts'
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 test('parseHermesInstallArgs resolves Hermes home and project paths', () => {
   const opts = parseHermesInstallArgs([
@@ -67,4 +70,33 @@ test('installHermesPlugin leaves existing config unchanged', () => {
 
   assert.equal(readFileSync(result.configPath, 'utf8'), 'gsd:\n  default_project: /existing\n')
   assert.ok(result.actions.some((action) => action.includes('Left existing')))
+})
+
+test('renderGsdYaml writes a version gate covering the installed gsd-pi version', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { version: string }
+  const nextMajor = `${Number(pkg.version.split('.')[0]) + 1}.0.0`
+
+  const config = renderGsdYaml(undefined)
+
+  assert.ok(
+    config.includes(`gsd_version_min: '${pkg.version}'`),
+    `expected gsd_version_min: '${pkg.version}' in:\n${config}`,
+  )
+  assert.ok(
+    config.includes(`gsd_version_max: '${nextMajor}'`),
+    `expected gsd_version_max: '${nextMajor}' in:\n${config}`,
+  )
+})
+
+test('renderGsdYaml mcp_server_path matches a bin entry shipped in the package', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+    bin: Record<string, string>
+  }
+  const binTarget = pkg.bin['gsd-mcp-server']
+
+  const config = renderGsdYaml(undefined)
+
+  assert.ok(config.includes('mcp_server_path: gsd-mcp-server'))
+  assert.equal(binTarget, 'packages/mcp-server/bin/gsd-mcp-server.js')
+  assert.equal(existsSync(join(repoRoot, binTarget)), true)
 })
