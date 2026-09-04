@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 
 import { installHermesPlugin, parseHermesInstallArgs, renderGsdYaml } from '../hermes-integration-install.ts'
 
@@ -76,27 +77,25 @@ test('renderGsdYaml writes a version gate covering the installed gsd-pi version'
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { version: string }
   const nextMajor = `${Number(pkg.version.split('.')[0]) + 1}.0.0`
 
-  const config = renderGsdYaml(undefined)
+  const config = parseYaml(renderGsdYaml(undefined)) as {
+    gsd: { gsd_version_min: string; gsd_version_max: string }
+  }
 
-  assert.ok(
-    config.includes(`gsd_version_min: '${pkg.version}'`),
-    `expected gsd_version_min: '${pkg.version}' in:\n${config}`,
-  )
-  assert.ok(
-    config.includes(`gsd_version_max: '${nextMajor}'`),
-    `expected gsd_version_max: '${nextMajor}' in:\n${config}`,
-  )
+  assert.equal(config.gsd.gsd_version_min, pkg.version)
+  assert.equal(config.gsd.gsd_version_max, nextMajor)
 })
 
 test('renderGsdYaml mcp_server_path matches a bin entry shipped in the package', () => {
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
     bin: Record<string, string>
   }
-  const binTarget = pkg.bin['gsd-mcp-server']
+  const config = parseYaml(renderGsdYaml(undefined)) as {
+    gsd: { mcp_server_path: string }
+  }
+  const mcpServerPath = config.gsd.mcp_server_path
+  const binTarget = pkg.bin[mcpServerPath]
 
-  const config = renderGsdYaml(undefined)
-
-  assert.ok(config.includes('mcp_server_path: gsd-mcp-server'))
+  assert.equal(mcpServerPath, 'gsd-mcp-server')
   assert.equal(binTarget, 'packages/mcp-server/bin/gsd-mcp-server.js')
   assert.equal(existsSync(join(repoRoot, binTarget)), true)
 })
