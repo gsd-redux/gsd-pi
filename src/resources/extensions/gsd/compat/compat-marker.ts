@@ -194,6 +194,9 @@ export function recordCompatProjectionWrite(
   entities: string[],
 ): void {
   const projectionPath = deriveCompatProjectionKey(filePath, [join(basePath, ".gsd")]);
+  // An unsafe derived key (target resolving outside .gsd/) must never enter
+  // the marker: one poisoned key invalidates the whole marker on read (#2130).
+  if (!isSafeProjectionKey(projectionPath)) return;
   const marker = readCompatMarker(basePath);
   marker.projections[projectionPath] = {
     sha: computeProjectionSha(content),
@@ -301,9 +304,16 @@ function healProjectionMapKeys(
 
   for (const key of Object.keys(map)) {
     if (isSafeProjectionKey(key)) continue;
-    if (key.includes("\0") || isAbsolute(key) || /^[A-Za-z]:/.test(key)) continue;
-    const healedKey = rootRelativeKey(root, resolve(root, key));
-    if (!healedKey || !isSafeProjectionKey(healedKey)) continue;
+    // Unfixable key — control chars/absolute/drive-letter, or still escaping
+    // after canonicalization: drop it instead of leaving it in place, where it
+    // would invalidate the whole marker on every subsequent read (#2130).
+    const unfixable = key.includes("\0") || isAbsolute(key) || /^[A-Za-z]:/.test(key);
+    const healedKey = unfixable ? null : rootRelativeKey(root, resolve(root, key));
+    if (!healedKey || !isSafeProjectionKey(healedKey)) {
+      delete map[key];
+      changed = true;
+      continue;
+    }
 
     if (!map[healedKey]) {
       map[healedKey] = map[key]!;
