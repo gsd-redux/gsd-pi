@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -400,4 +401,34 @@ describe('doctor-environment', async () => {
       try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
+});
+
+// ── Git Remote Check: healthy repo reports ok (#2129) ──────────────────────
+test('env: git_remote reports ok on a healthy repo with origin (#2129)', (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-env-git-remote-"));
+  t.after(() => { rmSync(base, { recursive: true, force: true }); });
+
+  const git = (cwd: string, ...args: string[]): void => {
+    execFileSync("git", args, { cwd, stdio: "pipe" });
+  };
+
+  // Local project repo plus a local bare "origin" — no network needed.
+  const project = join(base, "project");
+  const origin = join(base, "origin.git");
+  mkdirSync(project);
+  git(project, "init", "-b", "main");
+  git(project, "config", "user.email", "test@test.com");
+  git(project, "config", "user.name", "Test");
+  writeFileSync(join(project, "README.md"), "# init\n");
+  git(project, "add", "-A");
+  // -c commit.gpgsign=false keeps the fixture hermetic against global git config.
+  git(project, "-c", "commit.gpgsign=false", "commit", "-m", "init");
+  git(base, "init", "--bare", "-b", "main", origin);
+  git(project, "remote", "add", "origin", origin);
+  git(project, "push", "origin", "main");
+
+  const results = runFullEnvironmentChecks(project);
+  const remoteCheck = results.find(r => r.name === "git_remote");
+  assert.ok(remoteCheck, "git remote check runs when origin exists");
+  assert.equal(remoteCheck!.status, "ok", "healthy origin is reachable");
 });
