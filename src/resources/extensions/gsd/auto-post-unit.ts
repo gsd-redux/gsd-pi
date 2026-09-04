@@ -2318,8 +2318,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         // #2131: the durable authority never receives the invocation record, so
         // a deterministic failure recorded here must pause before the clear
         // below — otherwise it is retried with unchanged inputs until the
-        // liveness backstop wedges. Non-deterministic records (transient
-        // tool-unavailable, policy gates, queued-user skips) keep the deferral.
+        // liveness backstop wedges. Other recorded classes (transient
+        // tool-unavailable, deterministic policy gates, queued-user skips)
+        // keep the deferral.
         const invocationError = s.lastToolInvocationError;
         if (
           invocationError
