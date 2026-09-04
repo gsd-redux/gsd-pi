@@ -35,6 +35,7 @@ const gsdBrowserSkillName = 'gsd-browser'
 const requireFromResourceLoader = createRequire(import.meta.url)
 const gsdBrowserSkillReferenceDirs = ['docs', 'scripts', 'gsd-browser-skill']
 let gsdBrowserPackageSkillPathForTests: string | null | undefined
+let afterResourceSyncForTests: (() => void) | undefined
 
 interface ManagedResourceManifest {
   gsdVersion: string
@@ -94,7 +95,7 @@ function getBundledPackageName(): string {
   }
 }
 
-function writeManagedResourceManifest(agentDir: string): void {
+function writeManagedResourceManifest(agentDir: string, contentHash: string): void {
   // Record root-level files and subdirectory extension names currently in the
   // bundled extensions source so that future upgrades can detect and prune any
   // that get removed or moved.
@@ -125,11 +126,7 @@ function writeManagedResourceManifest(agentDir: string): void {
     gsdVersion: getBundledGsdVersion(),
     packageName: getBundledPackageName(),
     syncedAt: Date.now(),
-    // Record the LIVE fingerprint of the tree that was just synced. Stamping
-    // the shipped precomputed value here would leave the manifest permanently
-    // mismatched with the live tree after a same-version edit, forcing a full
-    // resync on every launch (#2106).
-    contentHash: computeResourceFingerprint(),
+    contentHash,
     installedExtensionRootFiles,
     installedExtensionDirs,
   }
@@ -208,6 +205,10 @@ export function setGsdBrowserPackageSkillPathForTests(skillPath: string | null |
 export function setBundledResourcesDirForTests(dir: string | null | undefined): void {
   resourcesDir = dir ?? resolveBundledResourcesDirFromPackageRoot(packageRoot)
   bundledExtensionsDir = join(resourcesDir, 'extensions')
+}
+
+export function setAfterResourceSyncForTests(callback: (() => void) | undefined): void {
+  afterResourceSyncForTests = callback
 }
 
 export function collectGsdBrowserPackageSkillReferences(content: string): string[] {
@@ -751,9 +752,9 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   // hotfixes within a release). The hash must be computed LIVE against the
   // bundled tree (#2106): the shipped precomputed file is immutable after
   // install, so comparing against it can never detect same-version edits.
+  const currentHash = computeResourceFingerprint()
   if (manifest && isCurrentPackageManifest(manifest) && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
-    const currentHash = computeResourceFingerprint()
     if (manifest.contentHash && manifest.contentHash === currentHash
       && !hasMissingBundledResourceFiles(extensionsDir, bundledExtensionsDir)) {
       return
@@ -779,7 +780,8 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   // overwrite them (covers extensions, agents, and skills in one walk).
   makeTreeWritable(agentDir)
 
-  writeManagedResourceManifest(agentDir)
+  afterResourceSyncForTests?.()
+  writeManagedResourceManifest(agentDir, currentHash)
   ensureRegistryEntries(join(agentDir, 'extensions'))
 }
 

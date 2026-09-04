@@ -205,3 +205,54 @@ test("initResources early-returns when the bundle is unmodified (no pointless re
     "unmodified bundle must keep the early-return (no resync)",
   );
 });
+
+test("initResources stamps the fingerprint compared before a mid-sync bundle edit", async (t) => {
+  const {
+    computeResourceFingerprint,
+    initResources,
+    setAfterResourceSyncForTests,
+    setBundledResourcesDirForTests,
+  } = await import("../resource-loader.ts");
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-fingerprint-sync-race-"));
+  const fakeResources = buildFakeBundledResources(join(tmp, "resources"));
+  const agentDir = join(tmp, "agent");
+  const skillsDir = join(tmp, "skills");
+  const bundledNote = join(fakeResources, "shared", "note.md");
+  const installedNote = join(agentDir, "shared", "note.md");
+  const manifestPath = join(agentDir, "managed-resources.json");
+  t.after(() => {
+    setAfterResourceSyncForTests(undefined);
+    setBundledResourcesDirForTests(undefined);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  setBundledResourcesDirForTests(fakeResources);
+  initResources(agentDir, skillsDir);
+
+  const contentB = "bundle B\n";
+  const contentC = "bundle C\n";
+  writeFileSync(bundledNote, contentB);
+  const fingerprintB = computeResourceFingerprint(fakeResources);
+  setAfterResourceSyncForTests(() => {
+    writeFileSync(bundledNote, contentC);
+    setAfterResourceSyncForTests(undefined);
+  });
+
+  initResources(agentDir, skillsDir);
+
+  const manifestAfterB = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  assert.equal(readFileSync(installedNote, "utf-8"), contentB);
+  assert.equal(manifestAfterB.contentHash, fingerprintB);
+
+  initResources(agentDir, skillsDir);
+
+  const manifestAfterC = JSON.parse(readFileSync(manifestPath, "utf-8"));
+  assert.equal(readFileSync(installedNote, "utf-8"), contentC);
+  assert.equal(manifestAfterC.contentHash, computeResourceFingerprint(fakeResources));
+
+  const markerPath = join(agentDir, "extensions", "gsd", "marker.txt");
+  writeFileSync(markerPath, "present");
+  initResources(agentDir, skillsDir);
+  assert.equal(existsSync(markerPath), true);
+});
