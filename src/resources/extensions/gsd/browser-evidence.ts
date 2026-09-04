@@ -11,8 +11,22 @@ const BROWSER_TOOL_SIGNAL = `browser_(?:${
   BROWSER_EVIDENCE_SIGNAL_TOOL_NAMES.map((name) => name.slice("browser_".length)).join("|")
 })`;
 
+// `snapshot` stays a bare browser signal: hasBrowserRequiredText scans physical
+// lines, so requiring nearby context broke wrapped ("Take a rendered page\nsnapshot")
+// and labeled ("Browser: take a snapshot") UAT lines, plus vocabulary like
+// "accessibility snapshot". Instead, drop the match when the snapshot is
+// database/backup work (#2081, #766 follow-up): a DB-CLI verb immediately follows
+// ("snapshot create", "snapshot restore-check"), or a database-ish word shares the
+// clause ("database snapshot", "purge / snapshot / export"). Clause-bounded like
+// NEGATED_BROWSER_CLAUSE_RE.
+const DB_SNAPSHOT_TERMS = String.raw`(?:databases?|db|backups?|export)`;
+const DB_SNAPSHOT_VERB = String.raw`(?:create|restore|export|purge|import|prune|verify)`;
+
 export const BROWSER_REQUIREMENT_RE = new RegExp(
-  String.raw`\b(?:file://|localhost|playwright|chrome|screenshot|snapshot|${BROWSER_TOOL_SIGNAL})\b|\b(?:open|launch|navigate|load|visit|serve|start)\b.{0,80}\b(?:browser|page|localhost|file://)\b|\bbrowser\s+(?:check|session|test|uat|tool|automation|interaction|flow)\b`,
+  String.raw`\b(?:file://|localhost|playwright|chrome|screenshot|${BROWSER_TOOL_SIGNAL})\b` +
+    String.raw`|\bsnapshot\b(?!\s+(?:${DB_SNAPSHOT_VERB})\b)(?![^.;:!?]{0,60}\b${DB_SNAPSHOT_TERMS}\b)(?<!\b${DB_SNAPSHOT_TERMS}\b[^.;:!?]{0,60})` +
+    String.raw`|\bin\s+(?:the\s+)?browser\b` +
+    String.raw`|\b(?:open|launch|navigate|load|visit|serve|start)\b.{0,80}\b(?:browser|page|localhost|file://)\b|\bbrowser\s+(?:check|session|test|uat|tool|automation|interaction|flow)\b`,
   "i",
 );
 export const NO_BROWSER_EVIDENCE_RE = /\b(?:no|without|not|wasn'?t|isn'?t)\s+(?:automated\s+)?(?:live\s+)?browser(?:\s+(?:session|test|uat))?|\bno\s+automated\s+browser\b|\bnot\s+conducted\b/i;

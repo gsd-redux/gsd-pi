@@ -188,6 +188,89 @@ describe('hasBrowserRequiredText', () => {
   });
 });
 
+describe('hasBrowserRequiredText — database snapshot wording', () => {
+  // #2081 (#766 follow-up): bare `snapshot` classified database/backup snapshot
+  // work (snapshot create, restore-check, export/import chains, Chinese text
+  // containing `snapshot`) as browser-required, blocking gsd_validate_milestone
+  // for CLI-only milestones. `snapshot` stays a bare positive signal —
+  // hasBrowserRequiredText scans physical lines, so a context requirement missed
+  // wrapped ("Take a rendered page\nsnapshot") and labeled ("Browser: take a
+  // snapshot") lines — and a match is dropped only when a DB-CLI verb follows it
+  // or a database-ish word shares its clause.
+  test('database/backup snapshot phrasings are not browser requirements', () => {
+    assert.ok(!hasBrowserRequiredText('snapshot create'), 'snapshot + DB-CLI verb must not escalate');
+    assert.ok(!hasBrowserRequiredText('snapshot restore-check'), 'snapshot + DB-CLI verb must not escalate');
+    assert.ok(!hasBrowserRequiredText('snapshot_operation'), 'identifier-shaped name must not escalate');
+    assert.ok(
+      !hasBrowserRequiredText('purge / snapshot / export / import / restore-check crash-injection chain'),
+      'DB snapshot operation chain must not escalate',
+    );
+    assert.ok(
+      !hasBrowserRequiredText('snapshot 与 export 的崩溃残留操作…'),
+      'non-English DB crash phrasing must not escalate',
+    );
+    assert.ok(
+      !hasBrowserRequiredText('Create a snapshot of each modified database page.'),
+      'database-page snapshot must not escalate',
+    );
+    assert.ok(
+      !hasBrowserRequiredText('Create a database snapshot, then render a CLI summary.'),
+      'database snapshot with CLI render must not escalate',
+    );
+  });
+
+  test('a genuine browser snapshot step is still a browser requirement', () => {
+    assert.ok(
+      hasBrowserRequiredText('snapshot the rendered page state in the browser.'),
+      'browser snapshot step must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Take a page snapshot after the dialog opens.'),
+      'page snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Compare the DOM snapshot against the render.'),
+      'DOM snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Verify the settings flow renders, take a snapshot'),
+      'trailing bare snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Check the accessibility snapshot after the dialog opens.'),
+      'accessibility snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Save a visual snapshot of the layout.'),
+      'visual snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Capture a viewport snapshot at each breakpoint.'),
+      'viewport snapshot must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('snapshot the homepage after login.'),
+      'homepage snapshot must escalate',
+    );
+  });
+
+  test('wrapped and labeled snapshot lines stay detected', () => {
+    assert.ok(
+      hasBrowserRequiredText(['Take a rendered page', 'snapshot of the dashboard.'].join('\n')),
+      'snapshot on a wrapped line must escalate',
+    );
+    assert.ok(
+      hasBrowserRequiredText('Browser: take a snapshot after login.'),
+      'labeled snapshot line must escalate',
+    );
+  });
+
+  test('other browser-observable phrasings stay detected', () => {
+    assert.ok(hasBrowserRequiredText('take a screenshot of the page'), 'screenshot step must be detected');
+    assert.ok(hasBrowserRequiredText('check the site in the browser'), 'in-browser check must be detected');
+  });
+});
+
 describe('hasBrowserRequiredText — negated browser mentions', () => {
   // Acceptance run 7: a slice that writes two text files declared
   // "UAT mode: artifact-driven" and explained why. complete-slice rejected it with
