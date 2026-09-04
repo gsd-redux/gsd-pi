@@ -690,8 +690,8 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		const vscode = acquireVsCodeApi();
 		const stored = vscode.getState() || {};
 
-		// Restore collapsed state — the helper is interpolated by source so the
-		// webview and the unit tests share the exact same decision logic
+		// Restore persisted section state. The helper is interpolated by source so
+		// the webview and unit tests share the exact same decision logic
 		// (build is plain tsc, so the emitted function body is stable).
 		(${applySectionCollapseState})(document.querySelectorAll('.section'), stored);
 
