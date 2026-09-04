@@ -40,6 +40,17 @@ export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 /** Cap consecutive turns where every tool call fails preparation (schema / not-found). */
 export const MAX_CONSECUTIVE_VALIDATION_FAILURES = 3;
 
+/**
+ * Cap continuations injected when the provider truncates output at the token
+ * cap (stopReason "length"), so a provider that always truncates cannot spin
+ * the loop (and its cost) forever.
+ */
+export const MAX_LENGTH_CONTINUATIONS = 3;
+
+/** Prompt injected after a length-truncated assistant turn so the model resumes. */
+const LENGTH_CONTINUATION_PROMPT =
+	"Your previous response was cut off at the output limit. Continue exactly where you left off.";
+
 const ZERO_USAGE = {
 	input: 0,
 	output: 0,
@@ -234,6 +245,7 @@ async function runLoop(
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 	let consecutiveAllToolErrorTurns = 0;
+	let lengthContinuations = 0;
 	let previousValidationFields: string[] = [];
 	let narrowedSchemaRetryGranted = false;
 
@@ -268,6 +280,54 @@ async function runLoop(
 				await emit({ type: "turn_end", message, toolResults: [] });
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
+			}
+
+			// The provider cut the output at the token cap: the turn is incomplete
+			// (text orphaned mid-sentence, possibly mid-tool-call). Either continue
+			// the output (bounded by MAX_LENGTH_CONTINUATIONS) or surface a terminal
+			// error instead of presenting the truncation as a clean stop.
+			let continueAfterTruncation = false;
+			if (message.stopReason === "length") {
+				// Only a pure truncation is continuable. A zero-output length stop is
+				// silent context overflow (pi-ai isContextOverflow case 3), and a length
+				// stop carrying an errorMessage is a provider failure — continuing
+				// either would re-feed an unusable context and halt with a misreported
+				// cap message.
+				const isOutputTruncation = !message.errorMessage && message.usage.output > 0;
+				if (isOutputTruncation && lengthContinuations < MAX_LENGTH_CONTINUATIONS) {
+					lengthContinuations++;
+					continueAfterTruncation = true;
+				} else {
+					const haltedBecause = !isOutputTruncation
+						? message.errorMessage
+							? `provider error: ${message.errorMessage}`
+							: "no output was generated (context overflow, not output truncation)"
+						: `output cap hit ${MAX_LENGTH_CONTINUATIONS} times`;
+					const stopMessage: AssistantMessage = {
+						role: "assistant",
+						content: [
+							{
+								type: "text",
+								text: `Agent stopped: provider returned stop_reason "length" and continuation was halted (${haltedBecause}).`,
+							},
+						],
+						api: config.model.api,
+						provider: config.model.provider,
+						model: config.model.id,
+						usage: ZERO_USAGE,
+						stopReason: "error",
+						errorMessage: `Provider stop_reason: length (${haltedBecause}; continuing was halted)`,
+						timestamp: Date.now(),
+					};
+					await emit({ type: "turn_end", message, toolResults: [] });
+					await emit({ type: "message_start", message: stopMessage });
+					await emit({ type: "message_end", message: stopMessage });
+					newMessages.push(stopMessage);
+					currentContext.messages.push(stopMessage);
+					await emit({ type: "turn_end", message: stopMessage, toolResults: [] });
+					await emit({ type: "agent_end", messages: newMessages });
+					return;
+				}
 			}
 
 			// Check for tool calls
@@ -349,6 +409,23 @@ async function runLoop(
 					await emit({ type: "agent_end", messages: newMessages });
 					return;
 				}
+			}
+
+			if (continueAfterTruncation) {
+				// Injected after the tool results so providers that require toolResult
+				// messages to directly follow the assistant toolCall message accept the
+				// context on the next stream call.
+				const continuationMessage: AgentMessage = {
+					role: "user",
+					content: [{ type: "text", text: LENGTH_CONTINUATION_PROMPT }],
+					timestamp: Date.now(),
+				};
+				currentContext.messages.push(continuationMessage);
+				newMessages.push(continuationMessage);
+				await emit({ type: "message_start", message: continuationMessage });
+				await emit({ type: "message_end", message: continuationMessage });
+				// A truncated turn without tool calls would otherwise end the loop here.
+				hasMoreToolCalls = true;
 			}
 
 			await emit({ type: "turn_end", message, toolResults });
