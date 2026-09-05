@@ -125,6 +125,131 @@ export function getProjectAuthorityVersion(): ProjectAuthorityVersion {
   };
 }
 
+export interface ProjectAuthorityRow {
+  projectId: string;
+  revision: number;
+  authorityEpoch: number;
+}
+
+/** Full project_authority singleton read (null when no row / no DB open). */
+export function getProjectAuthorityRow(): ProjectAuthorityRow | null {
+  const db = getDbOrNull();
+  if (!db) return null;
+  const row = db.prepare(
+    "SELECT project_id, revision, authority_epoch FROM project_authority WHERE singleton = 1",
+  ).get();
+  if (!row) return null;
+  return {
+    projectId: String(row["project_id"] ?? ""),
+    revision: numberColumn(row, "revision"),
+    authorityEpoch: numberColumn(row, "authority_epoch"),
+  };
+}
+
+export interface OpenBlockerRow {
+  blockerId: string;
+  blockerKind: string;
+  resolutionOwner: string;
+  description: string;
+  requestedAction: string;
+  openedAt: string;
+  openedProjectRevision: number;
+}
+
+/** Open workflow blockers, oldest first (issue #2102 snapshot read). */
+export function getOpenBlockers(): OpenBlockerRow[] {
+  const db = getDbOrNull();
+  if (!db) return [];
+  const rows = db.prepare(
+    `SELECT blocker_id, blocker_kind, resolution_owner, description, requested_action,
+            opened_at, opened_project_revision
+       FROM workflow_blockers
+      WHERE blocker_status = 'open'
+      ORDER BY opened_project_revision, blocker_id`,
+  ).all();
+  return rows.map((row) => ({
+    blockerId: String(row["blocker_id"] ?? ""),
+    blockerKind: String(row["blocker_kind"] ?? ""),
+    resolutionOwner: String(row["resolution_owner"] ?? ""),
+    description: String(row["description"] ?? ""),
+    requestedAction: String(row["requested_action"] ?? ""),
+    openedAt: String(row["opened_at"] ?? ""),
+    openedProjectRevision: numberColumn(row, "opened_project_revision"),
+  }));
+}
+
+export interface OpenQuestionRow {
+  questionId: string;
+  questionText: string;
+  createdAt: string;
+}
+
+/** Open workflow questions, creation order (issue #2102 snapshot read). */
+export function getOpenQuestions(): OpenQuestionRow[] {
+  const db = getDbOrNull();
+  if (!db) return [];
+  const rows = db.prepare(
+    `SELECT question_id, question_text, created_at
+       FROM workflow_open_questions
+      WHERE question_status = 'open'
+      ORDER BY created_at, question_id`,
+  ).all();
+  return rows.map((row) => ({
+    questionId: String(row["question_id"] ?? ""),
+    questionText: String(row["question_text"] ?? ""),
+    createdAt: String(row["created_at"] ?? ""),
+  }));
+}
+
+/** Max applied migration version from the schema_version table (null when absent). */
+export function getSchemaVersion(): number | null {
+  const db = getDbOrNull();
+  if (!db) return null;
+  const row = db.prepare("SELECT MAX(version) AS version FROM schema_version").get();
+  if (!row || row["version"] === null || row["version"] === undefined) return null;
+  return numberColumn(row, "version");
+}
+
+export interface VerificationSummaryCounts {
+  assessments: { total: number; pass: number; fail: number };
+  evidence: { total: number; passed: number; failed: number };
+}
+
+/**
+ * Project-wide verification summary (issue #2102 snapshot read): assessment
+ * status counts plus verification_evidence verdict counts.
+ */
+export function getVerificationSummary(): VerificationSummaryCounts {
+  const db = getDbOrNull();
+  if (!db) return { assessments: { total: 0, pass: 0, fail: 0 }, evidence: { total: 0, passed: 0, failed: 0 } };
+
+  const assessmentRows = db.prepare(
+    "SELECT lower(status) AS status, COUNT(*) AS count FROM assessments GROUP BY lower(status)",
+  ).all();
+  const assessments = { total: 0, pass: 0, fail: 0 };
+  for (const row of assessmentRows) {
+    const count = numberColumn(row, "count");
+    assessments.total += count;
+    const status = String(row["status"] ?? "");
+    if (status === "pass" || status === "passed") assessments.pass += count;
+    else if (status === "fail" || status === "failed") assessments.fail += count;
+  }
+
+  const evidenceRows = db.prepare(
+    "SELECT lower(verdict) AS verdict, COUNT(*) AS count FROM verification_evidence GROUP BY lower(verdict)",
+  ).all();
+  const evidence = { total: 0, passed: 0, failed: 0 };
+  for (const row of evidenceRows) {
+    const count = numberColumn(row, "count");
+    evidence.total += count;
+    const verdict = String(row["verdict"] ?? "");
+    if (verdict === "passed" || verdict === "pass") evidence.passed += count;
+    else if (verdict === "failed" || verdict === "fail") evidence.failed += count;
+  }
+
+  return { assessments, evidence };
+}
+
 export function getHierarchyCompletionCounts(): HierarchyCompletionCounts {
   if (!getDbOrNull()!) {
     return { milestones: 0, milestonesTotal: 0, slices: 0, slicesTotal: 0, tasks: 0, tasksTotal: 0 };
