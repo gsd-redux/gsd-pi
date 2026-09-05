@@ -109,6 +109,9 @@ test("project progress uses the existing RPC client and one sidebar refresh loop
 	assert.match(sidebarSource, /progress\.milestoneDetails \?\? \[\]\)\.map/);
 	assert.match(sidebarSource, /milestone\.slices\.map/);
 	assert.match(sidebarSource, /slice\.tasks\.map/);
+	assert.match(sidebarSource, /progress\.milestoneDetailsTasksTruncated/);
+	assert.match(sidebarSource, /this\.refresh\(true\)/);
+	assert.match(sidebarSource, /stored\[id\] === 'open'/);
 	assert.equal((sidebarSource.match(/setInterval\(/g) ?? []).length, 1);
 });
 

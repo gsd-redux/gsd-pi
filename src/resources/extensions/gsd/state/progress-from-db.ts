@@ -37,6 +37,9 @@ export interface DbProgressResult {
   requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
   blockers: string[];
   nextAction: string;
+}
+
+export interface DbProjectProgressResult extends DbProgressResult {
   milestoneDetails?: Array<{
     id: string;
     title: string;
@@ -51,6 +54,7 @@ export interface DbProgressResult {
     }>;
   }>;
   milestoneDetailsTruncated?: boolean;
+  milestoneDetailsTasksTruncated?: boolean;
 }
 
 function toRef(value: { id: string; title: string } | null): { id: string; title: string } | null {
@@ -99,7 +103,6 @@ function readProgressHierarchy(): ProgressHierarchy {
 function buildProgressResult(
   state: GSDState,
   hierarchy: ReturnType<typeof readProgressHierarchy>,
-  details: ReturnType<typeof getProgressHierarchyDetails>,
 ): DbProgressResult {
   const slicesDone = hierarchy.counts.slices;
   const slicesTotal = hierarchy.counts.slicesTotal;
@@ -134,9 +137,37 @@ function buildProgressResult(
         : null,
     blockers: [...state.blockers],
     nextAction: state.nextAction,
-    milestoneDetails: details.milestones,
-    milestoneDetailsTruncated: details.milestonesTruncated,
   };
+}
+
+async function readProgressFromDbInternal(
+  basePath: string,
+  includeHierarchyDetails: boolean,
+  throwOnOpenFailure: boolean,
+): Promise<DbProgressResult | DbProjectProgressResult | null> {
+  ensureExistingWorkflowDbOpen(basePath, { throwOnOpenFailure });
+  if (!isDbAvailable()) return null;
+
+  invalidateStateCache();
+  for (let attempt = 1; ; attempt++) {
+    const before = readProgressStabilityToken();
+    const state = await deriveState(basePath);
+    const progress = buildProgressResult(state, readProgressHierarchy());
+    const details = includeHierarchyDetails ? getProgressHierarchyDetails() : undefined;
+    const result: DbProgressResult | DbProjectProgressResult = details
+      ? {
+          ...progress,
+          milestoneDetails: details.milestones,
+          milestoneDetailsTruncated: details.milestonesTruncated,
+          milestoneDetailsTasksTruncated: details.tasksTruncated,
+        }
+      : progress;
+    const after = readProgressStabilityToken();
+
+    if (stabilityTokensMatch(before, after)) return result;
+    if (attempt === MAX_REVISION_ATTEMPTS) return result;
+    invalidateStateCache();
+  }
 }
 
 /**
@@ -153,19 +184,10 @@ function buildProgressResult(
  * may still straddle revisions.
  */
 export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
-  ensureExistingWorkflowDbOpen(basePath);
-  if (!isDbAvailable()) return null;
+  return await readProgressFromDbInternal(basePath, false, false) as DbProgressResult | null;
+}
 
-  invalidateStateCache();
-  for (let attempt = 1; ; attempt++) {
-    const before = readProgressStabilityToken();
-    const state = await deriveState(basePath);
-    const result = buildProgressResult(state, readProgressHierarchy(), getProgressHierarchyDetails());
-    const after = readProgressStabilityToken();
-
-    if (stabilityTokensMatch(before, after)) return result;
-
-    if (attempt === MAX_REVISION_ATTEMPTS) return result;
-    invalidateStateCache();
-  }
+/** Detailed bounded progress is host-only; established CLI and MCP reads retain ProgressResult. */
+export async function readProjectProgressFromDb(basePath: string): Promise<DbProjectProgressResult | null> {
+  return await readProgressFromDbInternal(basePath, true, true) as DbProjectProgressResult | null;
 }

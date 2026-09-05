@@ -23,12 +23,12 @@ export default async function registerExtension(pi: ExtensionAPI) {
   registerGSDCommand(pi);
 
   if (typeof pi.registerRuntimeRead === "function") {
-    const { readProgressFromDb } = await import("./mcp-bridge.js");
+    const { readProjectProgressFromDb } = await import("./mcp-bridge.js");
     pi.registerRuntimeRead("project_progress", async (input) => {
       if (!input || typeof input !== "object" || typeof (input as { cwd?: unknown }).cwd !== "string") {
         throw new Error("Project progress requires a session CWD");
       }
-      return readProgressFromDb((input as { cwd: string }).cwd);
+      return readProjectProgressFromDb((input as { cwd: string }).cwd);
     });
   }
 

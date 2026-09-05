@@ -123,6 +123,7 @@ export interface ProjectProgress {
 		}>;
 	}>;
 	milestoneDetailsTruncated?: boolean;
+	milestoneDetailsTasksTruncated?: boolean;
 }
 
 export interface CompactionResult<T = unknown> {
