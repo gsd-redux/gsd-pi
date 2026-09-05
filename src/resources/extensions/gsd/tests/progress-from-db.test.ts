@@ -20,7 +20,7 @@ import {
   invalidateStateCache,
   resetDeriveTelemetry,
 } from "../state.ts";
-import { readProgressFromDb } from "../state/progress-from-db.ts";
+import { readProgressFromDb, readProjectProgressFromDb } from "../state/progress-from-db.ts";
 import {
   createWorkflowAuthorityFixture,
   type WorkflowAuthorityFixture,
@@ -154,6 +154,8 @@ test("readProgressFromDb derives refs, project-wide counts, and requirements fro
   assert.deepEqual(result.blockers, []);
   assert.equal(typeof result.nextAction, "string");
   assert.ok(result.nextAction.length > 0);
+  const detailedResult = await readProjectProgressFromDb(fixture.root);
+  assert.equal(detailedResult?.milestoneDetails?.[0]?.slices[0]?.tasks[0]?.id, "T01");
 });
 
 test("readProgressFromDb keeps milestone counts project-wide under a milestone lock", async (t) => {

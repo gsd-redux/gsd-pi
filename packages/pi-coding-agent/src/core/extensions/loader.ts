@@ -40,6 +40,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	RuntimeReadHandler,
 	ToolDefinition,
 } from "./types.js";
 
@@ -248,6 +249,11 @@ function createExtensionAPI(
 				registerToolCompatibility(tool.name, tool.compatibility);
 			}
 			runtime.refreshTools();
+		},
+
+		registerRuntimeRead(name: string, handler: RuntimeReadHandler): void {
+			runtime.assertActive();
+			extension.runtimeReadHandlers.set(name, handler);
 		},
 
 		registerBeforeInstall(handler: LifecycleHookHandler): void {
@@ -465,6 +471,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		runtimeReadHandlers: new Map(),
 	};
 }
 
