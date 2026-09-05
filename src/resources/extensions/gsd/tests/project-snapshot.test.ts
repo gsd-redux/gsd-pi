@@ -391,3 +391,22 @@ test("readProjectSnapshotFromDb returns null when no database exists", async (t)
   assert.equal(snapshot, null);
   assert.equal(existsSync(join(root, ".gsd", "gsd.db")), false, "missing DB must not be created");
 });
+
+test("readProjectSnapshotFromDb reopens the requested project instead of reusing another global DB", async (t) => {
+  const first = await createWorkflowAuthorityFixture();
+  const second = await createWorkflowAuthorityFixture();
+  t.after(() => {
+    first.cleanup();
+    second.cleanup();
+  });
+
+  first.reopen();
+  const firstAuthority = getProjectAuthorityRow();
+  assert.ok(firstAuthority);
+
+  const secondSnapshot = await readProjectSnapshotFromDb(second.root);
+  assert.ok(secondSnapshot);
+
+  assert.notEqual(secondSnapshot.authority.projectId, firstAuthority.projectId);
+  assert.equal(secondSnapshot.current.activeMilestone?.title, "Authority Fixture");
+});

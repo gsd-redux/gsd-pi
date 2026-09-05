@@ -2,8 +2,8 @@
 // File Purpose: Workflow DB open helpers for state derivation.
 
 import type { GSDState } from '../../types.js';
-import { getAllMilestones, isDbAvailable, isSchemaTooNewError, setMilestoneQueueOrder } from '../../gsd-db.js';
-import { openExistingWorkflowDatabase, type WorkflowDatabaseOpenResult } from '../../db-workspace.js';
+import { getAllMilestones, getDbPath, isDbAvailable, isSchemaTooNewError, setMilestoneQueueOrder } from '../../gsd-db.js';
+import { openExistingWorkflowDatabase, resolveProjectRootDbPath, type WorkflowDatabaseOpenResult } from '../../db-workspace.js';
 import { loadQueueOrder, sortByQueueOrder } from '../../queue-order.js';
 
 export function syncQueueOrderProjectionToDb(basePath: string): void {
@@ -18,7 +18,8 @@ export function syncQueueOrderProjectionToDb(basePath: string): void {
 }
 
 export function ensureExistingWorkflowDbOpen(basePath: string): boolean {
-  if (isDbAvailable()) {
+  const requestedDbPath = resolveProjectRootDbPath(basePath);
+  if (isDbAvailable() && getDbPath() === requestedDbPath) {
     syncQueueOrderProjectionToDb(basePath);
     return true;
   }
