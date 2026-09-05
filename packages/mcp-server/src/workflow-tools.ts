@@ -1359,7 +1359,12 @@ async function runSerializedCanonicalReadOperation(
 }
 
 function mapCanonicalReadError(
-  operation: "list_decisions" | "get_decision" | "list_requirements" | "get_requirement",
+  operation:
+    | "list_decisions"
+    | "get_decision"
+    | "list_requirements"
+    | "get_requirement"
+    | "read_project_snapshot",
   message: string,
   id?: string,
 ): unknown {
@@ -1377,9 +1382,11 @@ function mapCanonicalReadError(
     ? "listing decisions"
     : operation === "get_decision"
       ? "fetching decision"
-      : operation === "list_requirements"
-        ? "listing requirements"
-        : "fetching requirement";
+        : operation === "list_requirements"
+          ? "listing requirements"
+          : operation === "read_project_snapshot"
+            ? "reading project snapshot"
+            : "fetching requirement";
 
   return adaptExecutorResult({
     content: [{
@@ -2936,6 +2943,46 @@ export function registerWorkflowTools(
     milestoneId: z.string().optional(),
     limit: z.number().int().min(1).max(500).optional(),
   });
+
+  server.tool(
+    "gsd_project_snapshot",
+    "Read the full project snapshot from the GSD database (DB-authoritative, never projections). Returns requirements, decisions, milestones, and authority revision in one payload.",
+    {
+      projectDir: z
+        .string()
+        .optional()
+        .describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = parseWorkflowArgs(
+        z.object({ projectDir: z.string().optional() }),
+        args,
+      );
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async () => {
+          const snapshot = await (
+            await importWorkflowRuntimeModule<any>(
+              "../../../src/resources/extensions/gsd/state/project-snapshot.js",
+            )
+          ).readProjectSnapshotFromDb(projectDir);
+          if (!snapshot) {
+            throw new Error("Database adapter not available (db_unavailable)");
+          }
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(snapshot) }],
+            details: {
+              operation: "read_project_snapshot",
+              revision: snapshot.authority?.revision,
+              snapshot,
+            },
+          };
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("read_project_snapshot", message);
+      }
+    },
+  );
 
   server.tool(
     "gsd_requirement_list",
