@@ -22,6 +22,7 @@ import type {
 	RpcV2Event,
 	RpcProtocolVersion,
 	RpcSessionState,
+	ProjectProgress,
 } from "./rpc-types.js";
 
 // ============================================================================
@@ -329,6 +330,60 @@ describe("v2 type shapes", () => {
 		assert.equal(initResp.command, "init");
 		assert.equal(shutdownResp.command, "shutdown");
 		assert.equal(subscribeResp.command, "subscribe");
+	});
+
+	it("project progress command preserves the DB progress payload shape", () => {
+		const command: RpcCommand = { type: "get_project_progress" };
+		const progress: ProjectProgress = {
+			activeMilestone: { id: "M001", title: "Milestone" },
+			activeSlice: { id: "S001", title: "Slice" },
+			activeTask: { id: "T001", title: "Task" },
+			phase: "execute",
+			milestones: { total: 1, done: 0, active: 1, pending: 0, parked: 0 },
+			slices: { total: 1, done: 0, active: 1, pending: 0 },
+			tasks: { total: 1, done: 0, pending: 1 },
+			requirements: { active: 1, validated: 0, deferred: 0, outOfScope: 0 },
+			blockers: [],
+			nextAction: "Implement the task",
+			milestoneDetails: [{
+				id: "M001",
+				title: "Milestone",
+				status: "active",
+				truncated: false,
+				slices: [{
+					id: "S001",
+					title: "Slice",
+					status: "active",
+					truncated: false,
+					tasks: [{ id: "T001", title: "Task", status: "pending" }],
+				}],
+			}],
+			milestoneDetailsTruncated: false,
+		};
+		const response: RpcResponse = {
+			type: "response",
+			command: command.type,
+			success: true,
+			data: progress,
+		};
+
+		assert.equal(command.type, "get_project_progress");
+		assert.deepEqual(response.data, progress);
+		assert.equal(progress.milestoneDetails?.[0]?.slices[0]?.tasks[0]?.id, "T001");
+		assert.deepEqual(Object.keys(progress).sort(), [
+			"activeMilestone",
+			"activeSlice",
+			"activeTask",
+			"blockers",
+			"milestoneDetails",
+			"milestoneDetailsTruncated",
+			"milestones",
+			"nextAction",
+			"phase",
+			"requirements",
+			"slices",
+			"tasks",
+		].sort());
 	});
 });
 

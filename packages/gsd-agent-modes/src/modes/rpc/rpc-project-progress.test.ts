@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { invokeProjectProgressRead } from "./rpc-mode.js";
+
+test("project progress read forwards the active session CWD and request ID", async () => {
+	let receivedInput: unknown;
+	const response = await invokeProjectProgressRead(
+		async (input) => {
+			receivedInput = input;
+			return { phase: "execute" };
+		},
+		"request-123",
+		"/workspace/project",
+	);
+
+	assert.deepEqual(receivedInput, { cwd: "/workspace/project" });
+	assert.deepEqual(response, {
+		id: "request-123",
+		type: "response",
+		command: "get_project_progress",
+		success: true,
+		data: { phase: "execute" },
+	});
+});
+
+test("project progress reader failures preserve the request ID", async () => {
+	const response = await invokeProjectProgressRead(
+		async () => {
+			throw new Error("database unavailable");
+		},
+		"request-456",
+		"/workspace/project",
+	);
+
+	assert.deepEqual(response, {
+		id: "request-456",
+		type: "response",
+		command: "get_project_progress",
+		success: false,
+		error: "database unavailable",
+	});
+});

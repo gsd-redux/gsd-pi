@@ -2,7 +2,7 @@
 // File Purpose: VS Code sidebar webview provider for GSD agent controls and status.
 
 import * as vscode from "vscode";
-import type { GsdClient, SessionStats, ThinkingLevel } from "./gsd-client.js";
+import type { GsdClient, ProjectProgress, SessionStats, ThinkingLevel } from "./gsd-client.js";
 import {
 	getContextUsageDisplay,
 	getSessionCacheReadTokens,
@@ -33,13 +33,16 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 	private view?: vscode.WebviewView;
 	private disposables: vscode.Disposable[] = [];
 	private refreshTimer: ReturnType<typeof setInterval> | undefined;
+	private refreshInFlight: Promise<void> | undefined;
+	private projectProgress: ProjectProgress | null = null;
+	private projectProgressError: string | null = null;
 
 	constructor(
 		private readonly extensionUri: vscode.Uri,
 		private readonly client: GsdClient,
 	) {
 		this.disposables.push(
-			client.onConnectionChange(() => this.refresh()),
+			client.onConnectionChange(() => this.refresh(true)),
 			client.onEvent((evt) => {
 				switch (evt.type) {
 					case "agent_start":
@@ -102,6 +105,9 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 					break;
 				case "sessionStats":
 					await vscode.commands.executeCommand("gsd.sessionStats");
+					break;
+				case "refreshProgress":
+					await this.refresh(true);
 					break;
 				case "listCommands":
 					await vscode.commands.executeCommand("gsd.listCommands");
@@ -187,10 +193,23 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			}
 		}, 10_000);
 
-		this.refresh();
+		this.refresh(true);
 	}
 
-	async refresh(): Promise<void> {
+	async refresh(refreshProjectProgress = false): Promise<void> {
+		if (this.refreshInFlight) {
+			return this.refreshInFlight;
+		}
+
+		this.refreshInFlight = this.refreshInternal(refreshProjectProgress);
+		try {
+			await this.refreshInFlight;
+		} finally {
+			this.refreshInFlight = undefined;
+		}
+	}
+
+	private async refreshInternal(refreshProjectProgress: boolean): Promise<void> {
 		if (!this.view) {
 			return;
 		}
@@ -237,6 +256,16 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			} catch {
 				// Stats fetch failed
 			}
+
+			if (refreshProjectProgress) {
+				try {
+					this.projectProgress = await this.client.getProjectProgress();
+					this.projectProgressError = null;
+				} catch (error) {
+					this.projectProgress = null;
+					this.projectProgressError = error instanceof Error ? error.message : "Project progress request failed";
+				}
+			}
 		}
 
 		const connected = this.client.isConnected;
@@ -255,6 +284,8 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			autoCompaction,
 			autoRetry,
 			stats,
+			projectProgress: this.projectProgress,
+			projectProgressError: this.projectProgressError,
 			steeringMode,
 			followUpMode,
 		});
@@ -283,6 +314,8 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		autoCompaction: boolean;
 		autoRetry: boolean;
 		stats: SessionStats | null;
+		projectProgress: ProjectProgress | null;
+		projectProgressError: string | null;
 		steeringMode: "all" | "one-at-a-time";
 		followUpMode: "all" | "one-at-a-time";
 	}): string {
@@ -307,6 +340,10 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 
 		// Only show stats that have real data
 		const hasStats = hasSessionTokenStats(info.stats);
+		const projectProgressHtml = this.getProjectProgressHtml(
+			info.projectProgress,
+			info.projectProgressError,
+		);
 
 		const nonce = getNonce();
 
@@ -490,6 +527,20 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		.section-body {
 			padding: 6px 10px 8px;
 		}
+		.progress-current {
+			display: grid;
+			gap: 3px;
+			font-size: 11px;
+		}
+		.progress-title { font-weight: 600; }
+		.progress-meta { opacity: 0.65; }
+		.progress-next { margin-top: 4px; opacity: 0.8; }
+		.progress-empty { opacity: 0.65; font-size: 11px; }
+			.progress-tree { margin-top: 8px; max-height: 320px; overflow-y: auto; font-size: 11px; }
+			.progress-milestone { margin-top: 6px; }
+			.progress-slice { margin: 3px 0 0 10px; opacity: 0.85; }
+			.progress-task { margin: 2px 0 0 22px; opacity: 0.7; }
+			.progress-status { opacity: 0.65; }
 
 		/* ---- Stats grid ---- */
 		.stats-grid {
@@ -619,6 +670,7 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			totalTokens,
 			hasStats: !!hasStats,
 			statRows,
+			projectProgressHtml,
 			nonce,
 		}) : `
 	<div class="header">
@@ -637,10 +689,14 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		const vscode = acquireVsCodeApi();
 		const stored = vscode.getState() || {};
 
-		// Restore collapsed state
+		// Restore persisted section state after each WebView rerender.
 		document.querySelectorAll('.section').forEach(s => {
 			const id = s.dataset.section;
-			if (id && stored[id] === 'collapsed') s.classList.add('collapsed');
+			if (id && stored[id] === 'collapsed') {
+				s.classList.add('collapsed');
+			} else if (id && stored[id] === 'open') {
+				s.classList.remove('collapsed');
+			}
 		});
 
 		document.addEventListener('click', (e) => {
@@ -683,6 +739,8 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			autoCompaction: boolean;
 			autoRetry: boolean;
 			stats: SessionStats | null;
+			projectProgress: ProjectProgress | null;
+			projectProgressError: string | null;
 			steeringMode: "all" | "one-at-a-time";
 			followUpMode: "all" | "one-at-a-time";
 		},
@@ -695,6 +753,7 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 			totalTokens: number;
 			hasStats: boolean;
 			statRows: string;
+			projectProgressHtml: string;
 			nonce: string;
 		},
 	): string {
@@ -735,6 +794,8 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 		<button class="streaming-abort" data-command="abort">Stop</button>
 	</div>
 	` : ""}
+
+	${ui.projectProgressHtml}
 
 	<!-- Workflow -->
 	<div class="section" data-section="workflow">
@@ -801,6 +862,45 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 				<span class="toggle-label">Approval</span>
 				<span class="toggle-pill on" data-command="selectApprovalMode">change</span>
 			</div>
+		</div>
+	</div>`;
+	}
+
+	private getProjectProgressHtml(
+		progress: ProjectProgress | null,
+		errorMessage: string | null,
+	): string {
+		let body = "<div class=\"progress-empty\">No project progress available.</div>";
+		if (errorMessage) {
+			const isUnsupported = errorMessage.startsWith("Unknown command:");
+			body = `<div class="progress-empty">${isUnsupported ? "Unsupported GSD runtime." : "Project progress unavailable."}</div>`;
+		} else if (progress) {
+			const current = progress.activeTask?.title
+				?? progress.activeSlice?.title
+				?? progress.activeMilestone?.title
+				?? "No active work";
+			const counts = `${progress.tasks.done}/${progress.tasks.total} tasks done / ${progress.slices.done}/${progress.slices.total} slices done`;
+			body = `
+			<div class="progress-current">
+				<span class="progress-title">${escapeHtml(current)}</span>
+				<span class="progress-meta">${escapeHtml(progress.phase)} / ${escapeHtml(counts)}</span>
+				${progress.nextAction ? `<span class="progress-next">Next: ${escapeHtml(progress.nextAction)}</span>` : ""}
+			</div>`;
+						body += `<div class="progress-tree">${(progress.milestoneDetails ?? []).map((milestone) => `
+						<div class="progress-milestone"><span class="progress-status">${escapeHtml(milestone.status)}</span> <strong>${escapeHtml(milestone.id)} ${escapeHtml(milestone.title)}</strong>${milestone.truncated ? " ..." : ""}</div>
+						${milestone.slices.map((slice) => `
+						<div class="progress-slice"><span class="progress-status">${escapeHtml(slice.status)}</span> ${escapeHtml(slice.id)} ${escapeHtml(slice.title)}${slice.truncated ? " ..." : ""}</div>
+						${slice.tasks.map((task) => `<div class="progress-task"><span class="progress-status">${escapeHtml(task.status)}</span> ${escapeHtml(task.id)} ${escapeHtml(task.title)}</div>`).join("")}
+						`).join("")}
+						`).join("")}${progress.milestoneDetailsTruncated ? "<div class=\"progress-empty\">More milestones available.</div>" : ""}${progress.milestoneDetailsTasksTruncated ? "<div class=\"progress-empty\">More tasks available.</div>" : ""}</div>`;
+		}
+
+		return `
+	<div class="section collapsed" data-section="project-progress">
+		<div class="section-header"><span class="chevron">&#9660;</span> Project Progress</div>
+		<div class="section-body">
+			${body}
+			<button class="action-btn" data-command="refreshProgress" style="margin-top:6px;width:100%">Refresh</button>
 		</div>
 	</div>`;
 	}

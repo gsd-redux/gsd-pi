@@ -17,7 +17,10 @@ export function syncQueueOrderProjectionToDb(basePath: string): void {
   setMilestoneQueueOrder(desiredIds);
 }
 
-export function ensureExistingWorkflowDbOpen(basePath: string): boolean {
+export function ensureExistingWorkflowDbOpen(
+  basePath: string,
+  options: { throwOnOpenFailure?: boolean } = {},
+): boolean {
   if (isDbAvailable()) {
     syncQueueOrderProjectionToDb(basePath);
     return true;
@@ -37,6 +40,9 @@ export function ensureExistingWorkflowDbOpen(basePath: string): boolean {
     // (exact engine message attached) so state-read surfaces refuse loudly
     // instead of emitting a degraded all-zero snapshot (T003 spike).
     throw result.error;
+  }
+  if (!result.ok && options.throwOnOpenFailure && result.reason !== "missing-database" && result.reason !== "missing-gsd-dir") {
+    throw result.error ?? new Error(`Unable to open the GSD database: ${result.reason}`);
   }
   if (result.ok) syncQueueOrderProjectionToDb(basePath);
   return result.ok;

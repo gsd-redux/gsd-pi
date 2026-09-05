@@ -1051,6 +1051,133 @@ export function getTasksBySliceIds(
   return bySlice;
 }
 
+export interface ProgressHierarchyDetails {
+  milestones: Array<{
+    id: string;
+    title: string;
+    status: string;
+    truncated: boolean;
+    slices: Array<{
+      id: string;
+      title: string;
+      status: string;
+      truncated: boolean;
+      tasks: Array<{ id: string; title: string; status: string }>;
+    }>;
+  }>;
+  milestonesTruncated: boolean;
+  tasksTruncated: boolean;
+}
+
+/** Read a bounded project hierarchy for compact integration consumers. */
+export function getProgressHierarchyDetails(): ProgressHierarchyDetails {
+  const db = getDbOrNull();
+  if (!db) return { milestones: [], milestonesTruncated: false, tasksTruncated: false };
+
+  const maxMilestones = 50;
+  const maxSlicesPerMilestone = 50;
+  const maxTasksPerSlice = 50;
+  const maxTasks = 1_000;
+
+  const milestones = db.prepare(
+    "SELECT id, title, status FROM milestones ORDER BY CASE WHEN sequence > 0 THEN 0 ELSE 1 END, sequence, id LIMIT 51",
+  ).all() as Array<{ id: string; title: string; status: string }>;
+  const selectedMilestones = milestones.slice(0, maxMilestones);
+  if (selectedMilestones.length === 0) return { milestones: [], milestonesTruncated: false, tasksTruncated: false };
+
+  const milestonePlaceholders = selectedMilestones.map((_, index) => `:mid${index}`).join(",");
+  const milestoneParams: Record<string, string> = {};
+  selectedMilestones.forEach((milestone, index) => {
+    milestoneParams[`:mid${index}`] = milestone.id;
+  });
+  const slices = db.prepare(
+    `SELECT milestone_id, id, title, status, sequence, row_number
+       FROM (
+         SELECT milestone_id, id, title, status, sequence,
+                ROW_NUMBER() OVER (PARTITION BY milestone_id ORDER BY sequence, id) AS row_number
+           FROM slices
+          WHERE milestone_id IN (${milestonePlaceholders})
+       )
+      WHERE row_number <= 51
+      ORDER BY milestone_id, sequence, id`,
+  ).all(milestoneParams) as Array<Record<string, unknown>>;
+  const selectedSlices = slices.filter((slice) => Number(slice.row_number) <= maxSlicesPerMilestone);
+  const sliceKeys = selectedSlices.map((slice) => ({
+    milestoneId: String(slice.milestone_id),
+    sliceId: String(slice.id),
+  }));
+  const tasks: Array<Record<string, unknown>> = [];
+  for (let start = 0; start < sliceKeys.length; start += 400) {
+    const remainingTaskRows = maxTasks + 1 - tasks.length;
+    if (remainingTaskRows <= 0) break;
+    const chunk = sliceKeys.slice(start, start + 400);
+    const taskClauses = chunk.map((slice, index) => `(milestone_id = :taskMid${index} AND slice_id = :taskSid${index})`).join(" OR ");
+    const taskParams: Record<string, string> = {};
+    chunk.forEach((slice, index) => {
+      taskParams[`:taskMid${index}`] = slice.milestoneId;
+      taskParams[`:taskSid${index}`] = slice.sliceId;
+    });
+    const rows = db.prepare(
+      `SELECT milestone_id, slice_id, id, title, status, sequence, row_number
+         FROM (
+           SELECT milestone_id, slice_id, id, title, status, sequence,
+                  ROW_NUMBER() OVER (PARTITION BY milestone_id, slice_id ORDER BY sequence, id) AS row_number
+             FROM tasks
+            WHERE ${taskClauses}
+         )
+        WHERE row_number <= ${maxTasksPerSlice + 1}
+        ORDER BY milestone_id, slice_id, sequence, id
+        LIMIT ${remainingTaskRows}`,
+    ).all(taskParams) as Array<Record<string, unknown>>;
+    tasks.push(...rows);
+  }
+
+  const tasksTruncated = tasks.length > maxTasks;
+  const selectedTasks = tasks.slice(0, maxTasks);
+  const slicesByMilestone = new Map<string, Array<Record<string, unknown>>>();
+  for (const slice of slices) {
+    const key = String(slice.milestone_id);
+    const bucket = slicesByMilestone.get(key) ?? [];
+    bucket.push(slice);
+    slicesByMilestone.set(key, bucket);
+  }
+  const tasksBySlice = new Map<string, Array<Record<string, unknown>>>();
+  for (const task of selectedTasks) {
+    const key = `${String(task.milestone_id)}\0${String(task.slice_id)}`;
+    const bucket = tasksBySlice.get(key) ?? [];
+    bucket.push(task);
+    tasksBySlice.set(key, bucket);
+  }
+
+  return {
+    milestones: selectedMilestones.map((milestone) => {
+      const milestoneSlices = slicesByMilestone.get(milestone.id) ?? [];
+      return {
+        ...milestone,
+        truncated: milestoneSlices.some((slice) => Number(slice.row_number) > maxSlicesPerMilestone),
+        slices: milestoneSlices.filter((slice) => Number(slice.row_number) <= maxSlicesPerMilestone).map((slice) => {
+          const milestoneId = String(slice.milestone_id);
+          const sliceId = String(slice.id);
+          const sliceTasks = tasksBySlice.get(`${milestoneId}\0${sliceId}`) ?? [];
+          return {
+            id: sliceId,
+            title: String(slice.title ?? ""),
+            status: String(slice.status ?? ""),
+            truncated: sliceTasks.some((task) => Number(task.row_number) > maxTasksPerSlice),
+            tasks: sliceTasks.filter((task) => Number(task.row_number) <= maxTasksPerSlice).map((task) => ({
+              id: String(task.id ?? ""),
+              title: String(task.title ?? ""),
+              status: String(task.status ?? ""),
+            })),
+          };
+        }),
+      };
+    }),
+    milestonesTruncated: milestones.length > maxMilestones,
+    tasksTruncated,
+  };
+}
+
 /** Dispatch-eligibility shape consumed by decision-path callers (ADR-017). */
 export interface MilestoneSliceSummary {
   id: string;

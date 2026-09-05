@@ -208,6 +208,8 @@ export function createGSDExtensionAPI(
     setVisibleSkills: (...args: Parameters<ExtensionAPI["setVisibleSkills"]>) =>
       pi.setVisibleSkills(...args),
     getCommands: () => pi.getCommands(),
+  registerRuntimeRead: (...args: Parameters<ExtensionAPI["registerRuntimeRead"]>) =>
+    pi.registerRuntimeRead(...args),
 
     // ── Model & thinking ───────────────────────────────────────────────
     setModel: (...args: Parameters<ExtensionAPI["setModel"]>) => pi.setModel(...args),
