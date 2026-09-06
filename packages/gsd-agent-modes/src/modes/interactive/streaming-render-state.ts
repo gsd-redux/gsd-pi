@@ -8,9 +8,6 @@ import {
 	type ToolExecutionPhase,
 } from "./components/tool-execution.js";
 
-/** Default debounce delay for streaming work batching (ms). */
-const STREAM_RENDER_DEBOUNCE_MS = 50;
-
 /** Cache for buildDesiredSegmentsForMessage — avoids O(n) block iteration during streaming. */
 export interface DesiredSegmentsCache {
 	count: number;
@@ -61,16 +58,11 @@ export class StreamingRenderState {
 	/** Cache for buildDesiredSegmentsForMessage — avoids O(n) block iteration during streaming. */
 	_desiredSegmentsCache?: DesiredSegmentsCache;
 
-	/** Debounce timer for batching streaming render requests. */
-	renderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
 	resetStreamingSegments(): void {
 		this.lastProcessedContentIndex = 0;
 		this.lastContentLength = 0;
 		this.renderedSegments = [];
 		this.orphanedSegments = [];
-		// Cancel any pending debounced render when the stream ends
-		this.cancelDebouncedRender();
 	}
 
 	resetPinnedZone(): void {
@@ -94,43 +86,13 @@ export class StreamingRenderState {
 	}
 
 	/**
-	 * Schedule a debounced render request.
-	 *
-	 * During active streaming, multiple message_update events fire rapidly.
-	 * The segment walker and pinned-zone update still run synchronously on
-	 * each update (their internal caches keep them cheap, and sub-turn
-	 * replacement/suppression logic depends on seeing each intermediate
-	 * state) — but the actual render is batched into one request per
-	 * debounce window, which is where the CPU churn lives.
-	 */
-	scheduleDebouncedRender(ui: TUI): void {
-		if (this.renderDebounceTimer) {
-			clearTimeout(this.renderDebounceTimer);
-		}
-		this.renderDebounceTimer = setTimeout(() => {
-			this.renderDebounceTimer = null;
-			ui.requestRender();
-		}, STREAM_RENDER_DEBOUNCE_MS);
-	}
-
-	/**
-	 * Cancel any pending debounced render and request one immediately.
-	 * Call this at stream boundaries (message_end, agent_end) so the final
-	 * state paints without waiting out the debounce window.
+	 * Request an immediate render at stream boundaries (message_end, agent_end)
+	 * so the final state paints without any delay.
 	 */
 	flushPendingStreamingWork(ui: TUI): void {
-		this.cancelDebouncedRender();
 		// Not forced: force-realigning the viewport here would break the
 		// "no force-render when pinned zone was never shown" contract.
 		ui.requestRender();
-	}
-
-	/** Cancel any pending debounced render (call at stream end). */
-	cancelDebouncedRender(): void {
-		if (this.renderDebounceTimer) {
-			clearTimeout(this.renderDebounceTimer);
-			this.renderDebounceTimer = null;
-		}
 	}
 }
 

@@ -261,7 +261,15 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					}
 				}
 
-					runSegmentWalker(host, rs, timestampFormat);
+				// Run the segment walker synchronously on each delta so the TUI's
+				// built-in render throttling (requestRender guard + 16ms interval)
+				// naturally batches renders into 16ms windows. This produces
+				// incremental, visible streaming instead of a single block at the
+				// end of the microtask queue drain. The queueMicrotask() wrapper
+				// was counterproductive: it batched all walker runs together before
+				// any render could fire, making the user see nothing until the
+				// entire microtask batch completed.
+				runSegmentWalker(host, rs, timestampFormat);
 
 				// Update index: fully processed blocks won't need re-scanning.
 				// Keep the last block's index (it may still be accumulating data),
@@ -278,11 +286,14 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					startLoadingAnimation(host);
 				}
 
-				// Batch renders, not the walker: sub-turn replacement and
-				// suppression logic must observe every intermediate state,
-				// while consecutive renders within one 50ms window can coalesce.
-				rs.scheduleDebouncedRender(host.ui);
+				// Leading-edge render: the first delta triggers an immediate
+				// render so the beginning of the response is visible right away.
+				// Subsequent deltas are throttled by the TUI's requestRender()
+				// guard (no-op when a render is already pending) and the
+				// 16ms minimum render interval — producing incremental streaming.
+				host.ui.requestRender();
 			}
+
 			break;
 
 		case "message_end":
@@ -327,6 +338,15 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						host.chatContainer.addChild(host.streamingComponent);
 						markFirstVisibleAssistantOutput(host, "message_end_only");
 						reconcileChatTurnConnections(host.chatContainer.children);
+						// Ensure the newly created component paints immediately.
+						// flushPendingStreamingWork() runs later in this same
+						// handler and calls requestRender() again, but an
+						// explicit call here prevents a race where the component
+						// has been added to the DOM but hasn't painted yet —
+						// the user would see a blank space briefly before the
+						// final render. Keeping this is safe because requestRender()
+						// is a no-op when a render is already pending.
+						host.ui.requestRender();
 					}
 					if (host.streamingComponent) {
 						host.streamingComponent.setShowMetadata(true);
