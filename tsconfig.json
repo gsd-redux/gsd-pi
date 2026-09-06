@@ -1,3 +1,4 @@
+// diag-2158: comment to trip portability classification for the Windows probe
 {
   "compilerOptions": {
     "module": "NodeNext",
