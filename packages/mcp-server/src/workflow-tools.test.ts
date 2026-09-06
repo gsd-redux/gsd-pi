@@ -3791,14 +3791,14 @@ describe("readProjectProgressViaBridge", () => {
     _setDatabaseOpenBeforeRawForTest((path) => {
       try {
         rmSync(path, { force: true });
-        console.error(`[diag-2158] hook deleted \${path}: existsSync=\${existsSync(path)}`);
+        console.error("[diag-2158] hook deleted " + path + " existsSync=" + existsSync(path));
       } catch (err) {
-        console.error(`[diag-2158] hook DELETE FAILED for \${path}: \${err}`);
+        console.error("[diag-2158] hook DELETE FAILED for " + path + ": " + err);
       }
     });
 
     const result = await readProjectProgressViaBridge(base);
-    console.error(`[diag-2158] after read: result=\${result === null ? "null" : "non-null"} existsSync=\${existsSync(dbPath)}`);
+    console.error("[diag-2158] after read: result=" + (result === null ? "null" : "non-null") + " existsSync=" + existsSync(dbPath));
 
     assert.equal(result, null);
     assert.equal(existsSync(dbPath), false, "a read must not recreate gsd.db");
