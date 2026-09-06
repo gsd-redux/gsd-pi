@@ -308,6 +308,38 @@ describe("models.generated.ts", () => {
 		}
 	});
 
+	test("includes Copilot Kimi models on the GitHub Copilot OpenAI-compatible transport", () => {
+		for (const [id, contextWindow, maxTokens] of [
+			["kimi-k2.7-code", 256000, 32000],
+			["kimi-k3", 1048576, 131072],
+		] as const) {
+			const model = MODELS["github-copilot"][id];
+
+			expect(model).toBeDefined();
+			expect(model).toMatchObject({
+				id,
+				api: "openai-completions",
+				provider: "github-copilot",
+				baseUrl: "https://api.individual.githubcopilot.com",
+				reasoning: true,
+				input: ["text", "image"],
+				contextWindow,
+				maxTokens,
+				headers: {
+					"User-Agent": "GitHubCopilotChat/0.35.0",
+					"Copilot-Integration-Id": "vscode-chat",
+				},
+				compat: {
+					supportsStore: false,
+					supportsDeveloperRole: false,
+					supportsReasoningEffort: false,
+				},
+			});
+			expect(model.cost.input).toBeGreaterThan(0);
+			expect(model.cost.output).toBeGreaterThan(0);
+		}
+	});
+
 	test("supplements the ZAI catalog with the GLM models missing from models.dev", () => {
 		// models.dev's "zai-coding-plan" provider lags the live z.ai endpoint, so
 		// the generator pins these known-available GLM models. Guard that they stay

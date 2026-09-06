@@ -51,6 +51,45 @@ test("runReadCli handles global flags before read", async () => {
 	}
 });
 
+test("runReadCli accepts the snapshot kind and fails closed without a DB", async () => {
+	const stdout = captureWrite(process.stdout);
+	const stderr = captureWrite(process.stderr);
+	try {
+		// The hermes fixture has no gsd.db, so the accepted snapshot kind must
+		// refuse loudly instead of falling back to projections — arg parsing
+		// only, no DB opened, no reader reached.
+		const exitCode = await runReadCli(
+			["node", "gsd", "read", "snapshot", "--json", "--project", fixture],
+			probelessPreflight,
+		);
+
+		assert.equal(exitCode, 1);
+		assert.equal(stdout.output(), "");
+		assert.match(stderr.output(), /snapshot requires a GSD database/);
+	} finally {
+		stdout.restore();
+		stderr.restore();
+	}
+});
+
+test("runReadCli rejects unknown read kinds with usage on stderr", async () => {
+	const stdout = captureWrite(process.stdout);
+	const stderr = captureWrite(process.stderr);
+	try {
+		const exitCode = await runReadCli(
+			["node", "gsd", "read", "snapshott", "--json", "--project", fixture],
+			probelessPreflight,
+		);
+
+		assert.equal(exitCode, 1);
+		assert.equal(stdout.output(), "");
+		assert.match(stderr.output(), /^Usage: gsd read <progress\|roadmap\|memory\|snapshot>/);
+	} finally {
+		stdout.restore();
+		stderr.restore();
+	}
+});
+
 function captureWrite(stream: NodeJS.WriteStream): { output: () => string; restore: () => void } {
 	const chunks: string[] = [];
 	const original = stream.write.bind(stream);

@@ -170,9 +170,22 @@ function quoteYamlScalar(value: string): string {
   return `'${value.replace(/'/g, "''")}'`
 }
 
-function renderGsdYaml(project: string | undefined): string {
+// Same package.json-relative read as loader.ts; resolves from src/ in dev and
+// dist/ in an installed package.
+function readGsdVersion(): string {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as { version: string }
+  return pkg.version
+}
+
+function nextMajorVersion(version: string): string {
+  return `${Number(version.split('.')[0]) + 1}.0.0`
+}
+
+export function renderGsdYaml(project: string | undefined): string {
   const defaultProject = project ?? '~/code/myapp'
-  return `# open-gsd-hermes configuration. Edit paths for your machine.\ngsd:\n  cli_path: gsd\n  mcp_server_path: gsd-mcp-server\n  credential_source: gsd\n  default_project: ${quoteYamlScalar(defaultProject)}\n  poll_interval_seconds: 12\n  cache_ttl_seconds: 45\n  notification_level: normal\n  bindings: {}\n`
+  const version = readGsdVersion()
+  return `# open-gsd-hermes configuration. Edit paths for your machine.\ngsd:\n  cli_path: gsd\n  mcp_server_path: gsd-mcp-server\n  credential_source: gsd\n  default_project: ${quoteYamlScalar(defaultProject)}\n  poll_interval_seconds: 12\n  cache_ttl_seconds: 45\n  notification_level: normal\n  gsd_version_min: ${quoteYamlScalar(version)}\n  gsd_version_max: ${quoteYamlScalar(nextMajorVersion(version))}\n  bindings: {}\n`
 }
 
 function findHermesPython(hermesHome: string): string {

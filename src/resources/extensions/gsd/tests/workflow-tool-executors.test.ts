@@ -2670,6 +2670,99 @@ test("executeSaveGateResult validates inputs and persists verdicts", async () =>
   }
 });
 
+test("executeSaveGateResult succeeds after committing a gate for a skipped slice", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M005", "Milestone Five");
+  seedSlice("M005", "S05", "skipped");
+  _getAdapter()!.prepare(
+    "INSERT OR REPLACE INTO tasks (milestone_id, slice_id, id, title, status) VALUES (?, ?, ?, ?, ?)",
+  ).run("M005", "S05", "T01", "Skipped task", "skipped");
+  insertGateRow({ milestoneId: "M005", sliceId: "S05", gateId: "Q3", scope: "slice" });
+
+  const result = await inProjectDir(base, () => executeSaveGateResult({
+    milestoneId: "M005",
+    sliceId: "S05",
+    gateId: "Q3",
+    verdict: "omitted",
+    rationale: "Slice was intentionally skipped.",
+    findings: "",
+  }, base));
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.details.operation, "save_gate_result");
+  assert.equal(result.details.stale, undefined);
+  assert.deepEqual(_getAdapter()!.prepare(
+    `SELECT status, verdict, rationale FROM quality_gates
+     WHERE milestone_id = ? AND slice_id = ? AND gate_id = ? AND task_id = ''`,
+  ).get("M005", "S05", "Q3"), {
+    status: "complete",
+    verdict: "omitted",
+    rationale: "Slice was intentionally skipped.",
+  });
+});
+
+test("executeSaveGateResult reports a post-commit projection failure as stale success", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    _setManagedProjectionWriteFaultForTest(null);
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M005", "Milestone Five");
+  seedSlice("M005", "S05", "pending");
+  mkdirSync(join(base, "src"), { recursive: true });
+  writeFileSync(join(base, "src", "gate.ts"), "export const gate = true;\n", "utf-8");
+  await inProjectDir(base, () => executePlanSlice({
+    milestoneId: "M005",
+    sliceId: "S05",
+    goal: "Exercise a failed post-save plan projection.",
+    tasks: [{
+      taskId: "T01",
+      title: "Keep one active task",
+      description: "Keep the plan render path active.",
+      estimate: "5m",
+      files: ["src/gate.ts"],
+      verify: "node --test",
+      inputs: [],
+      expectedOutput: ["src/gate.ts"],
+    }],
+  }, base));
+  const obstructedWrites: string[] = [];
+  _setManagedProjectionWriteFaultForTest((logicalPath) => {
+    if (!logicalPath.endsWith("-PLAN.md")) return;
+    obstructedWrites.push(logicalPath);
+    throw new Error("simulated gate plan projection failure");
+  });
+
+  const result = await inProjectDir(base, () => executeSaveGateResult({
+    milestoneId: "M005",
+    sliceId: "S05",
+    gateId: "Q3",
+    verdict: "pass",
+    rationale: "The gate itself passed.",
+    findings: "No gate findings.",
+  }, base));
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.details.operation, "save_gate_result");
+  assert.equal(result.details.stale, true);
+  assert.match(String(result.content[0]?.text), /saved.*readable plan update is pending repair/i);
+  assert.ok(obstructedWrites.length > 0, "fixture must obstruct the post-save PLAN write");
+  assert.deepEqual(_getAdapter()!.prepare(
+    `SELECT status, verdict FROM quality_gates
+     WHERE milestone_id = ? AND slice_id = ? AND gate_id = ? AND task_id = ''`,
+  ).get("M005", "S05", "Q3"), {
+    status: "complete",
+    verdict: "pass",
+  });
+});
+
 test("executeSaveGateResult leaves quality gates pending after a retryable tool error", async () => {
   const base = makeTmpBase();
   const startedAt = Date.now();

@@ -90,7 +90,7 @@ import { flushWorkflowProjections } from "../projection-flush.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { autoSession, getAutoRuntimeSnapshot, isAutoActive } from "../auto-runtime-state.js";
-import { renderPlanFromDb, writeTaskSummaryProjection } from "../markdown-renderer.js";
+import { renderPlanCheckboxes, renderPlanFromDb, writeTaskSummaryProjection } from "../markdown-renderer.js";
 import { readUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
 import {
   prepareUatRun,
@@ -1113,7 +1113,7 @@ export async function executeTaskRecoveryResume(
   try {
     const result = resumeTaskRecovery({ invocation, ...params });
     return {
-      content: [{ type: "text", text: `Authorized one repaired Task retry for ${result.attemptId}.` }],
+      content: [{ type: "text", text: `Authorized one repaired Task continuation for ${result.attemptId}.` }],
       details: { operation: "task_recovery_resume", ...result },
     };
   } catch (err) {
@@ -1851,21 +1851,39 @@ export async function executeSaveGateResult(
       rationale: params.rationale,
       findings: params.findings ?? "",
     });
-    await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
-    invalidateStateCache();
-    return {
-      content: [{ type: "text", text: `Gate ${params.gateId} result saved: verdict=${params.verdict}` }],
-      details: { operation: "save_gate_result", gateId: params.gateId, verdict: params.verdict },
-    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    logError("tool", `gsd_save_gate_result failed: ${msg}`, { tool: "gsd_save_gate_result", error: String(err) });
+    logError("tool", `gsd_save_gate_result database write failed: ${msg}`, { tool: "gsd_save_gate_result", error: String(err) });
     return {
       content: [{ type: "text", text: `Error saving gate result: ${msg}` }],
       details: { operation: "save_gate_result", error: msg },
-    isError: true,
-      };
+      isError: true,
+    };
   }
+
+  let projectionStale = false;
+  try {
+    await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
+  } catch (err) {
+    projectionStale = true;
+    logWarning(
+      "projection",
+      `gsd_save_gate_result plan projection failed for ${params.milestoneId}/${params.sliceId}; DB gate result remains committed`,
+      { error: err instanceof Error ? err.message : String(err) },
+    );
+  }
+  invalidateStateCache();
+
+  const projectionNotice = projectionStale ? ". The readable plan update is pending repair." : "";
+  return {
+    content: [{ type: "text", text: `Gate ${params.gateId} result saved: verdict=${params.verdict}${projectionNotice}` }],
+    details: {
+      operation: "save_gate_result",
+      gateId: params.gateId,
+      verdict: params.verdict,
+      ...(projectionStale ? { stale: true } : {}),
+    },
+  };
 }
 
 function errorResult(operation: string, message: string, error: string): ToolExecutionResult {

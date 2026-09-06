@@ -1359,7 +1359,12 @@ async function runSerializedCanonicalReadOperation(
 }
 
 function mapCanonicalReadError(
-  operation: "list_decisions" | "get_decision" | "list_requirements" | "get_requirement",
+  operation:
+    | "list_decisions"
+    | "get_decision"
+    | "list_requirements"
+    | "get_requirement"
+    | "read_project_snapshot",
   message: string,
   id?: string,
 ): unknown {
@@ -1377,9 +1382,11 @@ function mapCanonicalReadError(
     ? "listing decisions"
     : operation === "get_decision"
       ? "fetching decision"
-      : operation === "list_requirements"
-        ? "listing requirements"
-        : "fetching requirement";
+        : operation === "list_requirements"
+          ? "listing requirements"
+          : operation === "read_project_snapshot"
+            ? "reading project snapshot"
+            : "fetching requirement";
 
   return adaptExecutorResult({
     content: [{
@@ -2500,7 +2507,7 @@ const taskReopenSchema = z.object(taskReopenParams);
 
 const taskRecoveryResumeParams = {
   projectDir: projectDirParam,
-  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort Recovery Action ID"),
+  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort or remediate Recovery Action ID"),
   repairSummary: nonEmptyString("repairSummary").describe("What was repaired and why retry is now safe"),
   evidence: unknownRecord.refine(
     (value) => Object.keys(value).length > 0,
@@ -2936,6 +2943,46 @@ export function registerWorkflowTools(
     milestoneId: z.string().optional(),
     limit: z.number().int().min(1).max(500).optional(),
   });
+
+  server.tool(
+    "gsd_project_snapshot",
+    "Read the project snapshot from the GSD database (DB-authoritative, never projections). Returns authority, current focus, progress, blockers, open questions, verification, and bounded milestones in one payload.",
+    {
+      projectDir: z
+        .string()
+        .optional()
+        .describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = parseWorkflowArgs(
+        z.object({ projectDir: z.string().optional() }),
+        args,
+      );
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async () => {
+          const snapshot = await (
+            await importWorkflowRuntimeModule<any>(
+              "../../../src/resources/extensions/gsd/state/project-snapshot.js",
+            )
+          ).readProjectSnapshotFromDb(projectDir, { preserveGlobalDbHandle: true });
+          if (!snapshot) {
+            throw new Error("Database adapter not available (db_unavailable)");
+          }
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(snapshot) }],
+            details: {
+              operation: "read_project_snapshot",
+              revision: snapshot.authority?.revision,
+              snapshot,
+            },
+          };
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("read_project_snapshot", message);
+      }
+    },
+  );
 
   server.tool(
     "gsd_requirement_list",
@@ -3531,7 +3578,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_task_recovery_resume",
-    "Authorize one new Task Attempt after the current durable abort cause has been repaired.",
+    "Authorize one new Task Attempt after the current durable abort or remediation cause has been repaired.",
     taskRecoveryResumeParams,
     async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskRecoveryResumeSchema, args);

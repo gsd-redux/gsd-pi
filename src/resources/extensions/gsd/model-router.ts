@@ -70,6 +70,20 @@ export interface ModelCapabilities {
   instruction: number;
 }
 
+/** Compare all required dimensions without allowing averages to hide regressions. */
+export function compareCapabilityDominance(
+  selected: ModelCapabilities | undefined,
+  candidate: ModelCapabilities | undefined,
+): "higher" | "equivalent" | "incomparable" {
+  if (!selected || !candidate) return "incomparable";
+  const dimensions = CAPABILITY_DIMENSIONS;
+  if (dimensions.some((dimension) => !Number.isFinite(selected[dimension]) || !Number.isFinite(candidate[dimension]))) {
+    return "incomparable";
+  }
+  if (dimensions.some((dimension) => candidate[dimension] < selected[dimension])) return "incomparable";
+  return dimensions.some((dimension) => candidate[dimension] > selected[dimension]) ? "higher" : "equivalent";
+}
+
 /**
  * Semantic aliases whose spelling differs by more than separator or casing.
  * Both keys and values are canonical so formatting variants never need entries.
@@ -148,10 +162,15 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-5-mini": "light",
   "gpt-5-nano": "light",
   "gpt-5-4-mini": "light",
+  "gpt-5-4-nano": "light",
   "gpt-5-1-codex-mini": "light",
   "gpt-5-3-codex-spark": "light",
+  "mai-code-1-flash-picker": "light",
   "mai-code-1-1-flash": "light",
   "gemini-2-0-flash": "light",
+  "gemini-3-5-flash": "light",
+  "gemini-3-6-flash": "light",
+  "gemini-3-7-flash": "light",
 
   // Standard-tier models
   "claude-sonnet-4": "standard",
@@ -164,6 +183,8 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-4-1": "standard",
   "gpt-5-1-codex-max": "standard",
   "gemini-2-5-pro": "standard",
+  "gemini-3-1-pro-preview": "standard",
+  "kimi-k2-7-code": "standard",
   "deepseek-chat": "standard",
 
   // Heavy-tier models (most capable)
@@ -191,6 +212,8 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "o4-mini": "heavy",
   "o4-mini-deep-research": "heavy",
   "grok-4-5": "heavy",
+  "grok-4-6": "heavy",
+  "kimi-k3": "heavy",
 };
 
 // ─── Cost Table (per 1K input tokens, approximate USD) ───────────────────────
@@ -220,6 +243,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "gpt-5-mini": 0.0003,
   "gpt-5-nano": 0.0001,
   "gpt-5-4-mini": 0.00075,
+  "gpt-5-4-nano": 0.0002,
   "gpt-5-pro": 0.015,
   "gpt-5-1": 0.005,
   "gpt-5-1-codex-max": 0.003,
@@ -228,6 +252,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "gpt-5-2-codex": 0.005,
   "gpt-5-3-codex": 0.005,
   "gpt-5-3-codex-spark": 0.0003,
+  "mai-code-1-flash-picker": 0.00075,
   "mai-code-1-1-flash": 0.0002,
   "gpt-5-4": 0.005,
   "gpt-5-5": 0.005,
@@ -238,8 +263,15 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "o4-mini-deep-research": 0.005,
   "gemini-2-0-flash": 0.0001,
   "gemini-2-5-pro": 0.00125,
+  "gemini-3-1-pro-preview": 0.002,
+  "gemini-3-5-flash": 0.0015,
+  "gemini-3-6-flash": 0.00075,
+  "gemini-3-7-flash": 0.00075,
   "deepseek-chat": 0.00014,
   "grok-4-5": 0.002,
+  "grok-4-6": 0.002,
+  "kimi-k2-7-code": 0.00095,
+  "kimi-k3": 0.003,
 };
 
 // ─── Capability Profiles Data Table ──────────────────────────────────────────
@@ -276,6 +308,7 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "gpt-5-mini":                   { coding: 62, debugging: 52, research: 48, reasoning: 52, speed: 88, longContext: 52, instruction: 74 },
   "gpt-5-nano":                   { coding: 42, debugging: 32, research: 28, reasoning: 32, speed: 95, longContext: 32, instruction: 62 },
   "gpt-5-4-mini":                 { coding: 70, debugging: 60, research: 55, reasoning: 60, speed: 84, longContext: 60, instruction: 78 },
+  "gpt-5-4-nano":                 { coding: 50, debugging: 40, research: 35, reasoning: 42, speed: 94, longContext: 55, instruction: 66 },
   "gpt-5-pro":                    { coding: 94, debugging: 90, research: 88, reasoning: 94, speed: 35, longContext: 88, instruction: 92 },
   "gpt-5-1":                      { coding: 93, debugging: 89, research: 86, reasoning: 93, speed: 42, longContext: 86, instruction: 91 },
   "gpt-5-1-codex-max":            { coding: 90, debugging: 85, research: 70, reasoning: 85, speed: 55, longContext: 75, instruction: 85 },
@@ -284,6 +317,7 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "gpt-5-2-codex":                { coding: 93, debugging: 90, research: 72, reasoning: 88, speed: 50, longContext: 78, instruction: 88 },
   "gpt-5-3-codex":                { coding: 94, debugging: 91, research: 74, reasoning: 89, speed: 50, longContext: 80, instruction: 89 },
   "gpt-5-3-codex-spark":          { coding: 68, debugging: 58, research: 42, reasoning: 52, speed: 90, longContext: 50, instruction: 74 },
+  "mai-code-1-flash-picker":      { coding: 74, debugging: 64, research: 42, reasoning: 58, speed: 96, longContext: 68, instruction: 76 },
   "mai-code-1-1-flash":           { coding: 78, debugging: 68, research: 45, reasoning: 62, speed: 96, longContext: 70, instruction: 78 },
   "gpt-5-4":                      { coding: 95, debugging: 92, research: 88, reasoning: 94, speed: 42, longContext: 88, instruction: 92 },
   // GPT-5.5 scores are relative to the existing gpt-5.4 profile and backed by
@@ -304,14 +338,23 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   // ── Google ─────────────────────────────────────────────────────────────────
   "gemini-2-5-pro":               { coding: 75, debugging: 70, research: 85, reasoning: 75, speed: 55, longContext: 90, instruction: 75 },
   "gemini-2-0-flash":             { coding: 50, debugging: 40, research: 50, reasoning: 40, speed: 95, longContext: 60, instruction: 65 },
+  "gemini-3-1-pro-preview":       { coding: 80, debugging: 75, research: 88, reasoning: 82, speed: 55, longContext: 95, instruction: 78 },
+  "gemini-3-5-flash":             { coding: 62, debugging: 55, research: 60, reasoning: 58, speed: 92, longContext: 75, instruction: 72 },
+  "gemini-3-6-flash":             { coding: 66, debugging: 58, research: 64, reasoning: 62, speed: 93, longContext: 88, instruction: 74 },
+  "gemini-3-7-flash":             { coding: 68, debugging: 60, research: 66, reasoning: 64, speed: 93, longContext: 88, instruction: 75 },
 
   // ── DeepSeek ───────────────────────────────────────────────────────────────
   "deepseek-chat":                { coding: 75, debugging: 65, research: 55, reasoning: 70, speed: 70, longContext: 55, instruction: 65 },
+
+  // ── Moonshot/Kimi ─────────────────────────────────────────────────────────
+  "kimi-k2-7-code":               { coding: 82, debugging: 76, research: 62, reasoning: 78, speed: 70, longContext: 78, instruction: 80 },
+  "kimi-k3":                      { coding: 90, debugging: 84, research: 78, reasoning: 88, speed: 55, longContext: 95, instruction: 86 },
 
   // ── xAI ────────────────────────────────────────────────────────────────────
   // Grok 4.5 (2026-07): Opus-class frontier model tuned for coding and agentic
   // work; notably faster and more token-efficient than peer heavy models.
   "grok-4-5":                     { coding: 95, debugging: 90, research: 82, reasoning: 93, speed: 55, longContext: 80, instruction: 90 },
+  "grok-4-6":                     { coding: 96, debugging: 91, research: 83, reasoning: 94, speed: 55, longContext: 82, instruction: 91 },
 };
 
 // ─── Base Task Requirements Data Table ───────────────────────────────────────
@@ -415,7 +458,7 @@ function buildNeutralCapabilityProfile(): ModelCapabilities {
   };
 }
 
-function resolveCapabilityProfile(
+export function resolveCapabilityProfile(
   modelId: string,
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): { profile: ModelCapabilities; confidence: CapabilityProfileConfidence } {

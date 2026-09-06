@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { getModels } from "@gsd/pi-ai";
+
 import { loadRegistry } from "../workflow-templates.js";
 import { gsdHome } from "../gsd-home.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
@@ -171,10 +173,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
   "copilot-models": [
     { cmd: "sync", desc: "Refresh the normalized GitHub Copilot live catalog and record a new accepted snapshot" },
     { cmd: "changes", desc: "Show the last accepted normalized Copilot catalog diff without another network request" },
-    { cmd: "pricing [model]", desc: "Explain provider-aware Copilot economics and source/freshness for one model or the accepted snapshot" },
+    { cmd: "pricing", desc: "Explain provider-aware Copilot economics and source/freshness for one model or the accepted snapshot" },
     { cmd: "promos", desc: "Show active, future, and expired Copilot promotions from the accepted live snapshot" },
     { cmd: "doctor", desc: "Local-only Copilot auth/cache/policy/quarantine diagnostics with no network request" },
-    { cmd: "why <model>", desc: "Explain a Copilot model's local status, routing eligibility, and economics without network access" },
+    { cmd: "why", desc: "Explain a Copilot model's local status, routing eligibility, and economics without network access" },
     { cmd: "--register", desc: "With sync, write only complete remote-only Copilot models into the local models-catalog.json overlay" },
   ],
   logs: [
@@ -430,6 +432,16 @@ function getExtensionCompletions(prefix: string, action: string) {
   }
 }
 
+function getCopilotModelCompletions(partial: string, action: "pricing" | "why") {
+  return getModels("github-copilot")
+    .filter((model) => model.id.startsWith(partial) || `github-copilot/${model.id}`.startsWith(partial))
+    .map((model) => ({
+      value: `copilot-models ${action} ${model.id}`,
+      label: model.id,
+      description: model.name,
+    }));
+}
+
 function resolveProjectRootForCompletion(basePath: string): string {
   // Completion honors GSD_PROJECT_ROOT unconditionally (worker processes may
   // complete from any cwd); resolveWorktreeProjectRoot only honors it for
@@ -489,6 +501,10 @@ export function getGsdArgumentCompletions(prefix: string) {
 
   if (command === "extensions" && parts.length === 3 && ["enable", "disable", "info"].includes(subcommand)) {
     return getExtensionCompletions(third, subcommand);
+  }
+
+  if (command === "copilot-models" && (subcommand === "pricing" || subcommand === "why") && parts.length <= 3) {
+    return getCopilotModelCompletions(third, subcommand);
   }
 
   if (command === "undo" && parts.length <= 2) {

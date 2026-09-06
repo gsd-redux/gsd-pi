@@ -37,33 +37,42 @@ function createFakeCtx(models: FakeModel[]): { ctx: any; notifications: Array<{ 
   return { ctx, notifications };
 }
 
-const SAME_TIER_SESSION: FakeModel[] = [
-  { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
-  { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
-  { id: "mai-code-1.1-flash", provider: "github-copilot", cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 } },
+const EQUIVALENT_SESSION: FakeModel[] = [
+  { id: "claude-sonnet-4-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+  { id: "claude-sonnet-4", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
 ];
 
 // ─── compareCapabilityScores (pure) ─────────────────────────────────────────
 
-test("compareCapabilityScores: higher when candidate average exceeds selected by more than the margin", () => {
+test("compareCapabilityScores: higher only when every required dimension is equal or higher and one is higher", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
   const candidate = { coding: 60, debugging: 60, research: 60, reasoning: 60, speed: 60, longContext: 60, instruction: 60 };
   assert.equal(compareCapabilityScores(selected, candidate), "higher");
 });
 
-test("compareCapabilityScores: equal-or-lower when within the noise margin or candidate is lower", () => {
+test("compareCapabilityScores: equivalent only for verified equality and incomparable when any dimension is lower", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
   const closeCandidate = { ...selected, coding: 50.5 };
-  assert.equal(compareCapabilityScores(selected, closeCandidate), "equal-or-lower");
+  assert.equal(compareCapabilityScores(selected, closeCandidate), "higher");
 
   const lowerCandidate = { ...selected, coding: 10 };
-  assert.equal(compareCapabilityScores(selected, lowerCandidate), "equal-or-lower");
+  assert.equal(compareCapabilityScores(selected, lowerCandidate), "incomparable");
+  assert.equal(compareCapabilityScores(selected, selected), "equivalent");
 });
 
-test("compareCapabilityScores: equal-or-lower when either profile is missing (never guesses)", () => {
+test("compareCapabilityScores: incomparable when either profile is missing (never guesses)", () => {
   const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
-  assert.equal(compareCapabilityScores(undefined, selected), "equal-or-lower");
-  assert.equal(compareCapabilityScores(selected, undefined), "equal-or-lower");
+  assert.equal(compareCapabilityScores(undefined, selected), "incomparable");
+  assert.equal(compareCapabilityScores(selected, undefined), "incomparable");
+});
+
+test("compareCapabilityScores: incomparable when any required dimension is missing or non-finite", () => {
+  const selected = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
+  const missingDimension = { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50 } as any;
+  const nonFinite = { ...selected, coding: Number.NaN };
+
+  assert.equal(compareCapabilityScores(selected, missingDimension), "incomparable");
+  assert.equal(compareCapabilityScores(selected, nonFinite), "incomparable");
 });
 
 // ─── maybeNotifyCheaperAlternative ──────────────────────────────────────────
@@ -88,13 +97,13 @@ test("maybeNotifyCheaperAlternative: no qualifying alternative sends no notifica
 test("maybeNotifyCheaperAlternative: non-Copilot provider is always a no-op", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
 
   const sent = maybeNotifyCheaperAlternative({
     ctx,
     accountScope: "/project",
     selectedModelProvider: "openai",
-    selectedModelId: "claude-sonnet-5",
+    selectedModelId: "claude-sonnet-4-5",
     snapshot: null,
   });
 
@@ -105,20 +114,20 @@ test("maybeNotifyCheaperAlternative: non-Copilot provider is always a no-op", ()
 test("maybeNotifyCheaperAlternative: same-tier cheaper option notifies as a cheaper equivalent", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
 
   const sent = maybeNotifyCheaperAlternative({
     ctx,
     accountScope: "/project",
     selectedModelProvider: "github-copilot",
-    selectedModelId: "claude-sonnet-5",
+    selectedModelId: "claude-sonnet-4-5",
     snapshot: null,
   });
 
   assert.equal(sent, true);
   assert.equal(notifications.length, 1);
-  assert.match(notifications[0]!.message, /cheaper equivalent to github-copilot\/claude-sonnet-5/);
-  assert.match(notifications[0]!.message, /github-copilot\/gpt-4\.1/);
+  assert.match(notifications[0]!.message, /cheaper equivalent to github-copilot\/claude-sonnet-4-5/);
+  assert.match(notifications[0]!.message, /github-copilot\/claude-sonnet-4\b/);
   assert.match(notifications[0]!.message, /current model was not changed/i);
   assert.doesNotMatch(notifications[0]!.message, /better, cheaper alternative/);
 });
@@ -126,16 +135,17 @@ test("maybeNotifyCheaperAlternative: same-tier cheaper option notifies as a chea
 test("maybeNotifyCheaperAlternative: never leaks tokens or raw provider payloads in the message", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
 
   maybeNotifyCheaperAlternative({
     ctx,
     accountScope: "secret-account-scope-value",
     selectedModelProvider: "github-copilot",
-    selectedModelId: "claude-sonnet-5",
+    selectedModelId: "claude-sonnet-4-5",
     snapshot: null,
   });
 
+  assert.equal(notifications.length, 1);
   assert.doesNotMatch(notifications[0]!.message, /secret-account-scope-value/);
   assert.doesNotMatch(notifications[0]!.message, /Bearer|token|gho_|ghu_/i);
 });
@@ -143,13 +153,13 @@ test("maybeNotifyCheaperAlternative: never leaks tokens or raw provider payloads
 test("maybeNotifyCheaperAlternative: deduplicates the identical pairing within the same scope and revision", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
   const call = () =>
     maybeNotifyCheaperAlternative({
       ctx,
       accountScope: "/project",
       selectedModelProvider: "github-copilot",
-      selectedModelId: "claude-sonnet-5",
+      selectedModelId: "claude-sonnet-4-5",
       snapshot: null,
     });
 
@@ -161,13 +171,13 @@ test("maybeNotifyCheaperAlternative: deduplicates the identical pairing within t
 test("maybeNotifyCheaperAlternative: a different scope re-notifies despite the identical pairing", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
   const notifyFor = (scope: string) =>
     maybeNotifyCheaperAlternative({
       ctx,
       accountScope: scope,
       selectedModelProvider: "github-copilot",
-      selectedModelId: "claude-sonnet-5",
+      selectedModelId: "claude-sonnet-4-5",
       snapshot: null,
     });
 
@@ -179,13 +189,13 @@ test("maybeNotifyCheaperAlternative: a different scope re-notifies despite the i
 test("maybeNotifyCheaperAlternative: a changed catalog revision allows a fresh notification", () => {
   _resetCopilotModelsSessionStateForTests();
   _resetCopilotCatalogNotificationStateForTests();
-  const { ctx, notifications } = createFakeCtx(SAME_TIER_SESSION);
+  const { ctx, notifications } = createFakeCtx(EQUIVALENT_SESSION);
   const notifyWithSnapshot = (hash: string | undefined) =>
     maybeNotifyCheaperAlternative({
       ctx,
       accountScope: "/project",
       selectedModelProvider: "github-copilot",
-      selectedModelId: "claude-sonnet-5",
+      selectedModelId: "claude-sonnet-4-5",
       snapshot: hash ? ({ hash, generatedAt: "", modelCount: 0, models: [] } as any) : null,
     });
 
@@ -193,4 +203,47 @@ test("maybeNotifyCheaperAlternative: a changed catalog revision allows a fresh n
   assert.equal(notifyWithSnapshot(undefined), false, "same revision (no snapshot) is deduped");
   assert.equal(notifyWithSnapshot("revision-2"), true, "a materially different revision re-notifies");
   assert.equal(notifications.length, 2);
+});
+
+test("maybeNotifyCheaperAlternative: a cheaper same-tier model with any lower required capability is suppressed", () => {
+  _resetCopilotModelsSessionStateForTests();
+  _resetCopilotCatalogNotificationStateForTests();
+  const { ctx, notifications } = createFakeCtx([
+    { id: "claude-sonnet-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+    { id: "gpt-4.1", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+  ]);
+
+  const sent = maybeNotifyCheaperAlternative({
+    ctx,
+    accountScope: "/project",
+    selectedModelProvider: "github-copilot",
+    selectedModelId: "claude-sonnet-5",
+    snapshot: null,
+  });
+
+  assert.equal(sent, false);
+  assert.equal(notifications.length, 0);
+});
+
+test("maybeNotifyCheaperAlternative: skips an incomparable cheapest candidate and selects a safe second candidate", () => {
+  _resetCopilotModelsSessionStateForTests();
+  _resetCopilotCatalogNotificationStateForTests();
+  const { ctx, notifications } = createFakeCtx([
+    { id: "claude-sonnet-4-5", provider: "github-copilot", cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 } },
+    { id: "gpt-4.1", provider: "github-copilot", cost: { input: 1, output: 4, cacheRead: 0, cacheWrite: 0 } },
+    { id: "claude-sonnet-4", provider: "github-copilot", cost: { input: 2, output: 8, cacheRead: 0, cacheWrite: 0 } },
+  ]);
+
+  const sent = maybeNotifyCheaperAlternative({
+    ctx,
+    accountScope: "/project",
+    selectedModelProvider: "github-copilot",
+    selectedModelId: "claude-sonnet-4-5",
+    snapshot: null,
+  });
+
+  assert.equal(sent, true);
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0]!.message, /github-copilot\/claude-sonnet-4\b/);
+  assert.doesNotMatch(notifications[0]!.message, /github-copilot\/gpt-4\.1\b/);
 });

@@ -1921,6 +1921,33 @@ export async function autoLoop(
               logWriteFailure: logDispatchLedgerWriteFailure,
             },
           ));
+        // #2127: the dispatch selector returns pendingVerificationRetry's unit
+        // unconditionally, and a pre-claim failure (e.g. "Task Attempt claim
+        // must activate exactly one matching coordination dispatch") escapes
+        // the cutover boundary without consuming the marker. Leaving it armed
+        // makes every iteration reselect the same unit. Discard the retry and
+        // pause loudly instead.
+        if (s.pendingVerificationRetry?.unitId === iterData.unitId) {
+          s.pendingVerificationRetry = null;
+          const retryFailure = formatDispatchExceptionSummary({ error: err });
+          const retryPauseMessage =
+            `Verification retry for ${iterData.unitType} ${iterData.unitId} failed before the unit started: ${retryFailure} ` +
+            "The pending retry was discarded so the unit is not reselected. Resolve the failure, then run /gsd auto to resume.";
+          ctx.ui.notify(retryPauseMessage, "error");
+          finishIncompleteIteration({
+            status: "stopped",
+            reason: retryPauseMessage,
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            failureClass: "execution",
+          });
+          await deps.pauseAuto(ctx, pi, {
+            message: retryPauseMessage,
+            category: "unknown",
+          });
+          finishTurn("stopped", "execution", retryPauseMessage, null);
+          break;
+        }
         throw err;
       }
       if (unitPhaseResult.action === "next") {

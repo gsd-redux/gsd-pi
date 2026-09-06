@@ -1644,6 +1644,18 @@ describe("model-router registry keys", () => {
       ["gemini-2.5-pro", "claude-sonnet-5"],
     );
   });
+
+  test("all bundled GitHub Copilot chat models have router tier and capability profiles", () => {
+    const catalogPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "..", "packages", "pi-ai", "src", "models.generated.json");
+    const catalog = JSON.parse(readFileSync(catalogPath, "utf8"))["github-copilot"] as Record<string, Model<Api>>;
+    const missing = Object.values(catalog)
+      .filter((model) => model.api === "openai-completions" || model.api === "openai-responses" || model.api === "anthropic-messages")
+      .map((model) => canonicalizeModelId(model.id))
+      .filter((modelId) => MODEL_CAPABILITY_TIER[modelId] === undefined || MODEL_CAPABILITY_PROFILES[modelId] === undefined)
+      .sort();
+
+    assert.deepEqual(missing, []);
+  });
 });
 
 describe("Phase J routing safety", () => {

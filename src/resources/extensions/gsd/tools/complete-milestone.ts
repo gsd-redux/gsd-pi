@@ -32,7 +32,9 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import {
   isMilestoneLifecycleAdopted,
+  readMilestoneCloseoutAuthorization,
 } from "../db/milestone-closeout-readiness.js";
+import { closeQualityGatesFromEvidence } from "../quality-gate-closure.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
   completeMilestone,
@@ -249,6 +251,17 @@ export async function handleCompleteMilestone(
       return { error: "adopted Milestone completion requires canonical invocation identity" };
     }
     try {
+      const authorization = readMilestoneCloseoutAuthorization({
+        milestoneId: params.milestoneId,
+        sourceRevision: currentSourceRevision!,
+      });
+      if (authorization.authorized) {
+        closeQualityGatesFromEvidence(params.milestoneId, {
+          artifactBasePath,
+          milestoneValidationPassed: authorization.kind === "validated",
+          milestoneValidationAuthorization: authorization,
+        });
+      }
       canonicalReceipt = completeMilestone({
         invocation,
         milestoneId: params.milestoneId,

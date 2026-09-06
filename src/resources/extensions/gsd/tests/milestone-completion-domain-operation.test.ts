@@ -541,6 +541,44 @@ test("Milestone completion rejects unresolved pending quality gates without resi
   );
 });
 
+test("Milestone completion repairs every pending gate for a skipped slice in one call", async () => {
+  const basePath = await prepareFixture();
+  for (const gate of [
+    { gateId: "Q3", scope: "slice" },
+    { gateId: "Q4", scope: "slice" },
+    { gateId: "Q5", scope: "task", taskId: "T02" },
+    { gateId: "Q6", scope: "task", taskId: "T02" },
+    { gateId: "Q7", scope: "task", taskId: "T02" },
+    { gateId: "Q8", scope: "slice" },
+  ] as const) {
+    insertGateRow({
+      milestoneId: "M001",
+      sliceId: "S02",
+      gateId: gate.gateId,
+      scope: gate.scope,
+      taskId: "taskId" in gate ? gate.taskId : undefined,
+    });
+  }
+
+  const result = await handleCompleteMilestone({
+    milestoneId: "M001",
+    verificationPassed: true,
+    ...closeout(),
+  }, basePath, invocation("milestone-complete/skipped-slice-gates"));
+
+  assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+  assert.deepEqual(rows(`
+    SELECT gate_id, status, verdict
+    FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S02'
+    ORDER BY gate_id
+  `), ["Q3", "Q4", "Q5", "Q6", "Q7", "Q8"].map((gateId) => ({
+    gate_id: gateId,
+    status: "complete",
+    verdict: "omitted",
+  })));
+});
+
 test("Milestone completion ignores completed unregistered legacy quality gates", async () => {
   await prepareFixture();
   insertGateRow({

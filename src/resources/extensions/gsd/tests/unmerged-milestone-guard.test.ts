@@ -53,6 +53,27 @@ test("findUnmergedCompletedMilestones blocks completed milestone branch product 
   }
 });
 
+test("findUnmergedCompletedMilestones honors configured main branch without milestone metadata", async (t) => {
+  const base = makeTempRepo("gsd-unmerged-guard-");
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  seedMilestone(base, "M013");
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    ["---", "git:", "  main_branch: devel", "---", ""].join("\n"),
+  );
+  git(base, "checkout", "-b", "devel");
+  commitBranchFile(base, "milestone/M013", "index.html", "<h1>M013</h1>\n");
+  git(base, "checkout", "devel");
+  git(base, "merge", "--ff-only", "milestone/M013");
+
+  const blockers = await findUnmergedCompletedMilestones(base);
+
+  assert.equal(blockers.length, 0);
+});
+
 test("findUnmergedCompletedMilestones does not block after a --no-ff merge that diverges from the branch tip", async () => {
   const base = makeTempRepo("gsd-unmerged-guard-");
   try {

@@ -105,12 +105,12 @@ After writing the file, GSD attempts to open it in a browser using the local pla
 | `/gsd run-hook` | Manually trigger a specific hook |
 | `/gsd migrate` | Migrate a v1 `.planning` directory to `.gsd` format |
 | `/gsd recover` | Preview an explicit legacy markdown import, then approve the exact hash shown with `/gsd recover --preview=<sha256>` |
-| `/gsd recover <recoveryActionId>` | Resume one repaired, terminal Task recovery abort after supplying repair and verification evidence |
+| `/gsd recover <recoveryActionId>` | Resume one repaired Task recovery abort or remediation after supplying repair and verification evidence |
 | `/gsd rebuild markdown` | Preserve externally edited modeled projections under `.gsd/quarantine/projections/`, then rebuild from the canonical database without importing markdown |
 | `/gsd rebuild database` | Reserved for DB-native rebuilds; does not import markdown projections |
 | `/gsd language <language\|off\|clear>` | Set or clear the global response language |
 
-The two `/gsd recover` forms serve different recovery domains. Use the no-argument command (and its `--preview`, `--application`, and related flags) only for the evidence-bound legacy markdown/database import flow. When an auto-mode failure reports a terminal Task recovery abort and its `recoveryActionId`, repair the underlying defect and run `/gsd recover <recoveryActionId>`. GSD checks that the action is still eligible, prompts for a nonblank repair summary and concrete verification evidence, and authorizes exactly one fresh lineage-linked retry; it does not run that retry itself, so rerun `/gsd auto` after the command succeeds. Stale actions, duplicate authorizations, open blockers, and actions superseded by later Attempts remain rejected.
+The two `/gsd recover` forms serve different recovery domains. Use the no-argument command (and its `--preview`, `--application`, and related flags) only for the evidence-bound legacy markdown/database import flow. When auto mode reports a terminal Task recovery abort or a settled Task with a current `remediate` Recovery Action, repair the underlying defect and run `/gsd recover <recoveryActionId>`. GSD checks that the action is still eligible, prompts for a nonblank repair summary and concrete verification evidence, and authorizes exactly one fresh lineage-linked retry; it does not run that retry itself, so rerun `/gsd auto` after the command succeeds. Stale actions, duplicate authorizations, open blockers, and actions superseded by later Attempts remain rejected.
 
 ## Milestone Management
 

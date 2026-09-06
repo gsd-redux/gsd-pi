@@ -28,9 +28,11 @@ import {
 import { lookupModelCost, resolveModelEconomics, type RuntimeModelEconomics } from "../../model-cost-table.js";
 import {
   canonicalizeModelId,
+  compareCapabilityDominance,
   getModelProfileConfidence,
   MODEL_CAPABILITY_TIER,
   PROFILE_CONFIDENCE_ORDINAL,
+  resolveCapabilityProfile,
 } from "../../model-router.js";
 
 interface CopilotCatalogDiffState {
@@ -105,7 +107,7 @@ const COPILOT_MODELS_USAGE = [
   "  /gsd copilot-models sync              Refresh the accepted live catalog snapshot",
   "  /gsd copilot-models sync --register   Register complete remote-only models into the local overlay",
   "  /gsd copilot-models changes           Show the last accepted catalog diff",
-  "  /gsd copilot-models pricing [model]   Show provider-aware pricing with source/freshness",
+  "  /gsd copilot-models pricing           Show provider-aware pricing for one model or the accepted snapshot",
   "  /gsd copilot-models promos            Show active, future, and expired promotions",
   "  /gsd copilot-models doctor           Local-only auth/cache/policy/quarantine diagnostics",
   "  /gsd copilot-models why <model>       Explain a model's local status/routing/economics",
@@ -127,6 +129,9 @@ function parseProviderModelArgument(prefix: string, args: string, required: bool
       : { valid: true };
   }
   const rawTarget = rest.split(/\s+/)[0] ?? "";
+  if (/^(?:\[model\]|<model>)$/i.test(rawTarget)) {
+    return { valid: false, error: `Usage: /gsd copilot-models ${prefix} <model>` };
+  }
   const provider = rawTarget.includes("/") ? rawTarget.split("/")[0]?.toLowerCase() : "";
   if (provider && provider !== "github-copilot") {
     return {
@@ -486,6 +491,12 @@ function economicsFreshnessSummary(economics: RuntimeModelEconomics): string {
   return economics.provenance.defaultTokenPrices?.freshness ?? "unknown";
 }
 
+function toolCallsSummary(value: boolean | undefined): "yes" | "no" | "unknown" {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "unknown";
+}
+
 export interface CheaperSameTierSuggestion {
   modelId: string;
   tier: string;
@@ -558,6 +569,12 @@ export function findCheaperSameTierOption(
 
     const candidateConfidence = getModelProfileConfidence(candidateBareId);
     if (candidateConfidence === "unknown") continue;
+    if (
+      compareCapabilityDominance(
+        resolveCapabilityProfile(bareId).profile,
+        resolveCapabilityProfile(candidateBareId).profile,
+      ) === "incomparable"
+    ) continue;
 
     const candidateLiveRecord = findLiveRecord(snapshot, candidateBareId);
     if (isBlockedForAutomaticRouting(candidateLiveRecord)) continue;
@@ -801,7 +818,7 @@ function buildWhyExplanation(
     `- preview: ${liveRecord?.availability.preview === true ? "yes" : liveRecord?.availability.preview === false ? "no" : "unknown"}`,
     `- runtime API: ${liveRecord?.execution.api ?? localModel?.api ?? "unknown"}`,
     `- supported endpoints: ${(liveRecord?.execution.supportedEndpoints ?? []).join(", ") || "unknown"}`,
-    `- tool calls: ${(liveRecord?.execution.toolCalls ?? true) ? "yes" : "no"}`,
+    `- tool calls: ${toolCallsSummary(liveRecord?.execution.toolCalls)}`,
     `- context/output: ${liveRecord?.execution.contextWindow ?? localModel?.contextWindow ?? "unknown"} / ${liveRecord?.execution.maxTokens ?? localModel?.maxTokens ?? "unknown"}`,
     `- economics: ${economicsSummary(economics)}`,
     `- source: ${economicsSourceSummary(economics)}`,

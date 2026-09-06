@@ -31,6 +31,7 @@ function normalizedRecord(id: string, overrides: Record<string, unknown> = {}) {
         name: id,
         tool_call: true,
         supported_endpoints: ["/responses"],
+        vision: false,
         reasoning: true,
         limit: { context: 400000, output: 128000 },
         cost: { input: 0.2, output: 1.2, cache_read: 0, cache_write: 0 },
@@ -230,6 +231,42 @@ test("sanitizeGitHubCopilotModels drops invalid and duplicate rows but keeps non
   assert.equal(sanitized.find((model) => model.id === "gpt-5.4")?.execution.toolCalls, false);
 });
 
+test("sanitizeGitHubCopilotModels preserves missing tool-call metadata as unknown", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [{ id: "unknown-tool-support", name: "Unknown Tool Support" }],
+  })[0]!;
+
+  assert.equal(record.execution.toolCalls, undefined);
+});
+
+test("sanitizeGitHubCopilotModels uses provider-qualified compatibility to resolve endpoint alternatives", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [{
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      supported_endpoints: ["/chat/completions", "/responses"],
+    }],
+  })[0]!;
+
+  assert.equal(record.execution.api, "openai-responses");
+  assert.deepEqual(record.conflicts, []);
+});
+
+test("sanitizeGitHubCopilotModels records a conflict when single live transport disagrees with provider-static transport", () => {
+  const record = sanitizeGitHubCopilotModels({
+    data: [{
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      supported_endpoints: ["/chat/completions"],
+    }],
+  })[0]!;
+
+  assert.equal(record.execution.api, "openai-completions");
+  assert.deepEqual(record.conflicts, [
+    "provider-live transport openai-completions conflicts with provider-static transport openai-responses",
+  ]);
+});
+
 test("applyLastKnownGood preserves the prior valid snapshot on failure", () => {
   const previous = {
     generatedAt: "2026-08-14T00:00:00Z",
@@ -313,6 +350,18 @@ test("registerCopilotModelsInOverlay quarantines remote-only candidates instead 
   assert.deepEqual(plan.registeredIds, []);
   assert.deepEqual(plan.quarantined.map((model) => model.id), ["brand-new-model"]);
   assert.equal(plan.overlayPath, "/tmp/gsd-copilot-should-stay-quarantined.json");
+});
+
+test("registerCopilotModelsInOverlay quarantines candidates with unknown input modality", () => {
+  const plan = registerCopilotModelsInOverlay(
+    "/tmp/gsd-copilot-unknown-vision-should-stay-quarantined.json",
+    [normalizedRecord("brand-new-unknown-vision", { supports_vision: undefined, vision: undefined })],
+    [],
+  );
+
+  assert.deepEqual(plan.registeredIds, []);
+  assert.deepEqual(plan.quarantined.map((model) => model.id), ["brand-new-unknown-vision"]);
+  assert.deepEqual(plan.quarantined[0]?.blockers, ["missing authoritative input modality"]);
 });
 
 test("registerCopilotModelsInOverlay writes complete remote-only candidates into the overlay", (t) => {

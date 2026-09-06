@@ -12,7 +12,7 @@ import {
 import { autoWorktreeBranch } from "./auto-worktree-branch-lifecycle.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
 import { getAllMilestones } from "./gsd-db.js";
-import { resolveMilestoneIntegrationBranch } from "./git-service.js";
+import { resolveMilestoneIntegrationBranch, VALID_BRANCH_NAME } from "./git-service.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { isClosedStatus } from "./status-guards.js";
 
@@ -121,6 +121,9 @@ function resolveIntegrationBranch(base: string, milestoneId: string): string | n
   const resolution = resolveMilestoneIntegrationBranch(base, milestoneId, prefs);
   if (resolution.effectiveBranch && nativeBranchExists(base, resolution.effectiveBranch)) {
     return resolution.effectiveBranch;
+  }
+  if (prefs.main_branch && VALID_BRANCH_NAME.test(prefs.main_branch) && nativeBranchExists(base, prefs.main_branch)) {
+    return prefs.main_branch;
   }
 
   try {

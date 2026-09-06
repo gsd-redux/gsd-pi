@@ -30,6 +30,7 @@ import type {
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcInitResult,
+	ProjectProgress,
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
@@ -46,6 +47,20 @@ export type {
 	RpcSessionState,
 	RpcV2Event,
 } from "./rpc-types.js";
+
+export async function invokeProjectProgressRead(
+	handler: (input: unknown) => Promise<unknown>,
+	id: string | undefined,
+	cwd: string,
+): Promise<RpcResponse> {
+	try {
+		const data = await handler({ cwd });
+		return { id, type: "response", command: "get_project_progress", success: true, data: data as ProjectProgress | null };
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		return { id, type: "response", command: "get_project_progress", success: false, error: message };
+	}
+}
 
 /**
  * Run in RPC mode.
@@ -599,6 +614,17 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 					extensionsReady,
 				};
 				return success(id, "get_state", state);
+			}
+
+			case "get_project_progress": {
+				if (!extensionsReady) {
+					return error(id, "get_project_progress", "Extensions are still loading");
+				}
+				const handler = session.extensionRunner?.getRuntimeReadHandler("project_progress");
+				if (!handler) {
+					return error(id, "get_project_progress", "Project progress is unavailable");
+				}
+				return await invokeProjectProgressRead(handler, id, session.sessionManager.getCwd());
 			}
 
 			// =================================================================

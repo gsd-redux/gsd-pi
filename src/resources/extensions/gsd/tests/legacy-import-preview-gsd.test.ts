@@ -680,6 +680,118 @@ describe("legacy .gsd captured-byte interpretation", () => {
     );
   });
 
+  test("preserves flat slice and milestone summaries", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/09-team/09-ROADMAP.md": [
+        "# M009-rfuh2h: Team milestone",
+        "",
+        "- [x] **S01: First slice** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-SUMMARY.md": [
+        "---",
+        "id: M009-rfuh2h",
+        "status: complete",
+        "---",
+        "",
+        "# M009: Must not map as a task",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-01-SUMMARY.md": [
+        "---",
+        "id: S01",
+        "parent: M009-rfuh2h",
+        "milestone: M009-rfuh2h",
+        "status: complete",
+        "---",
+        "",
+        "# S01: Must not map as a task",
+        "",
+      ].join("\n"),
+      "phases/09-team/S01-T01-SUMMARY.md": [
+        "---",
+        "id: T01",
+        "parent: S01",
+        "milestone: M009-rfuh2h",
+        "---",
+        "",
+        "# T01: Must map as a task status refinement",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(interpretation.diagnoses, []);
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.reason_code === "flat-non-task-summary-preserved")
+        .map((candidate) => [candidate.classification, candidate.target.kind, candidate.target.key, candidate.normalized]),
+      [
+        ["preserve", "artifact", ".gsd/phases/09-team/09-01-SUMMARY.md", { reason: "non-task-summary", id: "S01" }],
+        ["preserve", "artifact", ".gsd/phases/09-team/09-SUMMARY.md", { reason: "non-task-summary", id: "M009-rfuh2h" }],
+      ],
+    );
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "task")
+        .map((candidate) => [candidate.target.key, candidate.target.field, candidate.normalized]),
+      [["M009-rfuh2h/S01/T01", "status", "complete"]],
+    );
+  });
+
+  test("preserves flat slice summaries with no id field", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/09-team/09-ROADMAP.md": [
+        "# M009-rfuh2h: Team milestone",
+        "",
+        "- [x] **S02: Second slice** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-02-PLAN.md": [
+        "# S02: Second slice",
+        "",
+        "**Milestone:** M009-rfuh2h",
+        "**Slice:** S02",
+        "",
+        "## Tasks",
+        "",
+        "- [x] **T01**: Must map as the only real task",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-02-SUMMARY.md": [
+        "---",
+        "slice: S02",
+        "status: complete",
+        "---",
+        "",
+        "# S02 Summary: Old format must not fabricate S02/T02",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(interpretation.diagnoses, []);
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.target.kind === "task")
+        .map((candidate) => [candidate.target.key, candidate.target.field, candidate.normalized]),
+      [["M009-rfuh2h/S02/T01", undefined, {
+        id: "T01",
+        milestone_id: "M009-rfuh2h",
+        slice_id: "S02",
+        status: "complete",
+        title: "Must map as the only real task",
+      }]],
+    );
+
+    assert.deepEqual(
+      interpretation.candidates
+        .filter((candidate) => candidate.reason_code === "flat-non-task-summary-preserved")
+        .map((candidate) => [candidate.classification, candidate.target.kind, candidate.target.key, candidate.normalized]),
+      [["preserve", "artifact", ".gsd/phases/09-team/09-02-SUMMARY.md", { reason: "non-task-summary", id: "S02" }]],
+    );
+  });
+
   test("emits action-matrix decision candidates and complete anchors for present collections", (t) => {
     const base = temporaryDirectory(t);
     const physicalRoot = join(base, ".gsd");
