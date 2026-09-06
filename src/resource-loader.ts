@@ -27,14 +27,15 @@ function loadPiCodingAgentModule(): Promise<PiCodingAgentModule> {
 // dist/resources/ is populated by the build step (`npm run copy-resources`) and
 // reflects the built state, not the currently checked-out branch.
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const resourcesDir = resolveBundledResourcesDirFromPackageRoot(packageRoot)
-const bundledExtensionsDir = join(resourcesDir, 'extensions')
+let resourcesDir = resolveBundledResourcesDirFromPackageRoot(packageRoot)
+let bundledExtensionsDir = join(resourcesDir, 'extensions')
 const resourceVersionManifestName = 'managed-resources.json'
 const resourceFingerprintFileName = '.managed-resources-content-hash'
 const gsdBrowserSkillName = 'gsd-browser'
 const requireFromResourceLoader = createRequire(import.meta.url)
 const gsdBrowserSkillReferenceDirs = ['docs', 'scripts', 'gsd-browser-skill']
 let gsdBrowserPackageSkillPathForTests: string | null | undefined
+let afterResourceSyncForTests: (() => void) | undefined
 
 interface ManagedResourceManifest {
   gsdVersion: string
@@ -94,7 +95,7 @@ function getBundledPackageName(): string {
   }
 }
 
-function writeManagedResourceManifest(agentDir: string): void {
+function writeManagedResourceManifest(agentDir: string, contentHash: string): void {
   // Record root-level files and subdirectory extension names currently in the
   // bundled extensions source so that future upgrades can detect and prune any
   // that get removed or moved.
@@ -125,7 +126,7 @@ function writeManagedResourceManifest(agentDir: string): void {
     gsdVersion: getBundledGsdVersion(),
     packageName: getBundledPackageName(),
     syncedAt: Date.now(),
-    contentHash: getCurrentResourceFingerprint(),
+    contentHash,
     installedExtensionRootFiles,
     installedExtensionDirs,
   }
@@ -166,9 +167,10 @@ function readManagedResourceManifest(agentDir: string): ManagedResourceManifest 
  * triggers a full resync in `initResources`. The old path+size approach
  * silently cached stale prompts across upgrades.
  *
- * Cost is ~1-2ms for a typical resources tree (~100 small .md files) —
- * still negligible at startup. Files are streamed via `readFileSync` but
- * bundled prompts are tiny so this is fine.
+ * Measured ~25-30ms on a 2025 laptop for the full shipped tree (~1500 files,
+ * 17MB) — larger than early estimates but still well under the ~128ms
+ * synchronous cpSync it gates at startup. Files are streamed via
+ * `readFileSync` but bundled resources are small so this is fine.
  *
  * Exported for unit tests and for callers that want to check a different
  * directory (e.g. pre-install verification).
@@ -178,18 +180,6 @@ export function computeResourceFingerprint(rootDir: string = resourcesDir): stri
   collectFileEntries(rootDir, rootDir, entries)
   entries.sort()
   return createHash('sha256').update(entries.join('\n')).digest('hex').slice(0, 16)
-}
-
-function getCurrentResourceFingerprint(): string {
-  try {
-    const precomputed = readFileSync(join(resourcesDir, resourceFingerprintFileName), 'utf-8').trim()
-    if (/^[a-f0-9]{16}$/i.test(precomputed)) {
-      return precomputed
-    }
-  } catch {
-    // Source-tree and partial-build workflows may not have a precomputed hash.
-  }
-  return computeResourceFingerprint()
 }
 
 function resolveGsdBrowserPackageSkillPath(): string | null {
@@ -205,6 +195,20 @@ function resolveGsdBrowserPackageSkillPath(): string | null {
 
 export function setGsdBrowserPackageSkillPathForTests(skillPath: string | null | undefined): void {
   gsdBrowserPackageSkillPathForTests = skillPath
+}
+
+/**
+ * Points the resource loader at a temp bundle for tests, so the shipped-hash
+ * scenario (#2106) can be reproduced without touching the real resources tree.
+ * Pass undefined/null to restore the default resolution.
+ */
+export function setBundledResourcesDirForTests(dir: string | null | undefined): void {
+  resourcesDir = dir ?? resolveBundledResourcesDirFromPackageRoot(packageRoot)
+  bundledExtensionsDir = join(resourcesDir, 'extensions')
+}
+
+export function setAfterResourceSyncForTests(callback: (() => void) | undefined): void {
+  afterResourceSyncForTests = callback
 }
 
 export function collectGsdBrowserPackageSkillReferences(content: string): string[] {
@@ -316,7 +320,10 @@ function collectFileEntries(dir: string, root: string, out: string[]): void {
     if (entry.isDirectory()) {
       collectFileEntries(fullPath, root, out)
     } else {
-      const rel = relative(root, fullPath)
+      // Normalize separators to match scripts/copy-resources.cjs and
+      // scripts/watch-resources.js, so the live hash equals the shipped
+      // precomputed hash on Windows too (#2106).
+      const rel = relative(root, fullPath).replaceAll('\\', '/')
       // Hash the file contents — see function doc for #4787 rationale.
       let contentHash: string
       try {
@@ -742,10 +749,12 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
 
   // Skip the full copy when both version AND content fingerprint match.
   // Version-only checks miss same-version content changes (npm link dev workflow,
-  // hotfixes within a release). The content hash catches those at ~1ms cost.
+  // hotfixes within a release). The hash must be computed LIVE against the
+  // bundled tree (#2106): the shipped precomputed file is immutable after
+  // install, so comparing against it can never detect same-version edits.
+  const currentHash = computeResourceFingerprint()
   if (manifest && isCurrentPackageManifest(manifest) && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
-    const currentHash = getCurrentResourceFingerprint()
     if (manifest.contentHash && manifest.contentHash === currentHash
       && !hasMissingBundledResourceFiles(extensionsDir, bundledExtensionsDir)) {
       return
@@ -771,7 +780,9 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   // overwrite them (covers extensions, agents, and skills in one walk).
   makeTreeWritable(agentDir)
 
-  writeManagedResourceManifest(agentDir)
+  afterResourceSyncForTests?.()
+  // ABA note: a concurrent mutation of the bundled tree during the copy window that reverts before the next launch can leave one stale installed file undetected; snapshot-copy semantics are out of scope for this convenience sync.
+  writeManagedResourceManifest(agentDir, currentHash)
   ensureRegistryEntries(join(agentDir, 'extensions'))
 }
 
