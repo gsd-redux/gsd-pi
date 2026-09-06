@@ -52,6 +52,7 @@ jobs:
           SHARD_COUNT: ${{ inputs.shard_count }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2153 # GitHub Actions injects SOURCE_REPO from step env.
           if [[ ! "$SOURCE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
             echo "::error::source_repo must be owner/repo, got: $SOURCE_REPO"
             exit 1
@@ -93,6 +94,7 @@ jobs:
           SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2153 # GitHub Actions injects SOURCE_REPO from step env.
           repo_url="https://github.com/${SOURCE_REPO}.git"
           target_ref="refs/heads/${SOURCE_REF}"
           git init "$GITHUB_WORKSPACE"
@@ -296,6 +298,7 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2153 # GitHub Actions injects SOURCE_REPO from step env.
           repo_url="https://github.com/${SOURCE_REPO}.git"
           git init "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
@@ -401,6 +404,7 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2153 # GitHub Actions injects SOURCE_REPO from step env.
           git init "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
           git remote add origin "https://github.com/${SOURCE_REPO}.git"
