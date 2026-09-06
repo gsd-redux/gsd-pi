@@ -391,6 +391,111 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
+	it("preserves isError from a resolved tool result", async () => {
+		const toolSchema = Type.Object({});
+		const tool: AgentTool<typeof toolSchema, Record<string, never>> = {
+			name: "resolved-error",
+			label: "Resolved error",
+			description: "Returns an error result without rejecting",
+			parameters: toolSchema,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "tool failed" }],
+					details: {},
+					isError: true,
+				} as unknown as AgentToolResult<Record<string, never>>;
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "resolved-error", arguments: {} }],
+							"toolUse",
+						),
+					});
+				} else {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "done" }]) });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		for await (const event of agentLoop([createUserMessage("run resolved error")], context, config, undefined, streamFn)) {
+			events.push(event);
+		}
+
+		const toolEnd = events.find((event) => event.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			expect(toolEnd.result.content[0]).toEqual({ type: "text", text: "tool failed" });
+		}
+	});
+
+	it("preserves isError from a resolved tool result through the abort-race path", async () => {
+		const toolSchema = Type.Object({});
+		const tool: AgentTool<typeof toolSchema, Record<string, never>> = {
+			name: "resolved-error-abort-race",
+			label: "Resolved error abort race",
+			description: "Returns an error result without rejecting when an abort signal is passed",
+			parameters: toolSchema,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "tool failed during abort race" }],
+					details: {},
+					isError: true,
+				} as unknown as AgentToolResult<Record<string, never>>;
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "resolved-error-abort-race", arguments: {} }],
+							"toolUse",
+						),
+					});
+				} else {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "done" }]) });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const controller = new AbortController();
+		const events: AgentEvent[] = [];
+		for await (const event of agentLoop([createUserMessage("run resolved error with signal")], context, config, controller.signal, streamFn)) {
+			events.push(event);
+		}
+
+		const toolEnd = events.find((event) => event.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			expect(toolEnd.result.content[0]).toEqual({ type: "text", text: "tool failed during abort race" });
+		}
+	});
+
 	it("normalizes missing tool result content before appending transcript messages", async () => {
 		const toolSchema = Type.Object({});
 		const tool: AgentTool<typeof toolSchema, Record<string, never>> = {
