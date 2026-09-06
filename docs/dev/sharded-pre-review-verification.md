@@ -43,6 +43,28 @@ as-is without maintainer direction:
    `dispatch` and `status`; richer `watch`, `resume`, `logs`, and `triage` commands can be added
    if maintainers want the full contributor-side ergonomics upstream.
 
+## Existing Contributor Harness
+
+The omitted operational pieces are already implemented in the separate public
+[`pimmink/gsd-pi-ci`](https://github.com/pimmink/gsd-pi-ci/tree/chore/remote-verify-triage)
+repository. They are linked rather than copied here so this draft stays focused on whether the
+core upstream workflow shape is wanted.
+
+| Component | Purpose |
+| --- | --- |
+| [`remote-pr-verification-sharded.yml`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/.github/workflows/remote-pr-verification-sharded.yml) | Primary clean-runner tier: derives a manifest from the checked-out commit, runs deterministic shards, verifies coverage, and can collect advisory timing evidence. |
+| [`remote-pr-verification.yml`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/.github/workflows/remote-pr-verification.yml) | Independent stable, unsharded fallback when the sharded harness itself needs a cross-check. |
+| [`remote-full-gate.yml`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/.github/workflows/remote-full-gate.yml) | Separate clean-runner reproduction for full-gate experimentation; it is not asserted to be upstream merge parity. |
+| [`remote-verify.sh`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/scripts/remote-verify.sh) | Safe dispatch helper plus `status`, compact `watch`/`resume`, browser `open`, totals-focused `logs`, and advisory first-failure `triage`. |
+| [`validate-timing-evidence.mjs`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/scripts/validate-timing-evidence.mjs) | Validates optional timing artifacts against SHA, manifest, workflow, lockfile, runner, and schema provenance before publication. |
+| [`remote-verification-guide.md`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/docs/remote-verification-guide.md) | Operational contract: tier selection, exact-SHA rules, native staging, `pipefail`, logging, timing, fallback, and authority boundaries. |
+| [`phase-2-deferral.md`](https://github.com/pimmink/gsd-pi-ci/blob/chore/remote-verify-triage/docs/phase-2-deferral.md) | Evidence and explicit deferrals for merge-parity scope, including Windows, Node 22, and Docker e2e. |
+
+Operationally, a contributor dispatches the sharded tier with a full SHA, follows it with
+`watch` or `resume`, uses `logs` for final totals, and uses `triage` only for a bounded first
+diagnostic step after a failed job. The stable workflow is the independent fallback if the
+sharded harness is under suspicion. The upstream PR's own CI remains merge authority throughout.
+
 ## Proposed shape
 
 ```mermaid
