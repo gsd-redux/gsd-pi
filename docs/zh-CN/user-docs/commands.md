@@ -83,9 +83,9 @@
 | `/gsd run-hook` | 手动触发一个指定 hook |
 | `/gsd migrate` | 将 v1 的 `.planning` 目录迁移到 `.gsd` 格式 |
 | `/gsd recover` | 预览一次显式的旧版 markdown 导入，然后使用 `/gsd recover --preview=<sha256>` 批准所显示的精确哈希 |
-| `/gsd recover <recoveryActionId>` | 提供修复说明和验证证据后，恢复一个已修复且处于终止状态的 Task recovery abort |
+| `/gsd recover <recoveryActionId>` | 提供修复说明和验证证据后，恢复一个已修复的 Task recovery abort 或 remediation |
 
-两种 `/gsd recover` 形式用于不同的恢复域。无参数形式（及其 `--preview`、`--application` 等选项）仅用于基于证据绑定的旧版 markdown/数据库导入流程。当自动模式报告 terminal Task recovery abort 及其 `recoveryActionId` 时，请先修复底层缺陷，再运行 `/gsd recover <recoveryActionId>`。GSD 会检查该操作是否仍符合恢复条件，并提示输入非空的修复说明和具体的验证证据；命令只授权一次新的、与原 lineage 关联的重试，并不会自行执行该重试，因此命令成功后还必须重新运行 `/gsd auto`。过期操作、重复授权、存在 open blocker，或已被后续 Attempt 取代的操作仍会被拒绝。
+两种 `/gsd recover` 形式用于不同的恢复域。无参数形式（及其 `--preview`、`--application` 等选项）仅用于基于证据绑定的旧版 markdown/数据库导入流程。当自动模式报告 terminal Task recovery abort，或 settled Task 带有当前 `remediate` Recovery Action 时，请先修复底层缺陷，再运行 `/gsd recover <recoveryActionId>`。GSD 会检查该操作是否仍符合恢复条件，并提示输入非空的修复说明和具体的验证证据；命令只授权一次新的、与原 lineage 关联的重试，并不会自行执行该重试，因此命令成功后还必须重新运行 `/gsd auto`。过期操作、重复授权、存在 open blocker，或已被后续 Attempt 取代的操作仍会被拒绝。
 
 ## Milestone 管理
 

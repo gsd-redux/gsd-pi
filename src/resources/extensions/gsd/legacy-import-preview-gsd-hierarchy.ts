@@ -730,6 +730,23 @@ function interpretFlatArtifact(
     return;
   }
   if (/-SUMMARY\.md$/u.test(path)) {
+    const summaryId = frontmatterField(file, "id")?.value;
+    const summarySlice = frontmatterField(file, "slice")?.value;
+    const summaryTask = frontmatterField(file, "task")?.value;
+    if (summaryId !== undefined && /^(?:S\d+|M\d+)/u.test(summaryId)) {
+      preserveHeading(file, candidates, "flat-non-task-summary-preserved", {
+        reason: "non-task-summary",
+        id: summaryId,
+      });
+      return;
+    }
+    if (summaryId === undefined && summaryTask === undefined && summarySlice !== undefined && /^S\d+$/u.test(summarySlice)) {
+      preserveHeading(file, candidates, "flat-non-task-summary-preserved", {
+        reason: "non-task-summary",
+        id: summarySlice,
+      });
+      return;
+    }
     const parent = selectFlatParent(file, expectedFlatParent(file, claimsByDirectory));
     const status = frontmatterField(file, "status");
     if (parent.selected === undefined) {

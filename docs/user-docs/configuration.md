@@ -608,6 +608,10 @@ auto_supervisor:
   stalled_tool_timeout_minutes: 5  # recover a tool that hangs mid-call (default: 5)
 ```
 
+Long-running coordination tools (`subagent`, and its `Task` alias) are exempt from
+`stalled_tool_timeout_minutes`: a subagent running parallel reviewers can legitimately
+outlast this budget. A genuinely hung subagent is still bounded by `hard_timeout_minutes`.
+
 ### `min_request_interval_ms`
 
 Minimum milliseconds between auto-mode LLM request dispatches. Use this to proactively slow auto-mode on rate-limited providers and reduce 429 errors. Set to `0` to disable.

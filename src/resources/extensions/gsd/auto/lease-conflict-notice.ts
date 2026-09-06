@@ -3,6 +3,28 @@
 
 const LEASE_HELD_RE = /^Milestone\s+(\S+)\s+is held by worker\s+(.+?)\s+until\s+(.+?)\.?$/;
 
+/**
+ * Normalize a unit-run claim rejection reason into a value that is stable
+ * across repeated identical rejections, for use as an ADR-047 liveness
+ * signature payload (which is hashed).
+ *
+ * Lease-held rejections embed the lease `expiresAt` timestamp (see
+ * `workflow-dispatch-claim.ts`: `Milestone ... is held by worker ... until
+ * <expiresAt>.`). That timestamp advances every time the holder heartbeats, so
+ * hashing the raw reason would produce a different signature on each otherwise
+ * identical "lease still held" rejection and never accumulate to the wedge
+ * threshold. Stripping the volatile `until <expiresAt>` clause keys the
+ * signature on the stable conflict identity (milestone + holder). All other
+ * reasons (e.g. `missing-worker`, `dispatch claim skipped: ...`) pass through
+ * unchanged.
+ */
+export function stableClaimSignature(reason: string): string {
+  const match = reason.match(LEASE_HELD_RE);
+  if (!match) return reason;
+  const [, milestoneId, workerId] = match;
+  return `Milestone ${milestoneId} is held by worker ${workerId}`;
+}
+
 export interface LeaseConflictNoticeInput {
   milestoneId?: string | null;
   unitType: string;

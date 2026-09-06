@@ -31,6 +31,17 @@ database — a rendered view, not a record.
   (`renderAllFromDb` in `src/resources/extensions/gsd/markdown-renderer.ts`),
   not by parsing the file back into state.
 
+The discuss-to-plan handoff has a narrow compatibility exception:
+`checkAutoStartAfterDiscuss` in `discussion-handoff.ts` registers an on-disk
+CONTEXT artifact when the milestone row is available, the depth gate permits
+handoff, and the database has no milestone-scoped CONTEXT artifact. Existing
+CONTEXT rows are preserved. Registration leaves milestone status unchanged;
+state derivation still reads the database. Lookup or registration failures log
+a warning without rejecting the handoff. This exception does not register
+ROADMAP-only handoffs or import edits over an existing CONTEXT row. See the
+out-of-band CONTEXT regression in
+`src/resources/extensions/gsd/tests/check-auto-start-ready-guard.test.ts`.
+
 ## 2. Frozen format inventory
 
 For this milestone the projection format and locations are **FROZEN**: rendered

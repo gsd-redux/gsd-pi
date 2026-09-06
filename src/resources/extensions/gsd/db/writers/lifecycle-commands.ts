@@ -356,7 +356,7 @@ export function isTaskRecoveryResumeAuthorized(
       AND json_extract(resumed.payload_json, '$.lifecycleId') = action.lifecycle_id
       AND json_extract(resumed.payload_json, '$.attemptId') = observation.attempt_id
       AND json_extract(resumed.payload_json, '$.resultId') = observation.result_id
-      AND action.action = 'abort'
+      AND action.action IN ('abort', 'remediate')
       AND observation.recovery_owner = 'agent'
       AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
       AND attempt.attempt_id = :attempt_id

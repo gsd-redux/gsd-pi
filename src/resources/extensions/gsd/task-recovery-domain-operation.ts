@@ -399,8 +399,9 @@ export function readPendingTaskRecoveryContext(
   const attemptId = String(stored["attempt_id"]);
   const storedAction = String(stored["action"]);
   let checkpoint = stored;
-  if (storedAction === "abort") {
-    if (!isTaskRecoveryResumeAuthorized(attemptId)) return null;
+  const resumeAuthorized = isTaskRecoveryResumeAuthorized(attemptId);
+  if (storedAction === "abort" && !resumeAuthorized) return null;
+  if (resumeAuthorized) {
     const lifecycleId = String(stored["lifecycle_id"]);
     const resumed = getDb().prepare(`
       SELECT checkpoint.checkpoint_id, checkpoint.confirmed_context,
@@ -440,7 +441,7 @@ export function readPendingTaskRecoveryContext(
     checkpoint = resumed;
   }
   return {
-    ...(storedAction === "abort"
+    ...(resumeAuthorized
       ? { action: "continue" as const, resumeAuthorized: true as const }
       : { action: storedAction as PendingTaskRecoveryAction }),
     recoveryActionId: String(stored["recovery_action_id"]),
@@ -640,8 +641,8 @@ function loadTaskRecoveryReceipt(
 }
 
 /**
- * Diagnose the durable guards for an abort resume without binding the caller
- * to the session that recorded the abort. Guard order is intentional: callers
+ * Diagnose the durable guards for an abort or remediation resume without binding the caller
+ * to the session that recorded the action. Guard order is intentional: callers
  * get the first actionable failure instead of one opaque SQL miss.
  */
 export function readTaskRecoveryResumeEligibility(
@@ -737,7 +738,13 @@ export function readTaskRecoveryResumeEligibility(
     failedGuard,
     detail,
   });
-  if (stored["action"] !== "abort") return reject("abort-action", `Recovery Action is ${String(stored["action"])}, not abort`);
+  const resumableAction = stored["action"] === "abort" || stored["action"] === "remediate";
+  if (!resumableAction) {
+    return reject(
+      "abort-action",
+      `Recovery Action is ${String(stored["action"])}, not abort or remediate`,
+    );
+  }
   if (stored["recovery_owner"] !== "agent") return reject("agent-owned", `recovery owner is ${String(stored["recovery_owner"])}, not agent`);
   if (stored["blocker_id"] !== null) return reject("action-blocker", "Recovery Action is linked to a Blocker");
   if (Number(stored["already_resumed"]) === 1) return reject("already-resumed", "Recovery Action was already resumed");
@@ -749,7 +756,8 @@ export function readTaskRecoveryResumeEligibility(
   // #1754 residual databases can contain a settled successful successor that
   // predates the still-current abort route. Let that durable route be resumed
   // once; ordinary stale or already-consumed actions still fail this guard.
-  const supersededResidual = Number(stored["latest_attempt_succeeded"]) === 1
+  const supersededResidual = stored["action"] === "abort"
+    && Number(stored["latest_attempt_succeeded"]) === 1
     && Number(stored["already_resumed"]) !== 1;
   if (Number(stored["latest_attempt"]) !== 1 && !supersededResidual) return reject("latest-attempt", "a newer Task Attempt exists");
   if (Number(stored["has_open_blockers"]) === 1) return reject("open-blockers", "Task lifecycle has an open Blocker");
@@ -757,7 +765,7 @@ export function readTaskRecoveryResumeEligibility(
   return { ...base, eligible: true };
 }
 
-function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScope {
+function requireResumableRecoveryScope(recoveryActionId: string): FailedAttemptScope {
   const eligibility = readTaskRecoveryResumeEligibility(recoveryActionId);
   if (!eligibility.eligible || !eligibility.attemptId || !eligibility.resultId) {
     throw new Error(
@@ -811,7 +819,7 @@ export function resumeTaskRecovery(input: {
     input.invocation,
     { recoveryActionId, repairSummary, evidence },
   ), (context) => {
-    const scope = requireResumableAbortScope(recoveryActionId);
+    const scope = requireResumableRecoveryScope(recoveryActionId);
     const checkpoint = appendRecoveryWorkCheckpoint(context, {
       lifecycleId: scope.lifecycleId,
       scopeKey: checkpointScope(scope),
@@ -856,7 +864,8 @@ export function readTaskRecoveryRoute(attemptId: string): TaskRecoveryRouteSnaps
   if (!stored) return null;
   const blocker = stored["blocker_id"] ? taskRecoveryBlockerSnapshot(stored) : null;
   const recoveryActionId = String(stored["recovery_action_id"]);
-  const resumeEligibility = stored["action"] === "abort"
+  const resumableAction = stored["action"] === "abort" || stored["action"] === "remediate";
+  const resumeEligibility = resumableAction
     ? readTaskRecoveryResumeEligibility(recoveryActionId)
     : undefined;
   return {
@@ -865,7 +874,7 @@ export function readTaskRecoveryRoute(attemptId: string): TaskRecoveryRouteSnaps
     recoveryOwner: String(stored["recovery_owner"]) as TaskRecoveryRouteSnapshot["recoveryOwner"],
     failureKind: String(stored["failure_kind"]),
     blocker,
-    resumeAuthorized: stored["action"] === "abort" && isTaskRecoveryResumeAuthorized(attemptId),
+    resumeAuthorized: resumableAction && isTaskRecoveryResumeAuthorized(attemptId),
     ...(resumeEligibility ? { resumeEligibility } : {}),
   };
 }

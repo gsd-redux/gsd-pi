@@ -45,7 +45,7 @@ export interface TaskExecutionCutoverDeps {
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): Pick<
     TaskRecoveryRouteSnapshot,
-    "recoveryActionId" | "action" | "recoveryOwner" | "resumeAuthorized"
+    "recoveryActionId" | "action" | "recoveryOwner" | "resumeAuthorized" | "resumeEligibility"
   > | null;
   readTaskTechnicalVerdict(attemptId: string): TaskTechnicalVerdictSnapshot | null;
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
@@ -495,12 +495,25 @@ export async function runWithTaskExecutionAttempt(
       const terminalRecovery = deps.readTaskRecoveryRoute(predecessor.attemptId);
       // Only a live route head carries an operative abort; a lineage closed by
       // task reopen is history and must not advertise a dead resume (#1948).
+      // A consumed resume is likewise historical even though its one-shot
+      // authorization now reads false; eligibility distinguishes that state
+      // from a current abort that still needs operator repair (#2112).
       if (
         predecessor.nextStage === "route" &&
         terminalRecovery?.recoveryOwner === "agent" &&
         terminalRecovery.action === "abort" &&
         !terminalRecovery.resumeAuthorized
       ) {
+        if (terminalRecovery.resumeEligibility?.failedGuard === "already-resumed") {
+          // A consumed authorization proves that a successor claim committed
+          // after the predecessor snapshot was read. Refresh and evaluate that
+          // newer lineage head instead of returning the dead abort lever from
+          // the stale finalize/retry race (#2112).
+          const refreshed = deps.readLatestTaskAttempt(task);
+          if (refreshed && refreshed.attemptId !== predecessor.attemptId) {
+            return runWithTaskExecutionAttempt(input, run, deps);
+          }
+        }
         return taskRecoveryAbortResult(terminalRecovery.recoveryActionId);
       }
       if (predecessor.nextStage === "route") {

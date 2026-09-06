@@ -276,6 +276,25 @@ describe("db-provider", () => {
     assert.equal(guard.closed, true);
   });
 
+  test("openRaw without createIfMissing refuses a deleted path without recreating it (#2158)", () => {
+    const directory = mkdtempSync(join(tmpdir(), "gsd-provider-no-recreate-"));
+    try {
+      const deps = createDeps();
+      const loader = createSqliteProviderLoader(deps);
+      const missing = join(directory, "gsd.db");
+      FakeNodeDatabase.instances.length = 0;
+
+      assert.throws(
+        () => loader.openRaw(missing, { createIfMissing: false }),
+        (err: NodeJS.ErrnoException) => err.code === "SQLITE_CANTOPEN",
+      );
+      assert.equal(existsSync(missing), false, "a no-create open must not recreate the DB file");
+      assert.equal(FakeNodeDatabase.instances.length, 0, "no database handle may be created for a missing path");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("reports provider unavailability with the supported Node version", () => {
     const deps = createDeps({
       tryRequireNodeSqlite(): unknown {

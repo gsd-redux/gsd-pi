@@ -440,8 +440,12 @@ function checkReplanTrigger(basePath: string, milestoneId: string, sliceId: stri
 export async function deriveStateFromDb(
   basePath: string,
   _artifactReadRoot: string = basePath,
+  options: { syncQueueOrder?: boolean } = {},
 ): Promise<GSDState> {
-  if (!ensureExistingWorkflowDbOpen(basePath)) {
+  // Use the canonical read root (matches the caller's DB-open call in
+  // derive/index.ts) — a worktree basePath can resolve to a different (or
+  // nonexistent) DB path than the canonical project root.
+  if (!ensureExistingWorkflowDbOpen(_artifactReadRoot, options)) {
     return buildDbUnavailableState();
   }
 

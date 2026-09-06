@@ -876,4 +876,24 @@ describe("ExtensionRunner", () => {
 		expect(captured).toEqual(model);
 		delete (globalThis as unknown as { __bprEventModel?: unknown }).__bprEventModel;
 	});
+
+	it("exposes a host-only runtime read without registering an LLM tool", async () => {
+		const extCode = `
+			export default function(pi) {
+				pi.registerRuntimeRead("project_progress", async (input) => ({ input, source: "extension" }));
+			}
+		`;
+		fs.writeFileSync(path.join(extensionsDir, "runtime-read.ts"), extCode);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+		const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+		const handler = runner.getRuntimeReadHandler("project_progress");
+
+		expect(handler).toBeDefined();
+		expect(await handler?.({ cwd: tempDir })).toEqual({
+			input: { cwd: tempDir },
+			source: "extension",
+		});
+		expect(runner.getAllRegisteredTools()).toHaveLength(0);
+	});
 });

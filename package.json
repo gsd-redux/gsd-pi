@@ -15,6 +15,7 @@
   "bin": {
     "gsd": "dist/bootstrap.js",
     "gsd-cli": "dist/bootstrap.js",
+    "gsd-mcp-server": "packages/mcp-server/bin/gsd-mcp-server.js",
     "gsd-pi": "scripts/install.js"
   },
   "files": [

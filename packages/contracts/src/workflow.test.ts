@@ -21,5 +21,6 @@ test("read-only workflow tools are classified correctly", () => {
   const readOnly = WORKFLOW_TOOL_CONTRACTS.filter((tool) => tool.writePolicy === "read");
   assert.ok(readOnly.some((tool) => tool.canonicalName === "gsd_milestone_status"));
   assert.ok(readOnly.some((tool) => tool.canonicalName === "gsd_checkpoint_db"));
+  assert.ok(readOnly.some((tool) => tool.canonicalName === "gsd_project_snapshot"));
   assert.ok(readOnly.every((tool) => tool.writePolicy === "read"));
 });

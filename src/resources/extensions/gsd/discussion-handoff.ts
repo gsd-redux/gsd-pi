@@ -6,16 +6,19 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { startAutoDetached } from "./auto.js";
 import { extractDepthVerificationMilestoneId, getPendingGate } from "./bootstrap/write-gate.js";
-import { getMilestone, insertMilestone, isDbAvailable } from "./gsd-db.js";
+import { getMilestone, insertMilestone, insertArtifact, isDbAvailable } from "./gsd-db.js";
+import { getMilestoneScopedArtifacts } from "./db/queries.js";
 import {
   assessMilestoneHandoffReadiness,
   formatAcceptedDiscussHandoffMessage,
 } from "./milestone-readiness.js";
-import { clearPathCache, gsdRoot, resolveGsdRootFile, resolveMilestoneFile } from "./paths.js";
+import { clearParseCache } from "./files.js";
+import { clearPathCache, gsdRoot, resolveGsdRootFile, resolveMilestoneFile, relMilestoneFile } from "./paths.js";
 import { _getPendingAutoStart, deletePendingAutoStart, type PendingAutoStartEntry } from "./pending-auto-start.js";
 import { logWarning } from "./workflow-logger.js";
 import { readManifest } from "./workflow-manifest.js";
 import { removeProjectionFileSync } from "./atomic-write.js";
+import { invalidateStateCache } from "./state.js";
 
 type AutoStartOptions = Parameters<typeof startAutoDetached>[4];
 type AutoStartLauncher = typeof startAutoDetached;
@@ -248,6 +251,44 @@ function cleanupAcceptedHandoffArtifacts(entry: PendingAutoStartEntry): void {
   }
 }
 
+/**
+ * Register an out-of-band CONTEXT.md as a DB artifact (#2107).
+ *
+ * When context was written outside gsd_summary_save (e.g. directly by the
+ * discuss handoff), the file exists on disk but the artifacts table has no
+ * CONTEXT row. State derivation is DB-authoritative (#4179), so deriveState
+ * keeps reporting needs-discussion and auto-start re-enters discuss forever.
+ * Registering the row mirrors what gsd_summary_save would have persisted;
+ * insertArtifact computes content_hash and imported_at internally.
+ * Best-effort: a registration failure must not break handoff acceptance.
+ */
+function registerDbContextArtifact(
+  basePath: string,
+  milestoneId: string,
+  contextFile: string,
+): void {
+  try {
+    if (getMilestoneScopedArtifacts(milestoneId).some(a => a.artifact_type === "CONTEXT")) return;
+
+    insertArtifact({
+      path: relMilestoneFile(basePath, milestoneId, "CONTEXT").replace(/^\.gsd\//, ""),
+      artifact_type: "CONTEXT",
+      milestone_id: milestoneId,
+      slice_id: null,
+      task_id: null,
+      full_content: readFileSync(contextFile, "utf-8"),
+    });
+    invalidateStateCache();
+    clearPathCache();
+    clearParseCache();
+  } catch (e) {
+    logWarning(
+      "guided",
+      `failed to register out-of-band CONTEXT artifact for ${milestoneId}: ${(e as Error).message}`,
+    );
+  }
+}
+
 /** Called from agent_end to check if auto-mode should start after discuss. */
 export function checkAutoStartAfterDiscuss(lookupBasePath?: string): boolean {
   // Clear the path cache so layout-aware resolution sees fresh directory
@@ -266,6 +307,7 @@ export function checkAutoStartAfterDiscuss(lookupBasePath?: string): boolean {
 
   if (hasBlockingDepthGate(entry)) return false;
   if (!ensureMilestoneRowForAcceptedHandoff(entry, contextFile)) return false;
+  if (contextFile && isDbAvailable()) registerDbContextArtifact(basePath, milestoneId, contextFile);
 
   const projectIds = warnForMissingProjectMilestones(entry);
   if (!discussionManifestIsComplete(entry, projectIds)) return false;

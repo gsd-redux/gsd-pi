@@ -2568,12 +2568,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
 		name: "gsd_task_recovery_resume",
 		label: "Resume Repaired Task",
 		description:
-			"Authorize exactly one new Task Attempt after an agent-owned recovery abort. " +
-			"Use only after repairing the recorded cause; the abort and retry budget remain in history.",
+			"Authorize exactly one new Task Attempt after an agent-owned recovery abort or remediation. " +
+			"Use only after repairing the recorded cause; the Recovery Action and retry budget remain in history.",
 		promptSnippet:
-			"Resume one Task after its durable abort cause has been repaired",
+			"Resume one Task after its durable abort or remediation cause has been repaired",
 		promptGuidelines: [
-			"Use the exact recoveryActionId returned by the current abort.",
+			"Use the exact recoveryActionId returned by the current abort or remediation.",
 			"Explain the repair in plain language and attach concrete verification evidence.",
 			"This authorization is consumed by the next lineage-linked Task Attempt and cannot be reused.",
 		],
@@ -2581,7 +2581,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			{
 				recoveryActionId: Type.String({
 					minLength: 1,
-					description: "Exact current abort Recovery Action ID",
+					description: "Exact current abort or remediate Recovery Action ID",
 				}),
 				repairSummary: Type.String({
 					minLength: 1,
@@ -3335,6 +3335,141 @@ export function registerDbTools(pi: ExtensionAPI): void {
 	};
 
 	registerWorkflowTool(pi, decisionListTool);
+
+	// ─── gsd_project_snapshot ────────────────────────────────────────────────
+	//
+	// Read-only: returns the DB-authoritative project snapshot (issue #2102) —
+	// progress, milestone, and slice/task state assembled from the canonical
+	// database in one payload. Use instead of stitching together multiple read
+	// tools or parsing markdown projections, which may lag the DB.
+
+	const projectSnapshotExecute = async (
+		_toolCallId: string,
+		params: any,
+		_signal: AbortSignal | undefined,
+		_onUpdate: unknown,
+		_ctx: unknown,
+	) => {
+		const basePath =
+			typeof params.projectDir === "string" && params.projectDir
+				? params.projectDir
+				: resolveCtxCwd(_ctx);
+		try {
+			const { readProjectSnapshotFromDb } = await import("../state/project-snapshot.js");
+
+			const snapshot = await withCanonicalReadAdapter(
+				basePath,
+				async () => readProjectSnapshotFromDb(basePath, { preserveGlobalDbHandle: true }),
+			);
+			if (!snapshot) {
+				// The adapter preflight succeeded but the reader could not open
+				// through its own path — fail closed like MCP and the CLI.
+				throw new Error("GSD database is not available (db_unavailable)");
+			}
+
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: JSON.stringify(snapshot),
+					},
+				],
+				details: {
+					operation: "read_project_snapshot",
+					projectDir: basePath,
+					snapshot,
+				} as any,
+			};
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				// Mirror mapCanonicalReadError: "not available" (e.g. missing
+				// authority row) classifies as db_unavailable, not query_error.
+				if (msg.includes("db_unavailable") || msg.includes("not available")) {
+					logError("tool", `gsd_project_snapshot failed: ${msg}`, {
+						tool: "gsd_project_snapshot",
+						error: String(err),
+					});
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Error: GSD database is not available.",
+						},
+					],
+					details: {
+						operation: "read_project_snapshot",
+						error: "db_unavailable",
+					} as any,
+				};
+			}
+			logError("tool", `gsd_project_snapshot failed: ${msg}`, {
+				tool: "gsd_project_snapshot",
+				error: String(err),
+			});
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Error reading project snapshot: ${msg}`,
+					},
+				],
+				details: {
+					operation: "read_project_snapshot",
+					error: "query_error",
+					message: msg,
+				} as any,
+			};
+		}
+	};
+
+	const projectSnapshotTool = {
+		name: "gsd_project_snapshot",
+		label: "Read Project Snapshot",
+		description:
+			"Read the DB-authoritative project snapshot (issue #2102): progress, milestone, " +
+			"and slice/task state in one payload. Use instead of combining multiple read " +
+			"tools or parsing markdown projections.",
+		promptSnippet:
+			"Read the canonical GSD project snapshot from the database",
+		promptGuidelines: [
+			"Use gsd_project_snapshot for a one-shot view of project state — do not assemble it from markdown projections.",
+			"The snapshot is DB-authoritative; projections may be stale after migrations or failed regens.",
+			"Optionally pass projectDir to target a specific project root; defaults to the session working directory.",
+		],
+		parameters: Type.Object({
+			projectDir: Type.Optional(
+				Type.String({
+					description:
+						"Project root to read the snapshot for. Defaults to the current working directory.",
+				}),
+			),
+		}),
+		execute: projectSnapshotExecute,
+		renderCall(args: any, theme: any) {
+			let text = theme.fg("toolTitle", theme.bold("project_snapshot"));
+			if (args.projectDir) {
+				text += theme.fg("dim", ` [${args.projectDir}]`);
+			}
+			return new Text(text, 0, 0);
+		},
+		renderResult(result: any, _options: any, theme: any) {
+			const d = readDetails(result);
+			if (result.isError || d?.error) {
+				return new Text(
+					theme.fg("error", formatToolErrorText(result, d)),
+					0,
+					0,
+				);
+			}
+			return new Text(
+				theme.fg("success", "Project snapshot read"),
+				0,
+				0,
+			);
+		},
+	};
+
+	registerWorkflowTool(pi, projectSnapshotTool);
 
 	// ─── gsd_decision_get ────────────────────────────────────────────────────
 	//

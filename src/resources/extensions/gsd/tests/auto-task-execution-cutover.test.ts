@@ -92,6 +92,12 @@ interface CutoverDeps {
     recoveryOwner: "agent" | "user" | "external";
     action: "retry" | "repair" | "remediate" | "replan" | "abort" | "clarify" | "pause";
     resumeAuthorized?: boolean;
+    resumeEligibility?: {
+      recoveryActionId: string;
+      eligible: boolean;
+      failedGuard?: string;
+      detail?: string;
+    };
   } | null;
   readTaskTechnicalVerdict(attemptId: string): {
     attemptId: string;
@@ -1450,6 +1456,48 @@ test("an unresumed abort on a failed predecessor stops before a replacement clai
     reason: TASK_RECOVERY_ABORT_REASON,
   });
   assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+});
+
+test("an abort rejected by a different resume guard remains fail-closed", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    throw new Error("an open blocker must prevent successor execution");
+  }, {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return {
+        recoveryActionId: "recovery-action-1",
+        recoveryOwner: "agent",
+        action: "abort",
+        resumeAuthorized: false,
+        resumeEligibility: {
+          recoveryActionId: "recovery-action-1",
+          eligible: false,
+          failedGuard: "open-blockers",
+          detail: "Task lifecycle has an open Blocker",
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(result, {
+    action: "break",
+    reason: TASK_RECOVERY_ABORT_REASON,
+  });
   assert.equal(domain.claims.length, 0);
 });
 

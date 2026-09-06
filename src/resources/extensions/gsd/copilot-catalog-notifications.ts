@@ -17,7 +17,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { findCheaperSameTierOption, type CheaperSameTierSuggestion } from "./commands/handlers/copilot-models.js";
 import type { CopilotModelSnapshot } from "./copilot-model-catalog.js";
-import { canonicalizeModelId, MODEL_CAPABILITY_PROFILES, type ModelCapabilities } from "./model-router.js";
+import { compareCapabilityDominance, resolveCapabilityProfile, type ModelCapabilities } from "./model-router.js";
 
 // Session-scoped only — never persisted to disk, mirrors the existing
 // per-account notification dedup pattern in commands/handlers/copilot-models.ts.
@@ -32,33 +32,17 @@ function bareModelId(modelId: string): string {
 	return modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
 }
 
-/** Average of the 7 capability dimensions. */
-function averageCapabilityScore(profile: ModelCapabilities): number {
-	const values = Object.values(profile);
-	return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-/**
- * Pure comparison of two capability profiles. A small margin (avoids noise
- * from rounding-equivalent profiles) is required before calling the
- * candidate "higher" — anything else (including missing data) resolves to
- * "equal-or-lower", the safer default for messaging purposes.
- */
 export function compareCapabilityScores(
 	selected: ModelCapabilities | undefined,
 	candidate: ModelCapabilities | undefined,
-): "higher" | "equal-or-lower" {
-	if (!selected || !candidate) return "equal-or-lower";
-	return averageCapabilityScore(candidate) > averageCapabilityScore(selected) + 1 ? "higher" : "equal-or-lower";
+): "higher" | "equivalent" | "incomparable" {
+	return compareCapabilityDominance(selected, candidate);
 }
 
-function isHigherCapability(selectedBareId: string, candidateBareId: string): boolean {
-	return (
-		compareCapabilityScores(
-			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(selectedBareId)],
-			MODEL_CAPABILITY_PROFILES[canonicalizeModelId(candidateBareId)],
-		)
-		=== "higher"
+function compareModelCapabilities(selectedBareId: string, candidateBareId: string): ReturnType<typeof compareCapabilityScores> {
+	return compareCapabilityScores(
+		resolveCapabilityProfile(selectedBareId).profile,
+		resolveCapabilityProfile(candidateBareId).profile,
 	);
 }
 
@@ -122,12 +106,13 @@ export function maybeNotifyCheaperAlternative(options: NotifyCheaperAlternativeO
 
 	const suggestion = findCheaperSameTierOption(bareId, ctx, snapshot);
 	if (!suggestion) return false;
+	const capabilityComparison = compareModelCapabilities(bareId, suggestion.modelId);
+	if (capabilityComparison === "incomparable") return false;
 
 	const fingerprint = buildFingerprint(accountScope, bareId, suggestion, snapshot);
 	if (notifiedFingerprints.has(fingerprint)) return false;
 	notifiedFingerprints.add(fingerprint);
 
-	const higherCapability = isHigherCapability(bareId, suggestion.modelId);
-	ctx.ui.notify(formatNotificationMessage(bareId, suggestion, higherCapability), "info");
+	ctx.ui.notify(formatNotificationMessage(bareId, suggestion, capabilityComparison === "higher"), "info");
 	return true;
 }

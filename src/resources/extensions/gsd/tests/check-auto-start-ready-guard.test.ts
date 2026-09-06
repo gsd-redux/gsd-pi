@@ -27,6 +27,8 @@ import {
   clearDiscussionFlowState,
   clearPendingGate,
 } from "../bootstrap/write-gate.ts";
+import { getMilestoneScopedArtifacts } from "../db/queries.ts";
+import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
 
 interface MockCapture {
   notifies: Array<{ msg: string; level: string }>;
@@ -185,5 +187,50 @@ describe("checkAutoStartAfterDiscuss ready-notify DB guard (R3b)", () => {
       (n) => n.level === "success" && /Milestone\s+M001\s+ready/i.test(n.msg),
     );
     assert.ok(successReady, "must announce 'Milestone M001 ready.' on success");
+  });
+
+  test("registers out-of-band CONTEXT.md in the DB so derive no longer reports needs-discussion (#2107)", async () => {
+    base = mkBase();
+    openDatabase(":memory:");
+    // Milestone row exists but no CONTEXT artifact row — the context was
+    // written out-of-band (not via gsd_summary_save), so the DB never saw it.
+    insertMilestone({ id: "M001", title: "Ready Guard Test", status: "needs-discussion" });
+
+    cap = mkCapture();
+    setPendingAutoStart(base, {
+      basePath: base,
+      milestoneId: "M001",
+      startAuto: false,
+      ctx: mkCtx(cap),
+      pi: mkPi(cap),
+    });
+
+    const result = checkAutoStartAfterDiscuss();
+    assert.equal(result, true, "handoff with on-disk context and existing row must be accepted");
+
+    const contextRows = getMilestoneScopedArtifacts("M001").filter(
+      (a) => a.artifact_type === "CONTEXT",
+    );
+    assert.equal(contextRows.length, 1, "out-of-band CONTEXT.md must be registered as a DB artifact");
+    assert.equal(
+      contextRows[0]!.path,
+      "milestones/M001/M001-CONTEXT.md",
+      "registered path must match the canonical gsd_summary_save layout",
+    );
+    assert.equal(
+      contextRows[0]!.full_content,
+      "# M001: Ready Guard Test\n\nContext.\n",
+      "registered content must come from the on-disk file",
+    );
+
+    invalidateStateCache();
+    const dbState = await deriveStateFromDb(base);
+    assert.notEqual(
+      dbState.phase,
+      "needs-discussion",
+      "derive must not re-enter discuss after the handoff accepted context",
+    );
+    assert.equal(dbState.phase, "pre-planning", "milestone with context but no slices is pre-planning");
+    assert.equal(dbState.activeMilestone?.id, "M001", "M001 must be the active milestone");
   });
 });
