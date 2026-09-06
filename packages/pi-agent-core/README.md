@@ -112,6 +112,12 @@ The `beforeToolCall` hook runs after `tool_execution_start` and validated argume
 
 Tools can also return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
 
+### Output Limit Continuation
+
+When a provider returns `stopReason: "length"` after producing output and without an error, the loop treats the response as incomplete. It executes any complete tool calls, emits their results, then adds a user continuation message and requests the rest of the response. The loop allows up to three continuations per run so a provider that repeatedly reaches its output limit cannot run forever.
+
+A `length` response with no output or with an `errorMessage` is not continued. If continuation is unsafe, explicitly stopped, or exhausts the continuation cap, the loop appends a terminal assistant message with `stopReason: "error"` instead of presenting the truncated response as a clean completion.
+
 Low-level loop callers can set `shouldStopAfterTurn` to stop gracefully after the current turn completes:
 
 ```typescript
@@ -124,7 +130,7 @@ const stream = agentLoop(prompts, context, {
 });
 ```
 
-`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason.
+`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions finish. If it returns `true`, the loop exits before polling steering or follow-up queues or starting another LLM call. See `AgentLoopConfig.shouldStopAfterTurn` for the precise terminal-message contract when an output-limit continuation is pending.
 
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
 
