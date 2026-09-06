@@ -8,7 +8,7 @@
 import { randomInt } from "node:crypto";
 import { join } from "node:path";
 import { logWarning } from "./workflow-logger.js";
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { milestonesDir, gsdProjectionRoot } from "./paths.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { loadQueueOrder, sortByQueueOrder } from "./queue-order.js";
@@ -165,9 +165,14 @@ function scanMilestoneIdsFromDir(basePath: string, dir: string): string[] {
       const flatMatch = d.name.match(/^(\d+)-(.+)$/);
       if (flatMatch) {
         const phaseNum = parseInt(flatMatch[1]!, 10);
-        const fromSlug = normalizeDiscussMilestoneId(flatMatch[2]!);
+        const rest = flatMatch[2]!;
+        const fromSlug = normalizeDiscussMilestoneId(rest);
         if (MILESTONE_ID_RE.test(fromSlug)) {
           return fromSlug;
+        }
+        const headingId = milestoneIdFromPhaseDirHeading(join(dir, d.name), phaseNum);
+        if (headingId) {
+          return headingId;
         }
         const numericId = String(phaseNum);
         if (legacyNumericIds.has(numericId)) {
@@ -178,6 +183,49 @@ function scanMilestoneIdsFromDir(basePath: string, dir: string): string[] {
       return null;
     })
     .filter((id): id is string => id !== null);
+}
+
+/**
+ * Read the canonical suffixed milestone ID from a flat-phase directory's own
+ * ROADMAP/SUMMARY markdown heading (`# M00N-suffix: Title`), when present.
+ * This support handling same milestone IDs with different unique ids.
+ * Returns null when no phase file carries a matching heading — callers fall
+ * back to the bare M00N form in that case.
+ */
+function milestoneIdFromPhaseDirHeading(phaseDirPath: string, phaseNum: number): string | null {
+  const expectedNum = String(phaseNum).padStart(3, "0");
+  const headingRe = new RegExp(`^#\\s+(M${expectedNum}(?:-[a-z0-9]{6})?)\\b`, "m");
+  let entries: string[];
+  try {
+    entries = readdirSync(phaseDirPath);
+  } catch (err) {
+    // A missing/unreadable phase dir here is expected during traversal races
+    // (directory removed between listing and stat) and is not this helper's
+    // failure to report — the caller already handles a null return by
+    // falling back to the bare M00N form. Only a genuinely existing-but-
+    // unreadable directory is surprising enough to warn about.
+    if (existsSync(phaseDirPath)) {
+      logWarning("engine", `milestoneIdFromPhaseDirHeading: ${phaseDirPath} exists but readdirSync failed — ${getErrorMessage(err)}`);
+    }
+    return null;
+  }
+  const candidates = entries
+    .filter((name) => /-(ROADMAP|SUMMARY)\.md$/.test(name))
+    .sort((a, b) => (a.endsWith("ROADMAP.md") === b.endsWith("ROADMAP.md") ? 0 : a.endsWith("ROADMAP.md") ? -1 : 1));
+  for (const name of candidates) {
+    const candidatePath = join(phaseDirPath, name);
+    try {
+      const content = readFileSync(candidatePath, "utf-8");
+      const match = content.match(headingRe);
+      if (match) return match[1]!;
+    } catch (err) {
+      // Unreadable candidate file: try the next one, but still surface a
+      // warning — a heading-bearing file that cannot be read silently
+      // degrades this milestone to the ambiguous bare-M00N fallback.
+      logWarning("engine", `milestoneIdFromPhaseDirHeading: ${candidatePath} exists but readFileSync failed — ${getErrorMessage(err)}`);
+    }
+  }
+  return null;
 }
 
 function idsWithLegacyNumericDirs(basePath: string): Set<string> {
