@@ -23,6 +23,8 @@ import { deriveStateFromDb } from './from-db.js';
 
 export interface DeriveStateOptions {
   projectRootForReads?: string;
+  /** Read-only surfaces set this so deriving never mutates DB sequence from QUEUE-ORDER.json. */
+  syncQueueOrder?: boolean;
 }
 
 export {
@@ -43,11 +45,13 @@ export async function deriveState(
   const stopTimer = debugTime("derive-state-impl");
   let result: GSDState;
 
-  ensureExistingWorkflowDbOpen(basePath);
+  ensureExistingWorkflowDbOpen(basePath, { syncQueueOrder: opts?.syncQueueOrder });
 
   if (isDbAvailable()) {
     const stopDbTimer = debugTime("derive-state-db");
-    result = await deriveStateFromDb(basePath, opts?.projectRootForReads ?? basePath);
+    result = await deriveStateFromDb(basePath, opts?.projectRootForReads ?? basePath, {
+      syncQueueOrder: opts?.syncQueueOrder,
+    });
     stopDbTimer({ phase: result.phase, milestone: result.activeMilestone?.id });
     incrementDbDeriveCount();
   } else {

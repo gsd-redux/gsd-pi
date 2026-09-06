@@ -440,8 +440,9 @@ function checkReplanTrigger(basePath: string, milestoneId: string, sliceId: stri
 export async function deriveStateFromDb(
   basePath: string,
   _artifactReadRoot: string = basePath,
+  options: { syncQueueOrder?: boolean } = {},
 ): Promise<GSDState> {
-  if (!ensureExistingWorkflowDbOpen(basePath)) {
+  if (!ensureExistingWorkflowDbOpen(basePath, options)) {
     return buildDbUnavailableState();
   }
 

@@ -145,13 +145,16 @@ async function readProgressFromDbInternal(
   includeHierarchyDetails: boolean,
   throwOnOpenFailure: boolean,
 ): Promise<DbProgressResult | DbProjectProgressResult | null> {
-  ensureExistingWorkflowDbOpen(basePath, { throwOnOpenFailure });
+  // Read-only surface: never mutate. The queue-order projection sync stays a
+  // runtime derive/dispatch repair (see docs/user-docs/auto-mode.md); read
+  // paths report the DB-authoritative order as-is even when the file is newer.
+  ensureExistingWorkflowDbOpen(basePath, { throwOnOpenFailure, syncQueueOrder: false });
   if (!isDbAvailable()) return null;
 
   invalidateStateCache();
   for (let attempt = 1; ; attempt++) {
     const before = readProgressStabilityToken();
-    const state = await deriveState(basePath);
+    const state = await deriveState(basePath, { syncQueueOrder: false });
     const progress = buildProgressResult(state, readProgressHierarchy());
     const details = includeHierarchyDetails ? getProgressHierarchyDetails() : undefined;
     const result: DbProgressResult | DbProjectProgressResult = details
@@ -177,8 +180,10 @@ async function readProgressFromDbInternal(
  * come from the read seam, since `deriveState` may be execution-scoped while
  * `ProgressResult` buckets are project-wide.
  *
- * Note: the derive open path runs pending migrations and syncs the
- * milestone queue-order projection (same behavior as `gsd headless status`).
+ * Note: the derive open path runs pending migrations when required, but this
+ * read suppresses the milestone queue-order projection sync — reads never
+ * mutate; the runtime derive path owns that repair (same as `gsd headless
+ * status`).
  * Results are bound to stable authority and data-version tokens; under
  * sustained concurrent commits or same-process interleaved writes, a snapshot
  * may still straddle revisions.

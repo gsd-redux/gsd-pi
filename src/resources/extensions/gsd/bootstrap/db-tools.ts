@@ -3361,6 +3361,11 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				basePath,
 				async () => readProjectSnapshotFromDb(basePath),
 			);
+			if (!snapshot) {
+				// The adapter preflight succeeded but the reader could not open
+				// through its own path — fail closed like MCP and the CLI.
+				throw new Error("GSD database is not available (db_unavailable)");
+			}
 
 			return {
 				content: [
@@ -3375,13 +3380,15 @@ export function registerDbTools(pi: ExtensionAPI): void {
 					snapshot,
 				} as any,
 			};
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			if (msg.includes("db_unavailable")) {
-				logError("tool", `gsd_project_snapshot failed: ${msg}`, {
-					tool: "gsd_project_snapshot",
-					error: String(err),
-				});
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				// Mirror mapCanonicalReadError: "not available" (e.g. missing
+				// authority row) classifies as db_unavailable, not query_error.
+				if (msg.includes("db_unavailable") || msg.includes("not available")) {
+					logError("tool", `gsd_project_snapshot failed: ${msg}`, {
+						tool: "gsd_project_snapshot",
+						error: String(err),
+					});
 				return {
 					content: [
 						{
