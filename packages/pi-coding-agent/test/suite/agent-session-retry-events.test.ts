@@ -202,6 +202,63 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
+	it("does not retry a terminal length halt with retryable provider text", async () => {
+		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("partial", { stopReason: "length", errorMessage: "rate limit" }),
+			fauxAssistantMessage("unexpected retry"),
+		]);
+
+		await harness.session.prompt("test");
+
+		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
+		expect(lastMessage?.role).toBe("assistant");
+		if (lastMessage?.role !== "assistant") throw new Error("Expected a terminal assistant message");
+		expect(lastMessage.stopReason).toBe("error");
+		expect(lastMessage.errorMessage).toContain("[length-halt] Provider stop_reason: length");
+		expect(lastMessage.errorMessage).toContain("provider error: rate limit");
+		expect(harness.session.isRetryableError(lastMessage)).toBe(false);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("compacts and retries a zero-output length overflow", async () => {
+		const harness = await createHarness({
+			models: [{ id: "xiaomi", contextWindow: 100 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "overflow context compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "length" }),
+			fauxAssistantMessage("recovered after compaction"),
+		]);
+
+		await harness.session.prompt("x".repeat(800));
+
+		expect(harness.eventsOfType("compaction_end")).toContainEqual(
+			expect.objectContaining({ reason: "overflow", willRetry: true }),
+		);
+		expect(harness.faux.state.callCount).toBe(2);
+		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
+		expect(lastMessage?.role).toBe("assistant");
+		if (lastMessage?.role === "assistant") {
+			expect(lastMessage.stopReason).toBe("stop");
+			expect(lastMessage.content).toEqual([{ type: "text", text: "recovered after compaction" }]);
+		}
+	});
+
 	it("cancels retry sleep when abortRetry is called", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 100 } } });
 		harnesses.push(harness);

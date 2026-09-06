@@ -1143,6 +1143,9 @@ export interface ResolvedCommand extends RegisteredCommand {
 	invocationName: string;
 }
 
+/** A typed read capability exposed by a loaded extension to an embedding host. */
+export type RuntimeReadHandler = (input: unknown) => Promise<unknown>;
+
 // ============================================================================
 // Extension API
 // ============================================================================
@@ -1243,6 +1246,9 @@ export interface ExtensionAPI {
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
+
+	/** Register a host-only read capability. It is not advertised as an LLM tool. */
+	registerRuntimeRead(name: string, handler: RuntimeReadHandler): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -1696,6 +1702,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	runtimeReadHandlers: Map<string, RuntimeReadHandler>;
 	/** GSD: npm package lifecycle hooks registered by extensions. */
 	lifecycleHooks?: LifecycleHookMap;
 }

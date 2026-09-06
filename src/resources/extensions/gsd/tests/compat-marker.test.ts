@@ -2,7 +2,7 @@
 // File Purpose: Unit tests for the gsd-core compat marker (`.gsd/.compat.json`).
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import {
   readCompatMarker,
   writeCompatMarker,
+  recordCompatProjectionWrite,
   normalizeForHash,
   computeProjectionSha,
   pruneOrphanedProjectionEntries,
@@ -17,6 +18,7 @@ import {
   compatMarkerPath,
 } from "../compat/compat-marker.ts";
 import { externalMarkdownEditHandler } from "../state-reconciliation/drift/external-markdown-edit.ts";
+import { isSafeProjectionKey } from "../compat/compat-marker-validation.ts";
 import type { DriftContext } from "../state-reconciliation/types.ts";
 import type { GSDState } from "../types.ts";
 
@@ -192,12 +194,13 @@ test("pruneOrphanedProjectionEntries returns 0 and writes nothing when marker is
   assert.ok(!files.includes(".compat.json"), "must not create a marker where none existed");
 });
 
-// --- Path-traversal containment (plan 029) ---------------------------------
+// --- Path-traversal containment (plan 029, refined by #2130) ----------------
 //
 // The marker is repo-controlled content whose projection-map keys are joined
-// with basePath and readFileSync'd by the drift detectors. A key that escapes
-// .gsd/ must invalidate the whole marker so readCompatMarker fails safe to the
-// empty marker (detectors see no entries → nothing outside the repo is read).
+// with basePath and readFileSync'd by the drift detectors. Keys that escape
+// .gsd/ are never stored (record-time guard) and are dropped at read time by
+// the heal pass, so one poisoned key can no longer quarantine every stored
+// baseline.
 
 for (const badKey of ["../outside.md", "/etc/hosts", "C:/x.md", "..\\x.md"]) {
   test(`readCompatMarker rejects a projection key that escapes the root: ${JSON.stringify(badKey)}`, () => {
@@ -267,7 +270,75 @@ test("readCompatMarker heals invalid keys that canonicalize back under .gsd", ()
   );
 });
 
-test("an escaping key in planning.passthrough also invalidates the whole marker", () => {
+test("recordCompatProjectionWrite skips entries whose derived key escapes .gsd (#2130)", () => {
+  const base = makeTmpBase();
+  // Pre-existing safe baseline that must survive the unsafe write.
+  writeCompatMarker(base, {
+    schema: 2,
+    lastWriter: "gsd-pi",
+    lastProjectedAt: "2026-07-07T00:00:00.000Z",
+    projections: { "roadmap.md": { sha: "aaaaaaaaaaaaaaaa", entities: ["M001"] } },
+    planning: { active: false, layout: null, projections: {}, passthrough: {} },
+    piVersion: "1.8.1",
+  });
+  // Real escape path: the file resolves OUTSIDE .gsd/, so rootRelativeKey
+  // returns null and deriveCompatProjectionKey's fallback yields a
+  // ../-prefixed key.
+  const outside = join(base, "outside.md");
+  writeFileSync(outside, "# outside\n", "utf-8");
+  recordCompatProjectionWrite(base, outside, "# outside\n", []);
+
+  // Assert the RAW on-disk bytes BEFORE any read: readCompatMarker's heal
+  // rewrites the file, which would mask a regression of the write guard.
+  const raw = JSON.parse(readFileSync(compatMarkerPath(base), "utf-8")) as {
+    projections: Record<string, unknown>;
+  };
+  assert.equal(
+    Object.keys(raw.projections).some((k) => !isSafeProjectionKey(k)),
+    false,
+    "raw marker on disk must contain no unsafe keys (write guard, independent of heal)",
+  );
+
+  const marker = readCompatMarker(base);
+  assert.equal(marker.projections["../outside.md"], undefined, "unsafe key must never enter the marker");
+  assert.ok(marker.projections["roadmap.md"], "pre-existing baseline must survive (no quarantine)");
+  assert.ok(
+    !readdirSync(join(base, ".gsd")).some((f: string) => f.startsWith(".compat.json.bad-")),
+    "an unsafe record must not quarantine the marker",
+  );
+});
+
+test("readCompatMarker drops an unfixable ../ key and keeps the remaining baselines (#2130)", () => {
+  const base = makeTmpBase();
+  writeCompatMarker(base, {
+    schema: 2,
+    lastWriter: "gsd-pi",
+    lastProjectedAt: "2026-07-07T00:00:00.000Z",
+    projections: {
+      "roadmap.md": { sha: "aaaaaaaaaaaaaaaa", entities: ["M001"] },
+      "../outside.md": { sha: "deadbeefdeadbeef", entities: ["m1"] },
+    },
+    planning: { active: false, layout: null, projections: {}, passthrough: {} },
+    piVersion: "1.8.1",
+  });
+
+  const marker = readCompatMarker(base);
+  assert.ok(marker.projections["roadmap.md"], "safe baseline must survive the heal");
+  assert.equal(marker.projections["../outside.md"], undefined, "unfixable key must be dropped");
+  assert.ok(
+    !readdirSync(join(base, ".gsd")).some((f: string) => f.startsWith(".compat.json.bad-")),
+    "a single poisoned key must not quarantine the whole marker",
+  );
+  // The heal must persist: readCompatMarker rewrites the file without the
+  // dropped key, so the poison is gone from disk, not just from the view.
+  const raw = JSON.parse(readFileSync(compatMarkerPath(base), "utf-8")) as {
+    projections: Record<string, unknown>;
+  };
+  assert.equal(raw.projections["../outside.md"], undefined, "heal must be persisted to disk");
+  assert.ok(raw.projections["roadmap.md"], "healed rewrite must keep the safe baseline");
+});
+
+test("an unfixable escaping key in planning.passthrough is dropped, not quarantined (#2130)", () => {
   const base = makeTmpBase();
   writeCompatMarker(base, {
     schema: 2,
@@ -284,8 +355,12 @@ test("an escaping key in planning.passthrough also invalidates the whole marker"
   });
 
   const marker = readCompatMarker(base);
-  assert.equal(Object.keys(marker.projections).length, 0);
-  assert.equal(marker.planning!.active, false, "planning falls back to inactive default");
+  assert.equal(marker.planning!.passthrough["../../secret.md"], undefined, "unfixable key must be dropped");
+  assert.equal(marker.planning!.active, true, "rest of the marker must survive the heal");
+  assert.ok(
+    !readdirSync(join(base, ".gsd")).some((f: string) => f.startsWith(".compat.json.bad-")),
+    "healed marker must not be quarantined",
+  );
 });
 
 test("hostile marker makes the drift detector read nothing outside the project", async () => {
