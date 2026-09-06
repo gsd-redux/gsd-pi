@@ -1,8 +1,8 @@
 # Sharded pre-review verification proposal
 
 This document is a draft review artifact for issue #2176. It describes a contributor-developed
-workflow for producing faster, reproducible pre-review validation evidence. It is not a proposal
-to replace the upstream merge gate.
+workflow for producing faster, reproducible pre-review validation evidence and links the concrete
+review implementation in this draft PR. It is not a proposal to replace the upstream merge gate.
 
 ## Summary
 
@@ -29,6 +29,17 @@ more transparent:
 - run on a clean remote runner instead of a busy local machine;
 - produce a single run URL and aggregate totals that can be linked from a PR;
 - keep the real upstream CI gate unchanged.
+
+## Files In This Draft PR
+
+The draft PR includes the implementation shape for review, not because it should be merged exactly
+as-is without maintainer direction:
+
+- `.github/workflows/pre-review-verification-sharded.yml` — optional manual workflow that validates
+   a branch/SHA pair, builds once, compiles tests once, partitions a canonical compiled-test manifest,
+   runs deterministic shards, runs the lifecycle gate once, and aggregates totals fail-closed.
+- `scripts/pre-review-verify.sh` — contributor helper for dispatching the workflow only after
+   `git ls-remote` proves `source_ref` resolves to `expected_sha`.
 
 ## Proposed shape
 
