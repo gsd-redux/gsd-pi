@@ -39,7 +39,9 @@ as-is without maintainer direction:
    a branch/SHA pair, builds once, compiles tests once, partitions a canonical compiled-test manifest,
    runs deterministic shards, runs the lifecycle gate once, and aggregates totals fail-closed.
 - `scripts/pre-review-verify.sh` — contributor helper for dispatching the workflow only after
-   `git ls-remote` proves `source_ref` resolves to `expected_sha`.
+   `git ls-remote` proves `source_ref` resolves to `expected_sha`. The first draft includes
+   `dispatch` and `status`; richer `watch`, `resume`, `logs`, and `triage` commands can be added
+   if maintainers want the full contributor-side ergonomics upstream.
 
 ## Proposed shape
 
@@ -116,6 +118,22 @@ Out of scope unless maintainers explicitly ask for it:
 The first reviewable version should stay conservative: optional, manual, documented, and easy to
 discard if maintainers prefer contributor-side tooling only.
 
+## What This Draft Deliberately Leaves Out
+
+The contributor-side harness has more operational affordances than this first upstream draft.
+Those pieces are useful locally, but they would make the initial PR much harder to review:
+
+- `watch` / `resume` output that only reports job-status changes;
+- `logs` parsing that extracts final pass/fail/skip totals from job logs instead of trusting the
+   green checkmark alone;
+- first-failure `triage` classification;
+- optional per-file timing collection and provenance validation;
+- a stable unsharded fallback workflow;
+- any merge-parity reproduction of Windows, Node 22 smoke, or Docker e2e jobs.
+
+The review question for maintainers is whether the core shape is useful. If yes, the helper and
+workflow can be extended incrementally; if no, those pieces should remain contributor-side tooling.
+
 ## Review questions
 
 1. Would a contributor-facing, manually dispatched pre-review verification tier be useful upstream?
@@ -125,3 +143,5 @@ discard if maintainers prefer contributor-side tooling only.
 4. Is the extra summed runner time acceptable for a faster review loop?
 5. Which parts, if any, should be promoted first: exact-SHA dispatch, manifest sharding, aggregate
    evidence, or only the documentation pattern?
+6. Should the richer helper ergonomics (`watch`, `resume`, `logs`, `triage`) and timing evidence
+   stay contributor-side or be added later after the core workflow shape is accepted?
