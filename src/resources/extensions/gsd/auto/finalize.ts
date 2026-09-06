@@ -364,11 +364,18 @@ export async function runFinalize(
       debugLog("autoLoop", { phase: "sidecar-pre-execution-retry-skipped", iteration: ic.iteration });
     } else {
       const retryInfo = s.pendingVerificationRetry;
+      // #2119: execute-task retries returned after publishVerifiedTask belong
+      // to the durable verification-retry phase. Git-commit remediation supplies
+      // retry context and its own cap; source recapture without context still
+      // fails closed in the policy. Plan/refine retries keep the legacy phase.
+      const retryPhase = preUnitSnapshot?.type === "execute-task"
+        ? "verification-retry"
+        : "pre-execution-retry";
       deps.emitJournalEvent({
         ts: new Date().toISOString(),
         flowId: ic.flowId,
         seq: ic.nextSeq(),
-        eventType: "pre-execution-retry",
+        eventType: retryPhase,
         data: {
           unitType: preUnitSnapshot?.type,
           unitId: retryInfo?.unitId,
@@ -378,7 +385,7 @@ export async function runFinalize(
       const retryPolicyResult = await applyVerificationRetryPolicy(
         ic,
         preUnitSnapshot?.type,
-        "pre-execution-retry",
+        retryPhase,
       );
       if (retryPolicyResult) {
         clearFinalizingUnit();
@@ -386,7 +393,7 @@ export async function runFinalize(
       }
       rememberRetryDispatch(s, preUnitSnapshot, iterData);
       debugLog("autoLoop", {
-        phase: "pre-execution-retry",
+        phase: retryPhase,
         iteration: ic.iteration,
         unitType: preUnitSnapshot?.type,
         unitId: retryInfo?.unitId,
