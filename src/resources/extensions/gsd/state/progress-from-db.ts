@@ -9,6 +9,7 @@ import { ensureExistingWorkflowDbOpen } from "./derive/db-open.js";
 import {
   getHierarchyCompletionCounts,
   getInFlightSliceCount,
+  getProgressHierarchyDetails,
   getMilestoneStatusCounts,
   getProjectAuthorityVersion,
   isDbAvailable,
@@ -36,6 +37,24 @@ export interface DbProgressResult {
   requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
   blockers: string[];
   nextAction: string;
+}
+
+export interface DbProjectProgressResult extends DbProgressResult {
+  milestoneDetails?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    truncated: boolean;
+    slices: Array<{
+      id: string;
+      title: string;
+      status: string;
+      truncated: boolean;
+      tasks: Array<{ id: string; title: string; status: string }>;
+    }>;
+  }>;
+  milestoneDetailsTruncated?: boolean;
+  milestoneDetailsTasksTruncated?: boolean;
 }
 
 function toRef(value: { id: string; title: string } | null): { id: string; title: string } | null {
@@ -121,6 +140,42 @@ function buildProgressResult(
   };
 }
 
+async function readProgressFromDbInternal(
+  basePath: string,
+  includeHierarchyDetails: boolean,
+  throwOnOpenFailure: boolean,
+): Promise<DbProgressResult | DbProjectProgressResult | null> {
+  // Read-only surface: never mutate. The queue-order projection sync stays a
+  // runtime derive/dispatch repair (see docs/user-docs/auto-mode.md); read
+  // paths report the DB-authoritative order as-is even when the file is newer.
+  const openedRequestedDb = ensureExistingWorkflowDbOpen(basePath, {
+    throwOnOpenFailure,
+    syncQueueOrder: false,
+  });
+  if (!openedRequestedDb || !isDbAvailable()) return null;
+
+  invalidateStateCache();
+  for (let attempt = 1; ; attempt++) {
+    const before = readProgressStabilityToken();
+    const state = await deriveState(basePath, { syncQueueOrder: false });
+    const progress = buildProgressResult(state, readProgressHierarchy());
+    const details = includeHierarchyDetails ? getProgressHierarchyDetails() : undefined;
+    const result: DbProgressResult | DbProjectProgressResult = details
+      ? {
+          ...progress,
+          milestoneDetails: details.milestones,
+          milestoneDetailsTruncated: details.milestonesTruncated,
+          milestoneDetailsTasksTruncated: details.tasksTruncated,
+        }
+      : progress;
+    const after = readProgressStabilityToken();
+
+    if (stabilityTokensMatch(before, after)) return result;
+    if (attempt === MAX_REVISION_ATTEMPTS) return result;
+    invalidateStateCache();
+  }
+}
+
 /**
  * Derive the integration progress payload from the database. `deriveState`
  * supplies current refs, phase, blockers, and next action (the same source
@@ -128,26 +183,19 @@ function buildProgressResult(
  * come from the read seam, since `deriveState` may be execution-scoped while
  * `ProgressResult` buckets are project-wide.
  *
- * Note: the derive open path runs pending migrations and syncs the
- * milestone queue-order projection (same behavior as `gsd headless status`).
+ * Note: the derive open path runs pending migrations when required, but this
+ * read suppresses the milestone queue-order projection sync — reads never
+ * mutate; the runtime derive path owns that repair (same as `gsd headless
+ * status`).
  * Results are bound to stable authority and data-version tokens; under
  * sustained concurrent commits or same-process interleaved writes, a snapshot
  * may still straddle revisions.
  */
 export async function readProgressFromDb(basePath: string): Promise<DbProgressResult | null> {
-  ensureExistingWorkflowDbOpen(basePath);
-  if (!isDbAvailable()) return null;
+  return await readProgressFromDbInternal(basePath, false, false) as DbProgressResult | null;
+}
 
-  invalidateStateCache();
-  for (let attempt = 1; ; attempt++) {
-    const before = readProgressStabilityToken();
-    const state = await deriveState(basePath);
-    const result = buildProgressResult(state, readProgressHierarchy());
-    const after = readProgressStabilityToken();
-
-    if (stabilityTokensMatch(before, after)) return result;
-
-    if (attempt === MAX_REVISION_ATTEMPTS) return result;
-    invalidateStateCache();
-  }
+/** Detailed bounded progress is host-only; established CLI and MCP reads retain ProgressResult. */
+export async function readProjectProgressFromDb(basePath: string): Promise<DbProjectProgressResult | null> {
+  return await readProgressFromDbInternal(basePath, true, true) as DbProjectProgressResult | null;
 }

@@ -33,6 +33,10 @@ function readPackage(): {
 	return JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 }
 
+function readSource(fileName: string): string {
+	return readFileSync(join(root, "src", fileName), "utf8");
+}
+
 test("manifest contributes unique executable commands with titles", () => {
 	const pkg = readPackage();
 	const contributed = pkg.contributes.commands.map((entry) => entry.command);
@@ -87,6 +91,28 @@ test("checkpoint view is contributed in the extension manifest", () => {
 
 	assert.ok(pkg.contributes.views.gsd.some((view) => view.id === "gsd-checkpoints"));
 	assert.ok(pkg.contributes.commands.some((entry) => entry.command === "gsd.restoreCheckpoint"));
+});
+
+test("project progress uses the existing RPC client and one sidebar refresh loop", () => {
+	const clientSource = readSource("gsd-client.ts");
+	const sidebarSource = readSource("sidebar.ts");
+
+	assert.match(clientSource, /type: "get_project_progress"/);
+	assert.match(clientSource, /async getProjectProgress\(\): Promise<ProjectProgress \| null>/);
+	assert.match(sidebarSource, /case "refreshProgress":/);
+	assert.match(sidebarSource, /this\.client\.getProjectProgress\(\)/);
+	assert.match(sidebarSource, /data-section="project-progress"/);
+	assert.match(sidebarSource, /class="section collapsed" data-section="project-progress"/);
+	assert.match(sidebarSource, /Project progress unavailable/);
+	assert.match(sidebarSource, /escapeHtml\(current\)/);
+	assert.match(sidebarSource, /escapeHtml\(progress\.nextAction\)/);
+	assert.match(sidebarSource, /progress\.milestoneDetails \?\? \[\]\)\.map/);
+	assert.match(sidebarSource, /milestone\.slices\.map/);
+	assert.match(sidebarSource, /slice\.tasks\.map/);
+	assert.match(sidebarSource, /progress\.milestoneDetailsTasksTruncated/);
+	assert.match(sidebarSource, /this\.refresh\(true\)/);
+	assert.match(sidebarSource, /applySectionCollapseState\}\)\(document\.querySelectorAll/);
+	assert.equal((sidebarSource.match(/setInterval\(/g) ?? []).length, 1);
 });
 
 test("agent git helpers scope git output to tracked agent files", () => {

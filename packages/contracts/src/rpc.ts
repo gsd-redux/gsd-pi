@@ -12,6 +12,7 @@ export const RPC_COMMAND_TYPES = [
 	"abort",
 	"new_session",
 	"get_state",
+	"get_project_progress",
 	"set_model",
 	"cycle_model",
 	"get_available_models",
@@ -97,6 +98,34 @@ export interface BashResult {
 	fullOutputPath?: string;
 }
 
+export interface ProjectProgress {
+	activeMilestone: { id: string; title: string } | null;
+	activeSlice: { id: string; title: string } | null;
+	activeTask: { id: string; title: string } | null;
+	phase: string;
+	milestones: { total: number; done: number; active: number; pending: number; parked: number };
+	slices: { total: number; done: number; active: number; pending: number };
+	tasks: { total: number; done: number; pending: number };
+	requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
+	blockers: string[];
+	nextAction: string;
+	milestoneDetails?: Array<{
+		id: string;
+		title: string;
+		status: string;
+		truncated: boolean;
+		slices: Array<{
+			id: string;
+			title: string;
+			status: string;
+			truncated: boolean;
+			tasks: Array<{ id: string; title: string; status: string }>;
+		}>;
+	}>;
+	milestoneDetailsTruncated?: boolean;
+	milestoneDetailsTasksTruncated?: boolean;
+}
+
 export interface CompactionResult<T = unknown> {
 	summary: string;
 	firstKeptEntryId: string;
@@ -113,6 +142,7 @@ export type RpcCommand =
 	| { id?: string; type: "abort" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_project_progress" }
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
 	| { id?: string; type: "cycle_model" }
 	| { id?: string; type: "get_available_models" }
@@ -176,6 +206,7 @@ export type RpcResponse =
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| { id?: string; type: "response"; command: "get_project_progress"; success: true; data: ProjectProgress | null }
 	| { id?: string; type: "response"; command: "set_model"; success: true; data: ModelInfo }
 	| {
 			id?: string;

@@ -2,9 +2,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 
-import { installHermesPlugin, parseHermesInstallArgs } from '../hermes-integration-install.ts'
+import { installHermesPlugin, parseHermesInstallArgs, renderGsdYaml } from '../hermes-integration-install.ts'
+
+// Walk up to the real worktree root: the compiled unit runner executes this
+// file from dist-test, where a static relative path would resolve to the wrong
+// tree (dist-test has no packages/*/bin).
+let repoRoot = resolve(dirname(fileURLToPath(import.meta.url)))
+while (!existsSync(join(repoRoot, '.git'))) {
+  const parent = dirname(repoRoot)
+  if (parent === repoRoot) throw new Error('could not locate worktree root from test file')
+  repoRoot = parent
+}
 
 test('parseHermesInstallArgs resolves Hermes home and project paths', () => {
   const opts = parseHermesInstallArgs([
@@ -67,4 +79,31 @@ test('installHermesPlugin leaves existing config unchanged', () => {
 
   assert.equal(readFileSync(result.configPath, 'utf8'), 'gsd:\n  default_project: /existing\n')
   assert.ok(result.actions.some((action) => action.includes('Left existing')))
+})
+
+test('renderGsdYaml writes a version gate covering the installed gsd-pi version', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as { version: string }
+  const nextMajor = `${Number(pkg.version.split('.')[0]) + 1}.0.0`
+
+  const config = parseYaml(renderGsdYaml(undefined)) as {
+    gsd: { gsd_version_min: string; gsd_version_max: string }
+  }
+
+  assert.equal(config.gsd.gsd_version_min, pkg.version)
+  assert.equal(config.gsd.gsd_version_max, nextMajor)
+})
+
+test('renderGsdYaml mcp_server_path matches a bin entry shipped in the package', () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+    bin: Record<string, string>
+  }
+  const config = parseYaml(renderGsdYaml(undefined)) as {
+    gsd: { mcp_server_path: string }
+  }
+  const mcpServerPath = config.gsd.mcp_server_path
+  const binTarget = pkg.bin[mcpServerPath]
+
+  assert.equal(mcpServerPath, 'gsd-mcp-server')
+  assert.equal(binTarget, 'packages/mcp-server/bin/gsd-mcp-server.js')
+  assert.equal(existsSync(join(repoRoot, binTarget)), true)
 })

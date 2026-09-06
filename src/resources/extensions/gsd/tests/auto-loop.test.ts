@@ -1716,6 +1716,69 @@ test("autoLoop aborts the active unit turn when dispatch crashes", async () => {
   assert.ok(abortCalls > 0, "crashed unit closeout must abort the active SDK turn");
 });
 
+test("a verification retry whose dispatch fails pre-claim is cleared and auto-mode pauses (#2127)", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const notifications: Array<{ message: string; level: string }> = [];
+  ctx.ui.notify = (message: string, level: any) => {
+    notifications.push({ message, level });
+  };
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  t.after(() => rmSync(s.basePath, { recursive: true, force: true }));
+  s.pendingVerificationRetry = {
+    unitId: "M001/S01/T01",
+    failureContext: "git commit hook rejected the staged task changes",
+    signature: "git-commit:1:hook rejected",
+    attempt: 1,
+  };
+
+  const pauseContexts: Array<{ message?: string } | undefined> = [];
+  const deps = makeMockDeps({
+    // Simulate the task-attempt claim throwing before the unit starts: the
+    // cutover boundary rethrows pre-claim failures untouched because there is
+    // no Attempt to settle.
+    taskExecutionBoundary: async () => {
+      throw new Error(
+        "Task Attempt claim must activate exactly one matching coordination dispatch",
+      );
+    },
+    pauseAuto: async (_ctx, _pi, errorContext) => {
+      pauseContexts.push(errorContext as { message?: string } | undefined);
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(
+    s.pendingVerificationRetry,
+    null,
+    "the retry marker must be cleared when the retried dispatch fails",
+  );
+  assert.equal(
+    deps.callLog.filter((call) => call === "resolveDispatch").length,
+    1,
+    "the failed retry-bound unit must not be reselected by the next iteration",
+  );
+  assert.equal(pauseContexts.length, 1, "auto-mode must pause on the failed retry dispatch");
+  assert.match(
+    pauseContexts[0]?.message ?? "",
+    /M001\/S01\/T01/,
+    "the pause diagnostic must name the retried unit",
+  );
+  assert.match(
+    pauseContexts[0]?.message ?? "",
+    /must activate exactly one matching coordination dispatch/,
+    "the pause diagnostic must include the underlying failure",
+  );
+  assert.ok(
+    notifications.some((n) => n.level === "error" && n.message.includes("M001/S01/T01")),
+    "the failure must be surfaced as an error notification naming the unit",
+  );
+});
+
 test("autoLoop stops before dispatch when command context lacks newSession", async () => {
   _resetPendingResolve();
 
