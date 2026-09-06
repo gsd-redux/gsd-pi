@@ -496,3 +496,11 @@ test("dispatch-rule-coverage: Task replan recovery runs before every execution r
   assert.ok(recovery < names.indexOf("executing → reactive-execute (parallel dispatch)"));
   assert.ok(recovery < names.indexOf("executing → execute-task"));
 });
+
+test("dispatch-rule-coverage: no planner handoff rule is registered", () => {
+  assert.equal(
+    DISPATCH_RULES.some((rule) => /planner/i.test(rule.name)),
+    false,
+    "planner handoff rule should stay removed from DISPATCH_RULES",
+  );
+});

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,7 +17,7 @@ import {
   getDb,
   openDatabase,
 } from "../mcp-bridge.ts";
-import { insertRequirement, getDbPath } from "../gsd-db.ts";
+import { insertRequirement, insertMilestone, insertSlice, insertTask, getDbPath, getProjectAuthorityRow } from "../gsd-db.ts";
 import { resolveProjectRootDbPath } from "../db-workspace.ts";
 import { invalidateAllCaches } from "../cache.ts";
 
@@ -329,6 +329,236 @@ test("canonical read parity: corrupt requirements table returns query_error for 
 
     assert.equal(readError(nativeReqList), "query_error");
     assert.equal(readError(mcpReqList), "query_error");
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: gsd_project_snapshot returns the same payload for native and MCP", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-parity");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    insertMilestone({ id: "M001", title: "Parity milestone", status: "active" });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      title: "Parity slice",
+      status: "in_progress",
+      risk: "low",
+      depends: [],
+      sequence: 1,
+    });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Parity task",
+      status: "pending",
+      sequence: 1,
+    });
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-8",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const nativeDetails = (nativeSnapshotResult as {
+      details?: { error?: string; snapshot?: Record<string, unknown> };
+    }).details;
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    const mcpDetails = (mcpSnapshotResult as {
+      structuredContent?: { error?: string; snapshot?: Record<string, unknown> };
+    }).structuredContent;
+
+    assert.equal(nativeDetails?.error, undefined);
+    assert.equal(mcpDetails?.error, undefined);
+
+    const nativeSnapshot = nativeDetails?.snapshot;
+    const mcpSnapshot = mcpDetails?.snapshot;
+    assert.ok(nativeSnapshot, "native result should carry details.snapshot");
+    assert.ok(mcpSnapshot, "MCP result should carry structuredContent.snapshot");
+
+    // capturedAt legitimately differs between the two executions; every other
+    // section must be identical across the native and MCP surfaces.
+    const stripCapturedAt = (snapshot: Record<string, unknown>) =>
+      JSON.parse(JSON.stringify({ ...snapshot, capturedAt: "<capturedAt>" }));
+    assert.deepEqual(stripCapturedAt(nativeSnapshot!), stripCapturedAt(mcpSnapshot!));
+
+    assert.equal(typeof nativeSnapshot!.authority, "object");
+    assert.ok(String((nativeSnapshot!.authority as { projectId?: unknown }).projectId ?? "").length > 0);
+    assert.deepEqual((nativeSnapshot!.milestones as { items?: unknown[] }).items?.length, 1);
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: gsd_project_snapshot reads project B without switching the global DB handle", async () => {
+  const baseA = makeProjectBase("gsd-canonical-snapshot-global-a");
+  const baseB = makeProjectBase("gsd-canonical-snapshot-global-b");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(baseA));
+    const authorityA = getProjectAuthorityRow();
+    assert.ok(authorityA, "project A authority should exist");
+
+    openDatabase(resolveProjectRootDbPath(baseB));
+    insertMilestone({ id: "M001", title: "Project B milestone", status: "active" });
+    const authorityB = getProjectAuthorityRow();
+    assert.ok(authorityB, "project B authority should exist");
+    assert.notEqual(authorityB.projectId, authorityA.projectId);
+
+    openDatabase(resolveProjectRootDbPath(baseA));
+    const before = getDbPath();
+    assert.ok(before, "global DB should be open on project A");
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-8b",
+      {},
+      undefined,
+      undefined,
+      { cwd: baseB },
+    );
+    const nativeSnapshot = (nativeSnapshotResult as {
+      details?: { snapshot?: { authority?: { projectId?: string } } };
+    }).details?.snapshot;
+    assert.equal(nativeSnapshot?.authority?.projectId, authorityB.projectId);
+    assert.equal(getDbPath(), before, "native snapshot read must keep global DB path unchanged");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: baseB });
+    const mcpSnapshot = (mcpSnapshotResult as {
+      structuredContent?: { snapshot?: { authority?: { projectId?: string } } };
+    }).structuredContent?.snapshot;
+    assert.equal(mcpSnapshot?.authority?.projectId, authorityB.projectId);
+    assert.equal(getDbPath(), before, "MCP snapshot read must keep global DB path unchanged");
+  } finally {
+    cleanup([baseA, baseB]);
+  }
+});
+
+test("canonical read parity: gsd_project_snapshot leaves no global DB open when none was open before", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-no-global");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    insertMilestone({ id: "M001", title: "Snapshot milestone", status: "active" });
+    closeDatabase();
+    assert.equal(getDbPath(), null, "fixture should start with no global DB handle");
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-8c",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    assert.equal(readError(nativeSnapshotResult), undefined);
+    assert.equal(getDbPath(), null, "native snapshot read must not leave a global DB handle open");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    assert.equal(readError(mcpSnapshotResult), undefined);
+    assert.equal(getDbPath(), null, "MCP snapshot read must not leave a global DB handle open");
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: gsd_project_snapshot missing DB returns db_unavailable for native and MCP without creating gsd.db", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-missing-db");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+    const dbPath = resolveProjectRootDbPath(base);
+
+    assert.equal(existsSync(dbPath), false, "fixture starts without gsd.db");
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-9",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const nativeDetails = (nativeSnapshotResult as { details?: { error?: string } }).details;
+    assert.equal(nativeDetails?.error, "db_unavailable");
+    assert.equal(existsSync(dbPath), false, "native snapshot read should not create gsd.db as side effect");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    const mcpDetails = (mcpSnapshotResult as { structuredContent?: { error?: string } }).structuredContent;
+    assert.equal(mcpDetails?.error, "db_unavailable");
+    assert.equal(existsSync(dbPath), false, "MCP snapshot read should not create gsd.db as side effect");
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: dropped workflow_blockers table returns query_error for native and MCP snapshot reads", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-query-error");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    getDb().prepare("DROP TABLE workflow_blockers").run();
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-10",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const nativeDetails = (nativeSnapshotResult as { details?: { error?: string } }).details;
+    assert.equal(nativeDetails?.error, "query_error");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    const mcpDetails = (mcpSnapshotResult as { structuredContent?: { error?: string } }).structuredContent;
+    assert.equal(mcpDetails?.error, "query_error");
+
+    const isolated = (await import("../db-workspace.ts")).openWorkflowDatabaseIsolated(
+      resolveProjectRootDbPath(base),
+    );
+    assert.ok(isolated, "isolated open should still work after handled snapshot query_error");
+    isolated?.close();
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: missing project_authority row classifies as db_unavailable for native and MCP snapshot reads", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-no-authority");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    getDb().prepare("DELETE FROM project_authority").run();
+    closeDatabase();
+    invalidateAllCaches();
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-11",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const nativeDetails = (nativeSnapshotResult as { details?: { error?: string } }).details;
+    assert.equal(nativeDetails?.error, "db_unavailable",
+      "native must classify the missing authority row like mapCanonicalReadError");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    const mcpDetails = (mcpSnapshotResult as { structuredContent?: { error?: string } }).structuredContent;
+    assert.equal(mcpDetails?.error, "db_unavailable");
   } finally {
     cleanup([base]);
   }

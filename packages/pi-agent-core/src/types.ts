@@ -116,9 +116,9 @@ export interface ShouldStopAfterTurnContext {
 	message: AssistantMessage;
 	/** Tool result messages passed to the preceding `turn_end` event. */
 	toolResults: ToolResultMessage[];
-	/** Current agent context after the turn's assistant message and tool results have been appended. */
+	/** Current agent context after the turn and any output-limit continuation have been appended. */
 	context: AgentContext;
-	/** Messages that this loop invocation will return if it exits at this point. Prompt runs include the initial prompt messages; continuation runs do not include pre-existing context messages. */
+	/** Messages this loop invocation will return if it exits, including any output-limit continuation. Prompt runs include the initial prompt messages; continuation runs omit pre-existing context messages. */
 	newMessages: AgentMessage[];
 }
 
@@ -207,6 +207,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * If it returns true, the loop emits `agent_end` and exits before polling steering or follow-up queues,
 	 * without starting another LLM call. The current assistant response and any tool executions finish normally.
+	 * When a provider output-limit continuation has already been queued, the loop first appends a terminal
+	 * assistant error so the transcript does not end with an unanswered continuation message.
 	 *
 	 * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
 	 *

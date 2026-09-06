@@ -22,6 +22,16 @@ export default async function registerExtension(pi: ExtensionAPI) {
   const { registerGSDCommand } = await import("./commands/index.js");
   registerGSDCommand(pi);
 
+  if (typeof pi.registerRuntimeRead === "function") {
+    const { readProjectProgressFromDb } = await import("./mcp-bridge.js");
+    pi.registerRuntimeRead("project_progress", async (input) => {
+      if (!input || typeof input !== "object" || typeof (input as { cwd?: unknown }).cwd !== "string") {
+        throw new Error("Project progress requires a session CWD");
+      }
+      return readProjectProgressFromDb((input as { cwd: string }).cwd);
+    });
+  }
+
   // Full setup (shortcuts, tools, hooks) in a separate try/catch so that
   // any platform-specific load failure doesn't take out the core command.
   try {

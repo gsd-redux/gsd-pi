@@ -219,6 +219,101 @@ test("verification_timeout_ms unset stays 120s; set value is enforced (#1759)", 
 	assert.equal(_resolveVerificationTimeoutMsForTest({ verification_timeout_ms: 2500 }), 2500);
 });
 
+test("blocker-discovered completion pauses with the blocker surfaced instead of throwing (#2148)", async () => {
+	let paused = false;
+	let pauseMessage: string | undefined;
+	const session = {
+		basePath: process.cwd(),
+		canonicalProjectRoot: process.cwd(),
+		currentUnit: { type: "execute-task", id: "M001/S01/T01" },
+		lastTaskRecoveryAbortId: null,
+		pendingVerificationRetry: null,
+		verificationRetryCount: new Map<string, number>(),
+		verificationRetryFailureHashes: new Map<string, string>(),
+	};
+	const result = await runPostUnitVerification({
+		s: session,
+		ctx: { ui: { notify() {} } },
+		pi: {},
+		taskAuthority: {
+			readLatestTaskAttempt: () => ({
+				attemptId: "attempt-1",
+				resultId: "result-1",
+				resultFailureClass: "blocker-discovered",
+				resultSummary: "Plan requires gsd_requirement_* tools outside this unit's surface",
+				state: "settled",
+				outcome: "failed",
+				nextStage: "route",
+			}),
+			readTaskTechnicalVerdict: () => {
+				throw new Error("must not read host verdicts for a blocker attempt");
+			},
+			recordTaskTechnicalVerdict: () => {
+				throw new Error("must not record verdicts for a blocker attempt");
+			},
+			invalidateTaskTechnicalPass: () => {
+				throw new Error("must not invalidate for a blocker attempt");
+			},
+			routeTaskFailure: () => {
+				throw new Error("must not reroute a blocker attempt through task recovery");
+			},
+		},
+	} as never, async (_ctx, _pi, errorContext) => {
+		paused = true;
+		pauseMessage = errorContext?.message;
+	});
+
+	assert.equal(result, "pause");
+	assert.equal(paused, true);
+	assert.match(
+		pauseMessage ?? "",
+		/discovered blocker/,
+		`pause must name the discovered blocker, got: ${pauseMessage}`,
+	);
+	assert.match(
+		pauseMessage ?? "",
+		/Plan requires gsd_requirement_\* tools outside this unit's surface/,
+		`pause must surface the blocker description, got: ${pauseMessage}`,
+	);
+	assert.match(
+		pauseMessage ?? "",
+		/\/gsd auto/,
+		`pause must carry the resume instruction, got: ${pauseMessage}`,
+	);
+	assert.equal(session.lastTaskRecoveryAbortId, null, "a blocker pause is not a recovery abort");
+});
+
+test("non-blocker failed attempt still throws at the verify gate (#2148)", async () => {
+	const result = runPostUnitVerification({
+		s: {
+			basePath: process.cwd(),
+			canonicalProjectRoot: process.cwd(),
+			currentUnit: { type: "execute-task", id: "M001/S01/T01" },
+			lastTaskRecoveryAbortId: null,
+			pendingVerificationRetry: null,
+			verificationRetryCount: new Map<string, number>(),
+			verificationRetryFailureHashes: new Map<string, string>(),
+		},
+		ctx: { ui: { notify() {} } },
+		pi: {},
+		taskAuthority: {
+			readLatestTaskAttempt: () => ({
+				attemptId: "attempt-1",
+				resultId: "result-1",
+				resultFailureClass: "executor-result-failed",
+				state: "settled",
+				outcome: "failed",
+				nextStage: "route",
+			}),
+		},
+	} as never, async () => {});
+
+	await assert.rejects(
+		result,
+		/Host verification requires the latest succeeded canonical Attempt at the verify stage/,
+	);
+});
+
 test("identical gate failures count 1/2, then 2/2, then exhaust into a durable abort (#1971)", async (t) => {
 	const basePath = makeTempRepo("gsd-auto-fix-retry-bound-");
 	t.after(() => cleanup(basePath));

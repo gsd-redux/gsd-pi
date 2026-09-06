@@ -5,7 +5,9 @@
 
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -20,7 +22,7 @@ import {
   invalidateStateCache,
   resetDeriveTelemetry,
 } from "../state.ts";
-import { readProgressFromDb } from "../state/progress-from-db.ts";
+import { readProgressFromDb, readProjectProgressFromDb } from "../state/progress-from-db.ts";
 import {
   createWorkflowAuthorityFixture,
   type WorkflowAuthorityFixture,
@@ -154,6 +156,8 @@ test("readProgressFromDb derives refs, project-wide counts, and requirements fro
   assert.deepEqual(result.blockers, []);
   assert.equal(typeof result.nextAction, "string");
   assert.ok(result.nextAction.length > 0);
+  const detailedResult = await readProjectProgressFromDb(fixture.root);
+  assert.equal(detailedResult?.milestoneDetails?.[0]?.slices[0]?.tasks[0]?.id, "T01");
 });
 
 test("readProgressFromDb keeps milestone counts project-wide under a milestone lock", async (t) => {
@@ -199,6 +203,21 @@ test("readProgressFromDb reflects DB state, never stale projection files", async
   assert.equal(result.activeMilestone?.id, "M001");
   assert.notEqual(result.activeMilestone?.title, "Stale Projection");
   assert.notEqual(result.nextAction, "Stale action from projection");
+});
+
+test("readProgressFromDb returns null for a missing requested DB instead of reusing an open global DB", async (t) => {
+  const existing = await createWorkflowAuthorityFixture();
+  const missingRoot = join(tmpdir(), `gsd-progress-missing-${randomUUID()}`);
+  mkdirSync(join(missingRoot, ".gsd"), { recursive: true });
+  t.after(() => {
+    existing.cleanup();
+    rmSync(missingRoot, { recursive: true, force: true });
+  });
+
+  existing.reopen();
+  const result = await readProgressFromDb(missingRoot);
+
+  assert.equal(result, null);
 });
 
 test("readProgressFromDb retries when the authority revision moves", async (t) => {
