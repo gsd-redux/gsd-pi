@@ -30,7 +30,7 @@ function makeHookHarness(): {
   };
   const ctx = {
     cwd: process.cwd(),
-    ui: { notify: () => undefined },
+    ui: { notify: () => undefined, setStatus: () => undefined, setWidget: () => undefined },
   };
   let callId = 0;
 
@@ -304,6 +304,40 @@ test("register-hooks does not classify normal gsd_uat_exec nonzero exits as harn
   assert.equal(abort, null);
 });
 
+test("register-hooks does not record schema-invalid gsd_uat_exec as a harness abort", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "run-uat", id: "M001/S01", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitToolExecutionEnd } = makeHookHarness();
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: true,
+    result: {
+      content: [{
+        type: "text",
+        text: 'Validation failed for tool "gsd_uat_exec": - milestoneId: must have required properties milestoneId, sliceId, checkId',
+      }],
+      details: { operation: "uat_exec" },
+    },
+  });
+
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt),
+    null,
+    "model-fixable schema errors must not poison the unit run",
+  );
+});
+
 test("register-hooks records exec deadline timeouts as harness aborts", async () => {
   for (const scenario of [
     { toolName: "gsd_exec", unitType: "gate-evaluate", unitId: "M001/S01/gates+Q3" },
@@ -397,6 +431,180 @@ test("register-hooks preserves retryable harness abort after later successful to
     readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind,
     "tool-error",
     "successful universal tool_execution_end must not clear the harness abort",
+  );
+});
+
+test("register-hooks clears a stale tool-error abort after successful execution", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "run-uat", id: "M001/S01", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitToolExecutionEnd } = makeHookHarness();
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: true,
+    result: {
+      content: [{ type: "text", text: "No such tool available: gsd_uat_exec" }],
+      details: {},
+    },
+  });
+  assert.equal(readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind, "tool-error");
+
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "evidence captured" }],
+      details: { exit_code: 0, aborted: false, force_resolved: false, timed_out: false },
+    },
+  });
+
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt),
+    null,
+    "successful execution proves a tool-error abort is stale",
+  );
+});
+
+test("register-hooks heals an exec deadline timeout abort after subsequent successful execution", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "run-uat", id: "M001/S01", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitToolExecutionEnd } = makeHookHarness();
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: true,
+    result: {
+      content: [{ type: "text", text: "Execution timed out" }],
+      details: { timed_out: true, aborted: true, operation: "uat_exec" },
+    },
+  });
+  assert.equal(readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind, "tool-error");
+
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "all checks passed on retry" }],
+      details: { exit_code: 0, aborted: false, force_resolved: false, timed_out: false },
+    },
+  });
+
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt),
+    null,
+    "subsequent successful execution supersedes prior exec deadline timeout abort",
+  );
+});
+
+test("register-hooks allows cross-tool execution success (gsd_exec) to heal a gsd_uat_exec abort", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "run-uat", id: "M001/S01", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitToolExecutionEnd } = makeHookHarness();
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: true,
+    result: {
+      content: [{ type: "text", text: "No such tool available: gsd_uat_exec" }],
+      details: {},
+    },
+  });
+  assert.equal(readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind, "tool-error");
+
+  await emitToolExecutionEnd({
+    toolName: "gsd_exec",
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "command output" }],
+      details: { exit_code: 0, aborted: false, force_resolved: false, timed_out: false },
+    },
+  });
+
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt),
+    null,
+    "gsd_exec success clears same-run tool-error abort from gsd_uat_exec",
+  );
+});
+
+test("register-hooks preserves a turn-abort and does not overwrite it with a subsequent tool-error or clear it on tool success", async (t) => {
+  const base = makeRuntimeBase();
+  const startedAt = Date.now();
+  autoSession.reset();
+  resetToolCallLoopGuard();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "run-uat", id: "M001/S01", startedAt };
+  t.after(() => {
+    autoSession.reset();
+    resetToolCallLoopGuard();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const { emitAgentEnd, emitToolExecutionEnd } = makeHookHarness();
+  await emitAgentEnd({
+    messages: [{ role: "assistant", stopReason: "aborted", errorMessage: "context truncated" }],
+  });
+  assert.equal(readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind, "turn-abort");
+
+  // Subsequent tool error in the same run must not downgrade the turn-abort
+  await emitToolExecutionEnd({
+    toolName: "gsd_uat_exec",
+    isError: true,
+    result: {
+      content: [{ type: "text", text: "No such tool available: gsd_uat_exec" }],
+      details: {},
+    },
+  });
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind,
+    "turn-abort",
+    "turn-abort must not be overwritten by tool-error",
+  );
+
+  // Subsequent tool success must not clear the genuine turn-abort
+  await emitToolExecutionEnd({
+    toolName: "gsd_exec",
+    isError: false,
+    result: {
+      content: [{ type: "text", text: "command output" }],
+      details: { exit_code: 0, aborted: false, force_resolved: false, timed_out: false },
+    },
+  });
+  assert.equal(
+    readUnitHarnessAbort(base, "run-uat", "M001/S01", startedAt)?.kind,
+    "turn-abort",
+    "genuine turn-abort must remain protected across tool success",
   );
 });
 

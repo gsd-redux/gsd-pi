@@ -792,6 +792,50 @@ describe("legacy .gsd captured-byte interpretation", () => {
     );
   });
 
+  test("routes a contradictory id-and-task summary through task-parent selection instead of preserving it", (t) => {
+    const interpretation = interpretLegacyGsdCapture(captureFiles(t, {
+      "phases/09-team/09-ROADMAP.md": [
+        "# M009-rfuh2h: Team milestone",
+        "",
+        "- [x] **S03: Third slice** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "phases/09-team/09-03-PLAN.md": [
+        "# S03: Third slice",
+        "",
+        "**Milestone:** M009-rfuh2h",
+        "**Slice:** S03",
+        "",
+        "## Tasks",
+        "",
+        "- [x] **T01**: Must not map from this summary",
+        "",
+      ].join("\n"),
+      // Self-contradictory frontmatter: `id: S03` claims a slice identity, but `task:
+      // T01` also claims task membership. The id-based guard must not preserve this as
+      // history just because id matches ^S\d+ — the task field takes it out of scope.
+      "phases/09-team/09-03-SUMMARY.md": [
+        "---",
+        "id: S03",
+        "task: T01",
+        "status: complete",
+        "---",
+        "",
+        "# S03 Summary: Contradicts its own id with a task field",
+        "",
+      ].join("\n"),
+    }));
+
+    assert.deepEqual(
+      interpretation.diagnoses.map((diagnosis) => diagnosis.code),
+      ["task-summary-parent-conflict"],
+    );
+    assert.deepEqual(
+      interpretation.candidates.filter((candidate) => candidate.reason_code === "flat-non-task-summary-preserved"),
+      [],
+    );
+  });
+
   test("emits action-matrix decision candidates and complete anchors for present collections", (t) => {
     const base = temporaryDirectory(t);
     const physicalRoot = join(base, ".gsd");

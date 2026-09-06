@@ -36,6 +36,7 @@ import {
 import {
   isDeterministicPolicyError,
   isQueuedUserMessageSkip,
+  isToolSchemaValidationError,
   isToolInvocationError,
   isToolUnavailableError,
 } from "../auto-tool-tracking.js";
@@ -87,7 +88,7 @@ import { clearPendingAutoStart } from "../pending-auto-start.js";
 import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 import { flushAllManifests } from "../workflow-manifest.js";
-import { recordUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
+import { clearUnitHarnessAbort, recordUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
 import { clearNativeMilestoneStatusSourceRevisions } from "./query-tools.js";
 
 let approvalQuestionAbortInFlight = false;
@@ -103,6 +104,19 @@ function recordCurrentUnitHarnessAbort(
     dash.currentUnit.id,
     dash.currentUnit.startedAt,
     abort,
+  );
+}
+
+function clearCurrentUnitToolErrorHarnessAbort(toolName: string): void {
+  if (toolName !== "gsd_exec" && toolName !== "gsd_uat_exec") return;
+  const dash = getAutoRuntimeSnapshot();
+  if (!dash.active || !dash.basePath || !dash.currentUnit) return;
+  clearUnitHarnessAbort(
+    dash.basePath,
+    dash.currentUnit.type,
+    dash.currentUnit.id,
+    dash.currentUnit.startedAt,
+    "tool-error",
   );
 }
 
@@ -791,6 +805,7 @@ function isRetryableHarnessToolError(toolName: string, result: unknown, errorTex
     if (isAbortedExecutionToolResult(toolName, result)) return true;
     if (isToolUnavailableError(errorText)) return true;
     if (isQueuedUserMessageSkip(errorText)) return true;
+    if (isToolSchemaValidationError(errorText)) return false;
     return isToolInvocationError(errorText);
   }
   if (isToolUnavailableError(errorText)) return true;
@@ -1916,6 +1931,7 @@ export function registerHooks(
       recordRetryableHarnessToolError(toolName, resultPayload, errorText);
     } else if (isAutoActive()) {
       clearToolInvocationError(event.toolName);
+      clearCurrentUnitToolErrorHarnessAbort(toolName);
     }
     // Interactive Closeout adapter (ADR-032): auto-mode owns closeout for its
     // own units; interactive completions get the durable git subset (commit +
@@ -2127,6 +2143,7 @@ export function registerHooks(
       recordRetryableHarnessToolError(toolName, event.result, errorText);
     } else if (isAutoActive()) {
       clearToolInvocationError(event.toolName);
+      clearCurrentUnitToolErrorHarnessAbort(toolName);
     }
     // Safety harness: record tool execution results for evidence cross-referencing
     if (isAutoActive()) {
