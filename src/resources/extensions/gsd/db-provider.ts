@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: SQLite provider loading and lifecycle helpers for the GSD database facade.
 
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 export type DbProviderName = "node:sqlite";
@@ -158,7 +158,17 @@ export class SqliteProviderLoader {
     if (path === ":memory:") return new DatabaseSync(path);
 
     const createIfMissing = options.createIfMissing !== false;
-    if (createIfMissing) closeSync(openSync(path, "a"));
+    if (createIfMissing) {
+      closeSync(openSync(path, "a"));
+    } else if (!existsSync(path)) {
+      // DatabaseSync passes SQLITE_OPEN_CREATE, so a no-create open of a path
+      // deleted at the open boundary would recreate an empty DB on Windows
+      // (#2158). Refuse explicitly before any handle exists.
+      throw Object.assign(
+        new Error(`unable to open database file: ${path}`),
+        { code: "SQLITE_CANTOPEN", errcode: 14 },
+      );
+    }
     const readOnlyGuard = new DatabaseSync(path, { readOnly: true });
     try {
       let writablePath: string | URL = path;
