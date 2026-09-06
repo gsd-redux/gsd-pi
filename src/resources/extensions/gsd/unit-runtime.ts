@@ -181,13 +181,65 @@ export function recordUnitHarnessAbort(
   startedAt: number,
   abort: Omit<UnitHarnessAbortRecord, "recordedAt"> & { recordedAt?: number },
 ): AutoUnitRuntimeRecord {
-  return writeUnitRuntimeRecord(basePath, unitType, unitId, startedAt, {
-    harnessAbort: {
-      ...abort,
-      recordedAt: abort.recordedAt ?? Date.now(),
-    },
-    lastProgressAt: Date.now(),
-    lastProgressKind: `harness-abort:${abort.kind}`,
+  const path = runtimePath(basePath, unitType, unitId);
+  return withRecordLock(path, () => {
+    const prev = readUnitRuntimeRecord(basePath, unitType, unitId);
+    const sameRun = prev?.startedAt === startedAt;
+    if (sameRun && prev?.harnessAbort?.kind === "turn-abort" && abort.kind === "tool-error") {
+      return prev;
+    }
+    const next: AutoUnitRuntimeRecord = {
+      version: 1,
+      unitType,
+      unitId,
+      startedAt,
+      updatedAt: Date.now(),
+      phase: prev?.phase ?? "dispatched",
+      wrapupWarningSent: prev?.wrapupWarningSent ?? false,
+      continueHereFired: prev?.continueHereFired ?? false,
+      timeoutAt: prev?.timeoutAt ?? null,
+      lastProgressAt: Date.now(),
+      progressCount: prev?.progressCount ?? 0,
+      lastProgressKind: `harness-abort:${abort.kind}`,
+      recovery: prev?.recovery,
+      recoveryAttempts: prev?.recoveryAttempts ?? 0,
+      lastRecoveryReason: prev?.lastRecoveryReason,
+      harnessAbort: {
+        ...abort,
+        recordedAt: abort.recordedAt ?? Date.now(),
+      },
+    };
+    atomicWriteSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
+    return next;
+  });
+}
+
+export function clearUnitHarnessAbort(
+  basePath: string,
+  unitType: string,
+  unitId: string,
+  startedAt: number,
+  expectedKind?: UnitHarnessAbortRecord["kind"],
+): AutoUnitRuntimeRecord {
+  const path = runtimePath(basePath, unitType, unitId);
+  return withRecordLock(path, () => {
+    const prev = readUnitRuntimeRecord(basePath, unitType, unitId);
+    const sameRun = prev?.startedAt === startedAt;
+    if (!sameRun) {
+      return prev ?? writeUnitRuntimeRecord(basePath, unitType, unitId, startedAt, {});
+    }
+    if (expectedKind && prev?.harnessAbort?.kind !== expectedKind) {
+      return prev;
+    }
+    const next: AutoUnitRuntimeRecord = {
+      ...prev,
+      updatedAt: Date.now(),
+      lastProgressAt: Date.now(),
+      lastProgressKind: "harness-abort-cleared",
+      harnessAbort: undefined,
+    };
+    atomicWriteSync(path, JSON.stringify(next, null, 2) + "\n", "utf-8");
+    return next;
   });
 }
 
