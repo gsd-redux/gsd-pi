@@ -19,10 +19,11 @@ export function syncQueueOrderProjectionToDb(basePath: string): void {
 
 export function ensureExistingWorkflowDbOpen(
   basePath: string,
-  options: { throwOnOpenFailure?: boolean } = {},
+  options: { throwOnOpenFailure?: boolean; syncQueueOrder?: boolean } = {},
 ): boolean {
+  const syncQueueOrder = options.syncQueueOrder !== false;
   if (isDbAvailable()) {
-    syncQueueOrderProjectionToDb(basePath);
+    if (syncQueueOrder) syncQueueOrderProjectionToDb(basePath);
     return true;
   }
   let result: WorkflowDatabaseOpenResult;
@@ -44,7 +45,7 @@ export function ensureExistingWorkflowDbOpen(
   if (!result.ok && options.throwOnOpenFailure && result.reason !== "missing-database" && result.reason !== "missing-gsd-dir") {
     throw result.error ?? new Error(`Unable to open the GSD database: ${result.reason}`);
   }
-  if (result.ok) syncQueueOrderProjectionToDb(basePath);
+  if (result.ok && syncQueueOrder) syncQueueOrderProjectionToDb(basePath);
   return result.ok;
 }
 

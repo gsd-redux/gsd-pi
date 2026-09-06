@@ -5,21 +5,24 @@
 // determinism at a stable revision, milestone registry truncation, open-item
 // ordering, and the missing-DB null contract.
 
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   _getAdapter,
   closeDatabase,
+  getAllMilestones,
   getProjectAuthorityRow,
   getSchemaVersion,
   insertMilestone,
+  setMilestoneQueueOrder,
   transaction,
 } from "../gsd-db.ts";
-import { deriveState } from "../state.ts";
+import { deriveState, getDeriveTelemetry, invalidateStateCache, resetDeriveTelemetry } from "../state.ts";
+import { readProgressFromDb } from "../state/progress-from-db.ts";
 import {
   MAX_SNAPSHOT_MILESTONES,
   readProjectSnapshotFromDb,
@@ -390,4 +393,116 @@ test("readProjectSnapshotFromDb returns null when no database exists", async (t)
 
   assert.equal(snapshot, null);
   assert.equal(existsSync(join(root, ".gsd", "gsd.db")), false, "missing DB must not be created");
+});
+
+test("snapshot and progress reads never mutate milestone sequence from QUEUE-ORDER.json (runtime derive still repairs)", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  transaction(() => {
+    insertMilestone({ id: "M002", title: "Second", status: "pending" });
+    insertMilestone({ id: "M003", title: "Third", status: "pending" });
+  });
+  // DB-authoritative order differs from the projection file on purpose.
+  setMilestoneQueueOrder(["M002", "M001", "M003"]);
+  writeFileSync(
+    join(fixture.root, ".gsd", "QUEUE-ORDER.json"),
+    JSON.stringify({ order: ["M001", "M002", "M003"] }),
+  );
+
+  const snapshot = await readProjectSnapshotFromDb(fixture.root);
+  assert.ok(snapshot);
+  assert.deepEqual(
+    getAllMilestones().map((m) => m.id),
+    ["M002", "M001", "M003"],
+    "snapshot read must not mirror QUEUE-ORDER.json into DB sequence",
+  );
+  assert.deepEqual(
+    snapshot.milestones.items.map((m) => m.id),
+    ["M002", "M001", "M003"],
+    "registry must report DB-authoritative order, not the projection file",
+  );
+
+  const progress = await readProgressFromDb(fixture.root);
+  assert.ok(progress);
+  assert.deepEqual(
+    getAllMilestones().map((m) => m.id),
+    ["M002", "M001", "M003"],
+    "progress read must not mirror QUEUE-ORDER.json into DB sequence",
+  );
+
+  // The runtime derive path (sync enabled) still repairs sequence from the
+  // file. deriveState is cache-first, so invalidate like a fresh runtime
+  // derive (the read above populated the cache).
+  invalidateStateCache();
+  await deriveState(fixture.root);
+  assert.deepEqual(
+    getAllMilestones().map((m) => m.id),
+    ["M001", "M002", "M003"],
+    "runtime derive must keep the queue-order projection repair",
+  );
+});
+
+/** Same mechanism as progress-from-db.test.ts: bump the authority revision when
+ *  the hierarchy-counts query runs, through the shared adapter. */
+function changeAuthorityDuringCounts(
+  t: TestContext,
+  limit: number,
+): () => number {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  const originalPrepare = adapter.prepare.bind(adapter);
+  let changes = 0;
+
+  adapter.prepare = (sql: string) => {
+    const statement = originalPrepare(sql);
+    if (!sql.includes("AS completed") || !sql.includes("FROM milestones")) return statement;
+    return {
+      ...statement,
+      get(...params: unknown[]) {
+        if (changes < limit) {
+          changes++;
+          originalPrepare("UPDATE milestones SET title = ? WHERE id = 'M001'")
+            .run(`Authority revision ${changes}`);
+          originalPrepare("UPDATE project_authority SET revision = revision + 1 WHERE singleton = 1")
+            .run();
+        }
+        return statement.get(...params);
+      },
+    } as typeof statement;
+  };
+  t.after(() => {
+    adapter.prepare = originalPrepare;
+  });
+  return () => changes;
+}
+
+test("readProjectSnapshotFromDb retries when the authority revision moves during the counts read", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  resetDeriveTelemetry();
+  const changes = changeAuthorityDuringCounts(t, 1);
+
+  const snapshot = await readProjectSnapshotFromDb(fixture.root);
+  assert.ok(snapshot);
+  assert.equal(changes(), 1, "the revision bump should have fired exactly once");
+  assert.equal(getDeriveTelemetry().dbDeriveCount, 2, "a moved stability token must trigger a second derive");
+  assert.ok(snapshot.authority.revision >= 1, "the returned snapshot reflects the moved revision");
+});
+
+test("readProjectSnapshotFromDb returns the last attempt during sustained revision movement", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  resetDeriveTelemetry();
+  changeAuthorityDuringCounts(t, 3);
+
+  const snapshot = await readProjectSnapshotFromDb(fixture.root);
+  assert.ok(snapshot);
+  assert.equal(
+    getDeriveTelemetry().dbDeriveCount,
+    3,
+    "sustained movement must stop at MAX_REVISION_ATTEMPTS and return the last attempt",
+  );
 });

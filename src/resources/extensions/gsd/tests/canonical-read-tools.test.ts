@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -455,6 +455,36 @@ test("canonical read parity: dropped workflow_blockers table returns query_error
     );
     assert.ok(isolated, "isolated open should still work after handled snapshot query_error");
     isolated?.close();
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: missing project_authority row classifies as db_unavailable for native and MCP snapshot reads", async () => {
+  const base = makeProjectBase("gsd-canonical-snapshot-no-authority");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    getDb().prepare("DELETE FROM project_authority").run();
+    closeDatabase();
+    invalidateAllCaches();
+
+    const nativeSnapshotResult = await nativeTool(native, "gsd_project_snapshot").execute(
+      "call-11",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const nativeDetails = (nativeSnapshotResult as { details?: { error?: string } }).details;
+    assert.equal(nativeDetails?.error, "db_unavailable",
+      "native must classify the missing authority row like mapCanonicalReadError");
+
+    const mcpSnapshotResult = await mcpTool(mcp, "gsd_project_snapshot").handler({ projectDir: base });
+    const mcpDetails = (mcpSnapshotResult as { structuredContent?: { error?: string } }).structuredContent;
+    assert.equal(mcpDetails?.error, "db_unavailable");
   } finally {
     cleanup([base]);
   }
