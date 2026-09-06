@@ -111,7 +111,7 @@ test("project progress uses the existing RPC client and one sidebar refresh loop
 	assert.match(sidebarSource, /slice\.tasks\.map/);
 	assert.match(sidebarSource, /progress\.milestoneDetailsTasksTruncated/);
 	assert.match(sidebarSource, /this\.refresh\(true\)/);
-	assert.match(sidebarSource, /stored\[id\] === 'open'/);
+	assert.match(sidebarSource, /applySectionCollapseState\}\)\(document\.querySelectorAll/);
 	assert.equal((sidebarSource.match(/setInterval\(/g) ?? []).length, 1);
 });
 
