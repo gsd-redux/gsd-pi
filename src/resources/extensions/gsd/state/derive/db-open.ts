@@ -3,8 +3,10 @@
 
 import type { GSDState } from '../../types.js';
 import { getAllMilestones, isDbAvailable, isSchemaTooNewError, setMilestoneQueueOrder } from '../../gsd-db.js';
-import { openExistingWorkflowDatabase, type WorkflowDatabaseOpenResult } from '../../db-workspace.js';
+import { getWorkflowDatabasePath as getDbPath, openExistingWorkflowDatabase, resolveProjectRootDbPath, type WorkflowDatabaseOpenResult } from '../../db-workspace.js';
 import { loadQueueOrder, sortByQueueOrder } from '../../queue-order.js';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 export function syncQueueOrderProjectionToDb(basePath: string): void {
   const queueOrder = loadQueueOrder(basePath);
@@ -17,12 +19,31 @@ export function syncQueueOrderProjectionToDb(basePath: string): void {
   setMilestoneQueueOrder(desiredIds);
 }
 
+/**
+ * Compare DB paths by canonical form: resolveProjectRootDbPath canonicalizes
+ * (realpath) while the open handle keeps the spelling it was opened with — on
+ * macOS a /var vs /private/var mismatch must reuse the same DB, not reopen it.
+ * A missing requested path falls back to its raw form so it can never match.
+ */
+function isSameOpenDatabase(currentDbPath: string | null, requestedDbPath: string): boolean {
+  if (!currentDbPath) return false;
+  if (currentDbPath === ":memory:" || currentDbPath === requestedDbPath) return true;
+  const canonical = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return canonical(currentDbPath) === canonical(requestedDbPath);
+}
+
 export function ensureExistingWorkflowDbOpen(
   basePath: string,
   options: { throwOnOpenFailure?: boolean; syncQueueOrder?: boolean } = {},
 ): boolean {
   const syncQueueOrder = options.syncQueueOrder !== false;
-  if (isDbAvailable()) {
+  if (isDbAvailable() && isSameOpenDatabase(getDbPath(), resolveProjectRootDbPath(basePath))) {
     if (syncQueueOrder) syncQueueOrderProjectionToDb(basePath);
     return true;
   }
