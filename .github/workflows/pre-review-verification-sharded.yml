@@ -35,7 +35,7 @@ concurrency:
 jobs:
   build:
     name: build once
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     defaults:
       run:
@@ -279,7 +279,7 @@ jobs:
   test-shard:
     name: test-shard (${{ matrix.shard }}/${{ inputs.shard_count }})
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -388,7 +388,7 @@ jobs:
   lifecycle-gate:
     name: lifecycle shadow gate once
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     defaults:
       run:
@@ -446,7 +446,7 @@ jobs:
     name: aggregate shard results
     needs: [build, test-shard, lifecycle-gate]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     defaults:
       run:
