@@ -317,7 +317,7 @@ function renderConsole(report) {
       console.log('  Ask your coding agent before submitting:');
       console.log(`  "${prompt}"`);
       console.log('');
-      console.log('  Have a Codex subscription? Run: codex review --adversarial');
+      console.log('  Have a Codex subscription? Run: codex review --base main');
     }
   }
 
@@ -410,7 +410,7 @@ function renderGitHubSummary(report) {
       lines.push('> Report findings first. Then propose a fix scoped to the actual root cause, and wait for confirmation before applying changes outside the originally reported location.');
       lines.push('> ```');
       lines.push('>');
-      lines.push('> 💡 **Have a Codex subscription?** Get an independent second opinion: `codex review --adversarial`');
+      lines.push('> 💡 **Have a Codex subscription?** Get an independent second opinion: `codex review --base main`');
     }
   }
 

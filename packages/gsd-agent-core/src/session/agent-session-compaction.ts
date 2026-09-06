@@ -23,6 +23,17 @@ export function resolveThresholdContextTokens(assistantMessage: AssistantMessage
 export class AgentSessionCompactionModule {
 	constructor(readonly host: AgentSessionHost) {}
 
+	private removeTrailingAssistantMessages(): void {
+		const messages = this.host.agent.state.messages;
+		let keepCount = messages.length;
+		while (keepCount > 0 && messages[keepCount - 1]?.role === "assistant") {
+			keepCount--;
+		}
+		if (keepCount !== messages.length) {
+			this.host.agent.state.messages = messages.slice(0, keepCount);
+		}
+	}
+
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		this.host.disconnectFromAgent();
 		await this.host.abort();
@@ -205,12 +216,7 @@ export class AgentSessionCompactionModule {
 			}
 
 			this.host._overflowRecoveryAttempted = true;
-			// Remove the error message from agent state (it IS saved to session for history,
-			// but we don't want it in context for the retry)
-			const messages = this.host.agent.state.messages;
-			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-				this.host.agent.state.messages = messages.slice(0, -1);
-			}
+			this.removeTrailingAssistantMessages();
 			return await this.runAutoCompaction("overflow", true);
 		}
 
@@ -318,11 +324,7 @@ export class AgentSessionCompactionModule {
 						willRetry,
 					});
 					if (willRetry) {
-						const messages = this.host.agent.state.messages;
-						const lastMsg = messages[messages.length - 1];
-						if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
-							this.host.agent.state.messages = messages.slice(0, -1);
-						}
+						this.removeTrailingAssistantMessages();
 						return true;
 					}
 					return this.host.agent.hasQueuedMessages();
@@ -401,11 +403,7 @@ export class AgentSessionCompactionModule {
 			this.host.emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) {
-				const messages = this.host.agent.state.messages;
-				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
-					this.host.agent.state.messages = messages.slice(0, -1);
-				}
+				this.removeTrailingAssistantMessages();
 				return true;
 			}
 

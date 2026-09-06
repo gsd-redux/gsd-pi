@@ -10,7 +10,7 @@ Auto mode is a **state machine driven by the GSD database at the project root**.
 
 Each slice flows through phases automatically:
 
-```
+```text
 Plan (with integrated research) → Execute (per task) → Complete → Reassess Roadmap → Next Slice
                                                                                       ↓ (all slices done)
                                                                       UAT PASS → Validate Milestone → Complete Milestone
@@ -123,6 +123,12 @@ Writes outside those allowed paths, unsafe bash commands, and subagent dispatch 
 - Outside auto mode, use it when you ask GSD to check back or poll later; the wakeup dispatches after the delay, not synchronously.
 
 Auto mode consumes the scheduled wakeup only for the same `basePath + unitType + unitId`, waits the requested delay, and then dispatches the follow-up prompt in the same session. For safety, wakeups are bounded per unit; hitting the cap stops the unit with a timeout-style cancellation.
+
+### Discovered Blockers at Verification
+
+When a task completion records a settled, failed `blocker-discovered` Attempt awaiting failure routing, the host verification gate pauses auto mode. The pause names the task and Attempt and includes the staged blocker summary when present. If the task has a readable, unresolved escalation artifact, the pause also displays its question, options, and recommendation. Use `/gsd escalate list` to inspect pending escalations.
+
+This pause surfaces the blocker; it does not authorize a retry or change failure routing. Although the message suggests `/gsd auto` after resolving the blocker, the failed Attempt still awaits routing and the task remains `in_progress`. Resuming can route that historical failure to an abort, so resolving an escalation alone does not guarantee continuation. A later successful Attempt can pass verification normally. Other failed Attempts still fail the verification gate's succeeded-Attempt requirement.
 
 ### Pre-Dispatch Runtime Blocks
 
@@ -271,7 +277,7 @@ Artifact verification retries are capped at 3 attempts. If the expected artifact
 Normalized `auto-exit` reason buckets are:
 `pause`, `stop`, `blocked`, `merge-conflict`, `merge-failed`, `slice-merge-conflict`, `provider-error`, `session-failed`, `stream-aborted`, `unit-aborted`, `verification-exhausted`, `all-complete`, `no-active-milestone`, `other`.
 
-```
+```text
 /gsd forensics [optional problem description]
 ```
 
@@ -392,7 +398,7 @@ See [Configuration](./configuration.md) for skill routing preferences.
 
 ### Start
 
-```
+```text
 /gsd auto
 ```
 
@@ -402,7 +408,7 @@ Press **Escape**. The conversation is preserved. You can interact with the agent
 
 ### Resume
 
-```
+```text
 /gsd auto
 ```
 
@@ -410,7 +416,7 @@ Auto mode derives the latest database state and picks up where it left off.
 
 ### Stop
 
-```
+```text
 /gsd stop
 ```
 
@@ -418,7 +424,7 @@ Stops auto mode gracefully. Can be run from a different terminal.
 
 ### Steer
 
-```
+```text
 /gsd steer
 ```
 
@@ -426,7 +432,7 @@ Hard-steer plan documents during execution without stopping the pipeline. Change
 
 ### Capture
 
-```
+```text
 /gsd capture "add rate limiting to API endpoints"
 ```
 
@@ -434,7 +440,7 @@ Fire-and-forget thought capture. Captures are triaged automatically between task
 
 ### Visualize
 
-```
+```text
 /gsd visualize
 ```
 

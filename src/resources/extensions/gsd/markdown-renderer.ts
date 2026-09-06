@@ -234,7 +234,10 @@ function renderGateFindings(gate: GateRow): string {
 
 function pushIndented(lines: string[], value: string, indent = "  "): void {
   for (const line of value.split("\n")) {
-    lines.push(`${indent}${line}`);
+    // Blank (empty or whitespace-only, incl. a stray \r from CRLF input) lines
+    // stay truly empty — indent-only lines are trailing whitespace that fails
+    // git's whitespace checks (#2128).
+    lines.push(line.trim() ? `${indent}${line}` : "");
   }
 }
 

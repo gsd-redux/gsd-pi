@@ -28,6 +28,7 @@ import {
   isDbAvailable,
 } from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
+import { formatEscalationForDisplay, readEscalationArtifact } from "./escalation.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
 import { isClosedStatus } from "./status-guards.js";
@@ -84,7 +85,7 @@ import {
 type TaskIdentity = { milestoneId: string; sliceId: string; taskId: string };
 type VerificationAttemptSnapshot = Pick<
   TaskExecutionAttemptSnapshot,
-  "attemptId" | "resultId" | "state" | "outcome" | "nextStage"
+  "attemptId" | "resultId" | "resultFailureClass" | "resultSummary" | "state" | "outcome" | "nextStage"
 >;
 
 export interface TaskVerificationAuthority {
@@ -763,6 +764,60 @@ async function countIncompleteSlices(_basePath: string, milestoneId: string): Pr
   return slices.filter((slice) => !isClosedStatus(slice.status)).length;
 }
 
+type BlockerDiscoveredAttempt = VerificationAttemptSnapshot & {
+  state: "settled";
+  outcome: "failed";
+  nextStage: "route";
+  resultFailureClass: "blocker-discovered";
+};
+
+/**
+ * Mirror of the cutover's `isNewlyRecordedBlocker` predicate
+ * (auto/task-execution-cutover.ts): gsd_task_complete stages a
+ * blockerDiscovered report as a settled failed Attempt classified
+ * `blocker-discovered`, and the cutover deliberately passes it through as a
+ * completed unit instead of routing it — so it reaches this gate with no
+ * succeeded Attempt to verify.
+ */
+function isBlockerDiscoveredAttempt(
+  attempt: VerificationAttemptSnapshot | null,
+): attempt is BlockerDiscoveredAttempt {
+  return attempt?.state === "settled" &&
+    attempt.outcome === "failed" &&
+    attempt.nextStage === "route" &&
+    attempt.resultFailureClass === "blocker-discovered";
+}
+
+/**
+ * Pause message for a staged blocker (#2148): surface the blocker description
+ * and, when the ADR-011 escalation artifact exists and is unresolved, its
+ * question/options/recommendation. The artifact is opt-in
+ * (phases.mid_execution_escalation), so the attempt's staged summary is the
+ * always-available fallback.
+ */
+function describeBlockerPause(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  attempt: VerificationAttemptSnapshot,
+): string {
+  const lines = [
+    `Task ${milestoneId}/${sliceId}/${taskId} reported a discovered blocker; host verification cannot run without a succeeded canonical Attempt (attempt ${attempt.attemptId}).`,
+  ];
+  if (attempt.resultSummary) {
+    lines.push(`Blocker: ${attempt.resultSummary}`);
+  }
+  if (isDbAvailable()) {
+    const artifactPath = getTask(milestoneId, sliceId, taskId)?.escalation_artifact_path;
+    const artifact = artifactPath ? readEscalationArtifact(artifactPath) : null;
+    if (artifact && !artifact.respondedAt) {
+      lines.push("", formatEscalationForDisplay(artifact));
+    }
+  }
+  lines.push("Auto-mode is paused. Resolve the blocker (see /gsd escalate list), then resume with /gsd auto.");
+  return lines.join("\n");
+}
+
 /**
  * Run the verification gate for the current execute-task unit.
  * Returns:
@@ -811,6 +866,18 @@ export async function runPostUnitVerification(
       sliceId: sid,
       taskId: tid,
     });
+    if (isBlockerDiscoveredAttempt(latestAttempt)) {
+      // #2148: a staged blocker is a sanctioned terminal state — the Attempt
+      // settles as failed/blocker-discovered by design and the cutover passes
+      // it through, so throwing here wedged auto-mode into the ADR-047
+      // liveness backstop with no in-engine exit. Pause with the escalation
+      // surfaced instead; the operator resolves and resumes with /gsd auto.
+      await pauseAuto(ctx, pi, {
+        message: describeBlockerPause(mid, sid, tid, latestAttempt),
+        category: "unknown",
+      });
+      return "pause";
+    }
     if (latestAttempt?.state !== "settled" || latestAttempt.outcome !== "succeeded") {
       throw new Error("Host verification requires the latest succeeded canonical Attempt at the verify stage");
     }

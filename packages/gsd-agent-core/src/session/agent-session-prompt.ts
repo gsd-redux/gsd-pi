@@ -484,6 +484,7 @@ export class AgentSessionPromptModule {
 
 	isRetryableError(message: AssistantMessage): boolean {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
+		if (message.errorMessage.startsWith("[length-halt]")) return false;
 
 		// Context overflow is handled by compaction, not retry
 		const contextWindow = this.host.model?.contextWindow ?? 0;

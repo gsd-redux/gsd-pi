@@ -38,6 +38,7 @@ function makePi(overrides: Partial<Record<string, unknown>> = {}) {
     registerTool: () => {},
     registerHook: () => {},
     registerShortcut: () => {},
+    registerRuntimeRead: () => {},
     events,
     ...overrides,
   };
@@ -73,6 +74,7 @@ describe("extension bootstrap isolation (#4168, #4172)", () => {
       registerTool: () => {},
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
     };
 
@@ -101,6 +103,7 @@ describe("extension bootstrap isolation (#4168, #4172)", () => {
       registerTool: () => {},
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
     };
     await registerExtension(pi as any);
@@ -136,6 +139,7 @@ describe("registerGsdExtension defensive registration", () => {
       registerShortcut: () => {
         throw new Error("simulated platform-specific shortcut failure");
       },
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
     };
     assert.doesNotThrow(() => registerGsdExtension(pi as any));
@@ -154,6 +158,7 @@ describe("registerGsdExtension defensive registration", () => {
       registerTool: () => {},
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
     };
     registerGsdExtension(pi as any);
@@ -183,6 +188,7 @@ describe("registerGsdExtension defensive registration", () => {
       },
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
       getAllTools: () => registeredTools.map((name) => ({ name })),
     };
@@ -211,6 +217,7 @@ describe("registerGsdExtension defensive registration", () => {
       registerTool: (tool: { name: string }) => { registeredTools.push(tool.name); },
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
       // Simulate the pre-bind throwing stub (loader.ts:182).
       getAllTools: () => {
@@ -238,6 +245,7 @@ describe("registerGsdExtension defensive registration", () => {
       },
       registerHook: () => {},
       registerShortcut: () => {},
+      registerRuntimeRead: () => {},
       events: { on: () => {}, off: () => {}, emit: () => {} },
       getAllTools: () => registeredTools.map((name) => ({ name })),
     };

@@ -4,6 +4,7 @@
  *   gsd read progress --json --project /path
  *   gsd read roadmap --json --project /path [--milestone M001]
  *   gsd read memory --json --project /path --query "auth"
+ *   gsd read snapshot --json --project /path
  */
 
 import { existsSync } from 'node:fs'
@@ -98,6 +99,47 @@ async function loadDbProgressReader(
 }
 
 /**
+ * Injectable DB snapshot reader — mirrors loadDbProgressReader: production
+ * jiti-loads state/project-snapshot.ts; tests inject the reader/importer.
+ */
+export type DbSnapshotReader = (projectDir: string) => Promise<unknown>
+export type DbSnapshotModuleImporter = (path: string) => Promise<unknown>
+
+async function loadDbSnapshotReader(
+  moduleImporter: DbSnapshotModuleImporter = (path) => jiti.import(path, {}),
+): Promise<DbSnapshotReader> {
+  let mod: any
+  try {
+    mod = await moduleImporter(gsdExtensionPath('state/project-snapshot.ts'))
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `selected GSD extensions do not support DB-backed snapshot reads; synchronize the extension bundle (${detail})`,
+    )
+  }
+  if (typeof mod.readProjectSnapshotFromDb !== 'function') {
+    throw new Error('selected GSD extensions do not support DB-backed snapshot reads; synchronize the extension bundle')
+  }
+  return (projectDir: string) => mod.readProjectSnapshotFromDb(projectDir)
+}
+
+/**
+ * DB-backed project snapshot (issue #2102), or null when there is no DB file.
+ * Unlike progress, snapshot has no projection fallback: a null result means
+ * the DB is missing and the caller must refuse loudly.
+ */
+async function tryReadSnapshotFromDb(
+  dbPath: string,
+  projectDir: string,
+  reader?: DbSnapshotReader,
+  moduleImporter?: DbSnapshotModuleImporter,
+): Promise<unknown | null> {
+  if (!existsSync(dbPath)) return null
+  const read = reader ?? await loadDbSnapshotReader(moduleImporter)
+  return await read(projectDir)
+}
+
+/**
  * DB-backed progress payload, or null when the projection fallback applies:
  * no DB file, or the DB cannot be opened (locked/unreadable). Schema skew
  * has already refused loudly via assertProjectDbSchemaSupported before this
@@ -155,7 +197,7 @@ async function assertProjectDbSchemaSupported(
   }
 }
 
-export type ReadKind = 'progress' | 'roadmap' | 'memory'
+export type ReadKind = 'progress' | 'roadmap' | 'memory' | 'snapshot'
 
 /** DB-backed progress reader — jiti-loaded in production, injected in tests. */
 export type DbProgressReader = (projectDir: string) => Promise<unknown>
@@ -182,7 +224,7 @@ function parseReadArgs(argv: string[]): ReadCliOptions | null {
   const args = argv.slice(readIndex + 1)
   if (args.length < 1) return null
   const kind = args[0] as ReadKind
-  if (!['progress', 'roadmap', 'memory'].includes(kind)) return null
+  if (!['progress', 'roadmap', 'memory', 'snapshot'].includes(kind)) return null
 
   let project: string | undefined
   let milestone: string | undefined
@@ -206,11 +248,13 @@ export async function runReadCli(
   preflight?: ReadCliSchemaPreflight,
   dbProgressReader?: DbProgressReader,
   dbProgressModuleImporter?: DbProgressModuleImporter,
+  dbSnapshotReader?: DbSnapshotReader,
+  dbSnapshotModuleImporter?: DbSnapshotModuleImporter,
 ): Promise<number> {
   const opts = parseReadArgs(argv)
   if (!opts) {
     process.stderr.write(
-      'Usage: gsd read <progress|roadmap|memory> --json --project <path> [--milestone M001] [--query text]\n',
+      'Usage: gsd read <progress|roadmap|memory|snapshot> --json --project <path> [--milestone M001] [--query text]\n',
     )
     return 1
   }
@@ -260,6 +304,32 @@ export async function runReadCli(
         return 1
       }
       data = fromDb ?? readProgress(projectDir)
+      break
+    }
+    case 'snapshot': {
+      // DB-only read (issue #2102): no projection fallback exists, so a
+      // missing DB or failed read refuses loudly with exit 1.
+      let snapshot: unknown | null
+      try {
+        snapshot = await tryReadSnapshotFromDb(
+          dbPath,
+          projectDir,
+          dbSnapshotReader,
+          dbSnapshotModuleImporter,
+        )
+      } catch (err) {
+        process.stderr.write(
+          `[gsd] DB-backed snapshot read failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        )
+        return 1
+      }
+      if (snapshot === null) {
+        process.stderr.write(
+          `[gsd] snapshot requires a GSD database; none found at ${dbPath}\n`,
+        )
+        return 1
+      }
+      data = snapshot
       break
     }
     case 'roadmap':
