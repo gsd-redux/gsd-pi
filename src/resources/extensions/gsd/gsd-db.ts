@@ -1,5 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: GSD single-writer barrel + write/read wrappers.
+// File Purpose: GSD single-writer barrel + write/read wrappers. Diagnostic-only branch (#2158 probe): comment to trip windows-portability classification.
 //
 // ─── Single-writer invariant ─────────────────────────────────────────────
 // Every write-SQL statement against `.gsd/gsd.db` lives behind a typed
