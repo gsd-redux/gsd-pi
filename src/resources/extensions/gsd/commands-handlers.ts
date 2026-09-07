@@ -26,6 +26,7 @@ import {
 } from "./doctor.js";
 import { isAutoActive, checkRemoteAutoSession } from "./auto.js";
 import { getAutoWorktreePath } from "./auto-worktree-path-resolution.js";
+import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import { currentDirectoryRoot, projectRoot } from "./commands/context.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { buildClaudeRuntimeFloorAdvisory } from "../../shared/claude-runtime-floor.js";
@@ -539,6 +540,47 @@ export async function handleKnowledge(args: string, ctx: ExtensionCommandContext
   );
 }
 
+// ─── run-hook unit-ID validation (#2195) ─────────────────────────────────────
+
+/** Body of the canonical milestone ID pattern (`^`/`$` anchors stripped) for composing deeper shapes. */
+const MILESTONE_ID = MILESTONE_ID_RE.source.slice(1, -1);
+
+/**
+ * ID shape each run-hook scope takes; `example` matches the usage text.
+ * Slice IDs are zero-padded to two digits but not capped, so 100+ slices yield
+ * `S100`+; task IDs likewise. Both segments accept 2-3 digits.
+ */
+const RUN_HOOK_ID_SHAPES = {
+  milestone: { pattern: MILESTONE_ID_RE, example: "M001" },
+  slice: { pattern: new RegExp(`^${MILESTONE_ID}/S\\d{2,3}$`), example: "M001/S01" },
+  task: { pattern: new RegExp(`^${MILESTONE_ID}/S\\d{2,3}/T\\d{2,3}$`), example: "M001/S01/T01" },
+} as const;
+
+/** Unit types `/gsd run-hook` documents, mapped to the ID shape each one takes. */
+const RUN_HOOK_UNIT_SCOPES: Record<string, keyof typeof RUN_HOOK_ID_SHAPES> = {
+  "execute-task": "task",
+  "plan-slice": "slice",
+  "research-milestone": "milestone",
+  "complete-slice": "slice",
+  "complete-milestone": "milestone",
+};
+
+/**
+ * Validate a `/gsd run-hook` unit ID against the shape its unit type takes.
+ * Returns a user-facing message on failure, or null when the ID is acceptable.
+ */
+export function validateRunHookUnitId(unitType: string, unitId: string): string | null {
+  // Own-property check: a plain-object lookup would resolve "toString"/"constructor" via the prototype.
+  if (!Object.hasOwn(RUN_HOOK_UNIT_SCOPES, unitType)) {
+    return `Unknown unit type "${unitType}". Expected one of: ${Object.keys(RUN_HOOK_UNIT_SCOPES).join(", ")}`;
+  }
+  const { pattern, example } = RUN_HOOK_ID_SHAPES[RUN_HOOK_UNIT_SCOPES[unitType]];
+  if (!pattern.test(unitId)) {
+    return `Invalid unit ID format: "${unitId}" for ${unitType}. Expected format: ${example}`;
+  }
+  return null;
+}
+
 export async function handleRunHook(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const parts = args.trim().split(/\s+/);
   if (parts.length < 3) {
@@ -572,10 +614,10 @@ Examples:
     return;
   }
 
-  // Validate unit ID format
-  const unitIdPattern = /^M\d{3}\/S\d{2,3}\/T\d{2,3}$/;
-  if (!unitIdPattern.test(unitId)) {
-    ctx.ui.notify(`Invalid unit ID format: "${unitId}". Expected format: M004/S04/T03`, "warning");
+  // Validate the unit ID against the shape its unit type takes
+  const unitIdError = validateRunHookUnitId(unitType, unitId);
+  if (unitIdError) {
+    ctx.ui.notify(unitIdError, "warning");
     return;
   }
 
