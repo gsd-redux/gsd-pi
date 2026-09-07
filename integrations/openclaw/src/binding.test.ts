@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BindStore, NO_PROJECT_MESSAGE, resolveProject, routeFromCommandContext, routeKey, validateProjectPath } from "./binding.js";
+import { BindStore, NO_PROJECT_MESSAGE, canonicalConversationId, resolveProject, routeFromCommandContext, routeFromDeliveryContext, routeKey, validateProjectPath } from "./binding.js";
 
 function withTempDir<T>(fn: (root: string) => T): T {
   const root = mkdtempSync(join(tmpdir(), "open-gsd-openclaw-"));
@@ -25,6 +25,22 @@ describe("routeFromCommandContext", () => {
     assert.equal(routeFromCommandContext({ channel: "discord", from: "user9" })?.conversationId, "user9");
     assert.equal(routeFromCommandContext({ channel: "webchat", sessionKey: "agent:main:main" })?.conversationId, "agent:main:main");
     assert.equal(routeFromCommandContext({ channel: "webchat" }), null);
+  });
+
+  it("canonicalizes Telegram topic targets so command and delivery routes agree", () => {
+    assert.equal(canonicalConversationId("telegram:-100123:topic:7"), "telegram:-100123");
+    assert.equal(canonicalConversationId("telegram:42:direct-topic:9"), "telegram:42:direct-topic:9", "a DM topic is only addressable in-band, and both paths carry it");
+    assert.equal(canonicalConversationId(" telegram:-100123 "), "telegram:-100123");
+    assert.equal(canonicalConversationId("telegram:-100123:topic:x"), "telegram:-100123:topic:x", "only numeric topic ids are stripped");
+    assert.equal(canonicalConversationId("discord:chan:topic:7:extra"), "discord:chan:topic:7:extra", "only a trailing suffix is stripped");
+    const command = routeFromCommandContext({ channel: "telegram", accountId: "bot1", to: "telegram:-100123", messageThreadId: 7 });
+    const delivery = routeFromDeliveryContext({ channel: "telegram", accountId: "bot1", to: "telegram:-100123:topic:7", threadId: 7 });
+    assert.deepEqual(delivery, { channel: "telegram", accountId: "bot1", conversationId: "telegram:-100123", threadId: "7" });
+    assert.equal(routeKey(command!), routeKey(delivery!));
+    assert.equal(routeFromDeliveryContext(undefined), null);
+    assert.equal(routeFromDeliveryContext({ channel: "telegram" }), null);
+    assert.equal(routeFromDeliveryContext({ to: "x" }), null);
+    assert.deepEqual(routeFromDeliveryContext({ channel: "discord", to: "c1", threadId: null }), { channel: "discord", conversationId: "c1" });
   });
 
   it("produces the same key for native and text invocations of one chat", () => {

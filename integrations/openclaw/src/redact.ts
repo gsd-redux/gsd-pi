@@ -18,6 +18,10 @@ export function redactSecrets(text: string): string {
   return out;
 }
 
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Keep the last `maxBytes` of a string (UTF-8 byte budget, char-safe). */
 export function tail(text: string, maxBytes: number): string {
   if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;

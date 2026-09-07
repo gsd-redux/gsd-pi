@@ -12,6 +12,11 @@
       "kind": "runtime-slash"
     }
   ],
+  "contracts": {
+    "tools": [
+      "gsd_status"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

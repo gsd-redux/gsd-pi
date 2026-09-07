@@ -14,7 +14,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isGsdProject } from "./gsd-cli.js";
-import type { PluginCommandContext } from "./types.js";
+import type { DeliveryContext, PluginCommandContext } from "./types.js";
 
 export interface Route {
   channel: string;
@@ -23,19 +23,41 @@ export interface Route {
   threadId?: string;
 }
 
-export function routeFromCommandContext(ctx: Pick<PluginCommandContext, "channel" | "accountId" | "to" | "from" | "sessionKey" | "messageThreadId">): Route | null {
-  const conversationId = ctx.to?.trim() || ctx.from?.trim() || ctx.sessionKey?.trim();
-  if (!ctx.channel || !conversationId) return null;
-  const threadId =
-    ctx.messageThreadId === undefined || ctx.messageThreadId === null || ctx.messageThreadId === ""
-      ? undefined
-      : String(ctx.messageThreadId);
+/**
+ * One conversation id for both identity sources. Telegram's native command
+ * path hands commands a bare `telegram:<chatId>` for forum topics while
+ * delivery targets keep the topic in-band (`telegram:<chatId>:topic:<n>`,
+ * `buildTelegramRoutingTarget` in extensions/telegram/src/bot/helpers.ts).
+ * The forum thread already travels as `Route.threadId`, so that suffix is
+ * dropped. A channel Direct-Messages topic (`:direct-topic:<n>`) is kept: both
+ * paths carry it, and it is the only way to address that topic outbound
+ * (`parseTelegramTarget`; `threadId` cannot express it).
+ */
+export function canonicalConversationId(raw: string): string {
+  return raw.trim().replace(/:topic:\d+$/, "");
+}
+
+function buildRoute(channel: string | undefined, accountId: string | undefined, conversationId: string | undefined, thread: string | number | null | undefined): Route | null {
+  const canonical = conversationId ? canonicalConversationId(conversationId) : "";
+  if (!channel || !canonical) return null;
+  const threadId = thread === undefined || thread === null || thread === "" ? undefined : String(thread);
   return {
-    channel: ctx.channel,
-    ...(ctx.accountId ? { accountId: ctx.accountId } : {}),
-    conversationId,
+    channel,
+    ...(accountId ? { accountId } : {}),
+    conversationId: canonical,
     ...(threadId ? { threadId } : {}),
   };
+}
+
+export function routeFromCommandContext(ctx: Pick<PluginCommandContext, "channel" | "accountId" | "to" | "from" | "sessionKey" | "messageThreadId">): Route | null {
+  const conversationId = ctx.to?.trim() || ctx.from?.trim() || ctx.sessionKey?.trim();
+  return buildRoute(ctx.channel, ctx.accountId, conversationId, ctx.messageThreadId);
+}
+
+/** Route of an agent tool call, from the trusted ambient `deliveryContext`. */
+export function routeFromDeliveryContext(dc: DeliveryContext | undefined): Route | null {
+  if (!dc) return null;
+  return buildRoute(dc.channel, dc.accountId, dc.to?.trim(), dc.threadId);
 }
 
 export function routeKey(route: Route): string {

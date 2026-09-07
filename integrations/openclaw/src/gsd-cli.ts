@@ -33,19 +33,21 @@ export const defaultExec: ExecFn = (file, args) =>
       (error, stdout, stderr) => {
         if (error) {
           const detail = redactSecrets(tail(String(stderr ?? ""), STDERR_TAIL_BYTES)).trim();
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code === "ENOENT" || code === "EACCES") {
-            const problem = code === "EACCES" ? "is not executable" : "not found";
-            reject(new Error(`gsd CLI ${problem} at "${file}"; set plugins.entries.open-gsd-openclaw.config.cliPath`));
-            return;
-          }
-          reject(new Error(detail || error.message));
+          reject(new Error(spawnErrorMessage(error, file) ?? (detail || error.message)));
           return;
         }
         resolve({ stdout: String(stdout), stderr: String(stderr) });
       },
     );
   });
+
+/** Operator-facing wording for a CLI that cannot be started; `undefined` for any other error. */
+export function spawnErrorMessage(error: unknown, file: string): string | undefined {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code !== "ENOENT" && code !== "EACCES") return undefined;
+  const problem = code === "EACCES" ? "is not executable" : "not found";
+  return `gsd CLI ${problem} at "${file}"; set plugins.entries.open-gsd-openclaw.config.cliPath`;
+}
 
 /** A directory is a GSD project when it carries `.gsd/` (or the legacy `.planning/`). */
 export function isGsdProject(dir: string): boolean {

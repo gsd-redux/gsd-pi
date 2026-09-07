@@ -28,6 +28,7 @@
     "dist",
     "!dist/**/*.test.*",
     "openclaw.plugin.json",
+    "skills",
     "README.md"
   ],
   "openclaw": {

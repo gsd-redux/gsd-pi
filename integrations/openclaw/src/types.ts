@@ -5,12 +5,21 @@
  * the host.
  */
 export type {
+  AgentToolResult,
+  AnyAgentTool,
+  ChannelOutboundAdapter,
+  ChannelOutboundContext,
+  DeliveryContext,
   OpenClawPluginApi,
   OpenClawPluginCommandDefinition,
   OpenClawPluginServiceContext,
+  OpenClawPluginToolContext,
+  OpenClawPluginToolFactory,
+  OutboundDeliveryResult,
   PluginCommandContext,
   PluginCommandResult,
   PluginLogger,
+  PluginRuntimeLifecycleRegistration,
 } from "openclaw/plugin-sdk/plugin-entry";
 
 export interface PluginConfig {
