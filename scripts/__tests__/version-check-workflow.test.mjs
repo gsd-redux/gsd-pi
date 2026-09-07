@@ -107,15 +107,63 @@ test("workflow checks out the repo before running the inline script", () => {
   assert.ok(checkout, "a checkout step must run before the github-script step");
 });
 
-test("workflow uses the shared module instead of inline comparison logic", () => {
-  assert.match(script, /scripts\/lib\/version-check-core\.mjs/);
-  assert.match(script, /normalizeReportedVersion\(/);
-  assert.match(script, /isVersionLike\(/);
-  assert.match(script, /isOutdated\(/);
-  assert.doesNotMatch(script, /function parseVersion/);
+async function executeWorkflow(reportedVersion) {
+  const comments = [];
+  const labels = [];
+  const outputs = [];
+  const context = {
+    payload: { issue: { body: `### GSD version\n\n${reportedVersion}\n`, number: 2189 } },
+    repo: { owner: "open-gsd", repo: "gsd-pi" },
+  };
+  const core = {
+    info() {},
+    warning() {},
+    setFailed(message) { assert.fail(message); },
+    setOutput(name, value) { outputs.push({ name, value }); },
+  };
+  const github = {
+    rest: {
+      issues: {
+        async listComments() { return { data: [] }; },
+        async createComment(payload) { comments.push(payload); },
+        async addLabels(payload) { labels.push(payload); },
+      },
+    },
+  };
+  async function fetchLatest(url) {
+    assert.equal(url, "https://registry.npmjs.org/@opengsd%2fgsd-pi/latest");
+    return { ok: true, async json() { return { version: "1.18.0" }; } };
+  }
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction("context", "core", "github", "fetch", "process", script);
+  await run(context, core, github, fetchLatest, { cwd: () => repoRoot });
+  return { comments, labels, outputs };
+}
+
+test("workflow does not write upgrade prompts for current or invalid versions", async () => {
+  for (const version of ["1.18.0", "`1.18.0`", "GSD v1.18.0", "latest", "GSD", "unknown"]) {
+    assert.deepEqual(
+      await executeWorkflow(version),
+      { comments: [], labels: [], outputs: [] },
+      `input: ${JSON.stringify(version)}`,
+    );
+  }
 });
 
-test("workflow keeps the bot marker and needs-upgrade label", () => {
-  assert.match(script, /gsd-version-check/);
-  assert.match(script, /needs-upgrade/);
+test("workflow posts the upgrade comment and label for older versions", async () => {
+  for (const version of ["1.17.0", "GSD v1.17.0"]) {
+    const { comments, labels } = await executeWorkflow(version);
+    assert.equal(comments.length, 1);
+    const { body, ...destination } = comments[0];
+    assert.deepEqual(destination, { owner: "open-gsd", repo: "gsd-pi", issue_number: 2189 });
+    assert.ok(body.startsWith("<!-- gsd-version-check -->\n"));
+    assert.ok(body.includes("**GSD v1.17.0**"));
+    assert.ok(body.includes("**v1.18.0**"));
+    assert.deepEqual(labels, [{
+      owner: "open-gsd",
+      repo: "gsd-pi",
+      issue_number: 2189,
+      labels: ["needs-upgrade"],
+    }]);
+  }
 });
