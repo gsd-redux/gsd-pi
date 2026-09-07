@@ -48,6 +48,12 @@ test("lookupModelCost finds MAI Code 1.1 Flash pricing", () => {
   assert.equal(entry.inputPer1k, 0.0002);
   assert.equal(entry.outputPer1k, 0.0012);
 });
+test("lookupModelCost finds GPT-6 Astra pricing", () => {
+  const entry = lookupModelCost("github-copilot/gpt-6-astra");
+  assert.ok(entry);
+  assert.equal(entry.inputPer1k, 0.01);
+  assert.equal(entry.outputPer1k, 0.05);
+});
 
 test("resolveModelEconomics keeps provider-qualified identities separate from same bare model IDs", () => {
   const openai = resolveModelEconomics({

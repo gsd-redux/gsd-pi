@@ -1800,6 +1800,20 @@ async function generateModels() {
 		});
 	}
 
+	const gpt6Astra: Model<"openai-completions"> = {
+		id: "gpt-6-astra",
+		name: "GPT-6 Astra",
+		api: "openai-completions",
+		provider: "openai",
+		baseUrl: "https://api.openai.com/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+		contextWindow: 1050000,
+		maxTokens: 128000,
+	};
+	if (!allModels.some((m) => m.provider === "openai" && m.id === gpt6Astra.id)) allModels.push(gpt6Astra);
+
 	// Add missing GitHub Copilot GPT-5.6 variants until models.dev includes them.
 	const copilotGpt55 = allModels.find((m) => m.provider === "github-copilot" && m.id === "gpt-5.5");
 	if (copilotGpt55) {
@@ -1817,6 +1831,9 @@ async function generateModels() {
 				},
 			});
 		}
+	}
+	if (!allModels.some((m) => m.provider === "github-copilot" && m.id === gpt6Astra.id)) {
+		allModels.push({ ...gpt6Astra, provider: "github-copilot", baseUrl: "https://api.individual.githubcopilot.com", headers: COPILOT_STATIC_HEADERS, compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false } });
 	}
 
 	const deepseekCompat: OpenAICompletionsCompat = {

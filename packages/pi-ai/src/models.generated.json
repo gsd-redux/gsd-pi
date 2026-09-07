@@ -12063,6 +12063,29 @@
         "xhigh": "xhigh"
       }
     },
+    "gpt-6-astra": {
+      "id": "gpt-6-astra",
+      "name": "GPT-6 Astra",
+      "api": "openai-completions",
+      "provider": "github-copilot",
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "cost": {"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5},
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "headers": {
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat"
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      }
+    },
     "claude-opus-4.6": {
       "id": "claude-opus-4.6",
       "name": "Claude Opus 4.6",
