@@ -12,11 +12,11 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { SessionManager } from './session-manager.js';
 import { installGlobalErrorHandlers } from './cli-errors.js';
@@ -982,36 +982,20 @@ describe('createMcpServer tool registration', () => {
 
     const previousExecutors = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
     const previousWriteGate = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    const previousBridgeDisable = process.env.GSD_WORKFLOW_BRIDGE_TEST_DISABLE;
     delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
     delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    process.env.GSD_WORKFLOW_BRIDGE_TEST_DISABLE = '1';
     t.after(() => {
       restoreEnvironmentValue('GSD_WORKFLOW_EXECUTORS_MODULE', previousExecutors);
       restoreEnvironmentValue('GSD_WORKFLOW_WRITE_GATE_MODULE', previousWriteGate);
+      restoreEnvironmentValue('GSD_WORKFLOW_BRIDGE_TEST_DISABLE', previousBridgeDisable);
     });
 
-    const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const serverExtension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-    const bridgePath = resolve(moduleDir, '../../../src/resources/extensions/gsd/mcp-bridge.ts');
-    const hiddenBridgePath = `${bridgePath}.hidden-for-standalone-test`;
-    if (existsSync(bridgePath)) renameSync(bridgePath, hiddenBridgePath);
-    t.after(() => {
-      if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
-    });
-    let result: { content: Array<{ text: string }> };
-    try {
-      const standaloneServerModule = await import(
-        `${pathToFileURL(join(moduleDir, `server${serverExtension}`)).href}?workflow-bridge-disabled=${Date.now()}`
-      ) as typeof import('./server.js');
-      const { server } = await standaloneServerModule.createMcpServer(
-        sm,
-        { includeWorkflowTools: false },
-      );
-      const progressTool = (server as any)._registeredTools?.gsd_progress;
-      assert.ok(progressTool, 'gsd_progress should be registered');
-      result = await progressTool.handler({ projectDir });
-    } finally {
-      if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
-    }
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+    const result = await progressTool.handler({ projectDir });
     const progress = JSON.parse(result.content[0].text);
     assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
     assert.equal(progress.phase, 'plan');

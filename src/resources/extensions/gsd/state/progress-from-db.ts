@@ -143,7 +143,7 @@ function buildProgressResult(
         : null,
     blockers: [...state.blockers],
     nextAction: state.nextAction,
-    readMetadata: DB_READ_METADATA,
+    readMetadata: { ...DB_READ_METADATA },
   };
 }
 

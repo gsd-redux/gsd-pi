@@ -180,7 +180,7 @@ export function readProgress(projectDir: string): ProgressResult {
     requirements: null,
     blockers: [],
     nextAction: '',
-    readMetadata: PROJECTION_READ_METADATA,
+    readMetadata: { ...PROJECTION_READ_METADATA },
   };
 
   if (!existsSync(statePath)) {
