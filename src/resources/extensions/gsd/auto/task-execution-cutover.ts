@@ -497,12 +497,16 @@ export async function runWithTaskExecutionAttempt(
       // task reopen is history and must not advertise a dead resume (#1948).
       // A consumed resume is likewise historical even though its one-shot
       // authorization now reads false; eligibility distinguishes that state
-      // from a current abort that still needs operator repair (#2112).
+      // from a current abort that still needs operator repair (#2112). The
+      // already-resumed handling is evaluated independently of the
+      // resumeAuthorized flag: a freshly authorized resume carries the same
+      // marker while the kernel still parks at route, so its re-entry must
+      // fall through to the successor claim instead of re-routing the
+      // already-routed Result (#2188).
       if (
         predecessor.nextStage === "route" &&
         terminalRecovery?.recoveryOwner === "agent" &&
-        terminalRecovery.action === "abort" &&
-        !terminalRecovery.resumeAuthorized
+        terminalRecovery.action === "abort"
       ) {
         if (terminalRecovery.resumeEligibility?.failedGuard === "already-resumed") {
           // A consumed authorization proves that a successor claim committed
@@ -514,9 +518,10 @@ export async function runWithTaskExecutionAttempt(
             return runWithTaskExecutionAttempt(input, run, deps);
           }
         }
-        return taskRecoveryAbortResult(terminalRecovery.recoveryActionId);
-      }
-      if (predecessor.nextStage === "route") {
+        if (!terminalRecovery.resumeAuthorized) {
+          return taskRecoveryAbortResult(terminalRecovery.recoveryActionId);
+        }
+      } else if (predecessor.nextStage === "route") {
         if (predecessor.outcome === "succeeded") {
           const recovery = terminalRecovery;
           if (!recovery) {

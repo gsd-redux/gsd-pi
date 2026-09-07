@@ -31,6 +31,7 @@ import {
   readTaskRecoveryResumeEligibility,
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
+  resumeTaskRecovery,
 } from "../task-recovery-domain-operation.js";
 import { reopenTask } from "../task-lifecycle-domain-operation.js";
 import {
@@ -1256,6 +1257,90 @@ test("an explicitly resumed durable abort claims one later Attempt", async () =>
   assert.equal(runs, 1);
   assert.equal(domain.claims.length, 1);
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
+test("an authorized resume re-entry claims the successor instead of re-routing the routed Result (#2188)", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const firstDispatchId = seedCanonicalTask();
+  const task = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+  const first = claimTaskAttempt({
+    invocation: { idempotencyKey: "resume/claim/1", sourceTransport: "internal", actorType: "agent" },
+    task,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: firstDispatchId,
+  });
+  const settled = settleTaskAttempt({
+    invocation: { idempotencyKey: "resume/settle/1", sourceTransport: "internal", actorType: "agent" },
+    attemptId: first.attemptId,
+    outcome: "failed",
+    failureClass: "fatal",
+    summary: "fatal execution failure",
+    output: {},
+  });
+  const abort = recordFailureAndSelectRecovery({
+    invocation: { idempotencyKey: "resume/route/1", sourceTransport: "internal", actorType: "agent" },
+    attemptId: first.attemptId,
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "fatal execution failure",
+    evidence: { source: "test" },
+    rationale: "abort",
+  });
+  assert.equal(abort.action, "abort");
+  resumeTaskRecovery({
+    invocation: { idempotencyKey: "resume/resume/1", sourceTransport: "internal", actorType: "user", actorId: "user-1" },
+    recoveryActionId: abort.recoveryActionId,
+    repairSummary: "The fatal condition was repaired.",
+    evidence: { verification: "operator confirmed the repair" },
+  });
+
+  // Exact cutover-visible state right after the authorized resume: the kernel
+  // still parks at route, so resumeAuthorized reads true while the eligibility
+  // diagnosis reports the already-resumed marker. The #2113 refresh handling
+  // must be reachable in this state, not gated behind !resumeAuthorized.
+  const route = readTaskRecoveryRoute(first.attemptId);
+  assert.equal(route?.recoveryOwner, "agent");
+  assert.equal(route?.action, "abort");
+  assert.equal(route?.resumeAuthorized, true);
+  assert.equal(route?.resumeEligibility?.failedGuard, "already-resumed");
+
+  const base = canonicalDeps();
+  let routes = 0;
+  const deps: CutoverDeps = {
+    ...base,
+    routeTaskFailure(routeInput) {
+      routes += 1;
+      return base.routeTaskFailure(routeInput);
+    },
+  };
+  let ran = false;
+  const result = await runWithTaskExecutionAttempt(input({
+    dispatchId: insertClaimedDispatch(2),
+  }), async () => {
+    ran = true;
+    const claimed = readLatestTaskAttempt(task);
+    if (!claimed || claimed.attemptId === first.attemptId) {
+      throw new Error("the authorized resume must claim a fresh successor Attempt before execution");
+    }
+    settleTaskAttempt({
+      invocation: { idempotencyKey: "resume/settle/2", sourceTransport: "internal", actorType: "agent" },
+      attemptId: claimed.attemptId,
+      outcome: "succeeded",
+      failureClass: "none",
+      summary: "recovered execution finished",
+      output: {},
+    });
+    return { action: "next", data: {} };
+  }, deps);
+
+  assert.equal(result.action, "next");
+  assert.equal(ran, true);
+  assert.equal(routes, 0, "the already-routed Result must not be routed again");
+  const latest = readLatestTaskAttempt(task);
+  assert.equal(latest?.attemptNumber, 2);
+  assert.equal(latest?.retryOfAttemptId, first.attemptId);
 });
 
 test("execute-task exceptions settle, route, and return the durable recovery action", async () => {
