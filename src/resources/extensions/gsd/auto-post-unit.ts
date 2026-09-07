@@ -2783,8 +2783,15 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   }
 
   // ── Post-unit hooks ──
-  if (s.currentUnit && !s.stepMode) {
-    const hookUnit = checkPostUnitHooks(s.currentUnit.type, s.currentUnit.id, s.basePath);
+  // A `criticality: blocking` hook is a gate, not a side effect: it must
+  // complete — or pause for manual recovery — before the next unit is
+  // selected, in auto mode and step mode alike (#2194). Step mode skips
+  // non-blocking hooks, so it dispatches with a blocking-only filter.
+  if (s.currentUnit) {
+    // Persist while a synchronously-set gate block is still pending so the
+    // pause is durable: resume restores the block and re-arms the blocked
+    // hook instead of selecting past the failed gate (#2194).
+    const hookUnit = checkPostUnitHooks(s.currentUnit.type, s.currentUnit.id, s.basePath, { blockingOnly: s.stepMode });
     persistHookState(s.basePath);
     if (hookUnit) {
       if (s.currentUnit) {
@@ -2834,7 +2841,9 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
     const gateBlock = consumeGateBlock();
     if (gateBlock) {
-      persistHookState(s.basePath);
+      // The block reached disk in the persistHookState above (it was still
+      // pending), so a resumed session re-arms the gate instead of selecting
+      // past it (#2194).
       const verdict = gateBlock.verdict ? ` verdict=${gateBlock.verdict};` : "";
       const artifact = gateBlock.artifact ? ` artifact=${gateBlock.artifact};` : "";
       const message =

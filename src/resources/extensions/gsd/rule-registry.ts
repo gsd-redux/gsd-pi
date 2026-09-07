@@ -231,6 +231,15 @@ function captureTaskCompletionIdentity(trigger: HookTriggerRef): Pick<
   );
 }
 
+type HookQueueEntry = {
+  config: PostUnitHookConfig;
+  triggerUnitType: string;
+  triggerUnitId: string;
+  forceRun?: boolean;
+  completionOperationId?: string;
+  legacyCompletedAt?: string;
+};
+
 interface GateOutcome {
   verdict?: PostUnitHookOutcomeVerdict | "failed";
   artifact?: string;
@@ -277,6 +286,8 @@ export class RuleRegistry {
   retryTrigger: RetryTrigger | null = null;
   hookFailure: HookFailureState | null = null;
   gateBlockPending: PostUnitGateBlock | null = null;
+  /** Hooks queued behind the blocked gate, held for re-queue on resume (#2194). */
+  gateBlockQueue: HookQueueEntry[] = [];
 
   constructor(dispatchRules: UnifiedRule[]) {
     this.dispatchRules = dispatchRules;
@@ -358,6 +369,7 @@ export class RuleRegistry {
     completedUnitType: string,
     completedUnitId: string,
     basePath: string,
+    opts?: { blockingOnly?: boolean },
   ): HookDispatchResult | null {
     // If we just completed a hook unit, handle its result
     if (this.activeHook) {
@@ -381,7 +393,13 @@ export class RuleRegistry {
     const hooks = resolvePostUnitHooks(basePath).filter(h =>
       h.after.includes(completedUnitType),
     );
-    if (hooks.length === 0) return null;
+    // `blockingOnly` (step mode) skips advisory hooks: only `criticality:
+    // blocking` gates dispatch there, so a gate can never be bypassed by
+    // running the workflow one step at a time (#2194).
+    const queueHooks = opts?.blockingOnly
+      ? hooks.filter(h => isBlockingHook(h))
+      : hooks;
+    if (queueHooks.length === 0) return null;
 
     const completionIdentity = captureTaskCompletionIdentity({
       triggerUnitType: completedUnitType,
@@ -390,7 +408,7 @@ export class RuleRegistry {
     if (!completionIdentity) return null;
 
     // Build hook queue for this trigger
-    this.hookQueue = hooks.map(config => ({
+    this.hookQueue = queueHooks.map(config => ({
       config,
       triggerUnitType: completedUnitType,
       triggerUnitId: completedUnitId,
@@ -451,7 +469,12 @@ export class RuleRegistry {
         const maxCycles = hookMaxCycles(config);
         const currentCycle = this.cycleCounts.get(cycleKey) ?? 0;
         if (currentCycle >= maxCycles) {
-          this._setGateBlock(config, { triggerUnitType, triggerUnitId }, {
+          this._setGateBlock(config, {
+            triggerUnitType,
+            triggerUnitId,
+            completionOperationId,
+            legacyCompletedAt,
+          }, {
             action: "pause",
             reason: `gate cycle budget exhausted before ${config.name} produced a passing outcome`,
             cycle: currentCycle,
@@ -572,6 +595,44 @@ export class RuleRegistry {
     );
     if (!config) return null;
     return this._buildHookDispatch(config, this.activeHook.triggerUnitId);
+  }
+
+  /**
+   * Re-arm a persisted gate block after resume (#2194).
+   *
+   * A gate block clears `activeHook` before the pause, so a resumed session
+   * would otherwise find no hook state and select the next unit without a
+   * passing verdict. Re-arm restores the blocked gate to its in-flight shape:
+   * the block is consumed, `activeHook` is set (with the captured trigger
+   * completion identity, so needs-rework can reopen the task) so the re-run's
+   * completion is assessed against the gate artifact, and the dispatch is
+   * returned for the caller to enqueue. If the artifact already carries a
+   * passing verdict the block is dropped without rerunning the hook. Hooks
+   * queued behind the blocked gate are re-queued either way so they still
+   * run once the gate resolves.
+   */
+  reconcileRestoredGateBlock(basePath: string): HookDispatchResult | null {
+    const block = this.gateBlockPending;
+    if (!block) return null;
+    this.gateBlockPending = null;
+    this.hookQueue = this.gateBlockQueue;
+    this.gateBlockQueue = [];
+    const config = resolvePostUnitHooks(basePath).find(h => h.name === block.hookName);
+    if (!config) return this._dequeueNextHook(basePath);
+    const outcome = this._readGateOutcome(config, block, basePath);
+    if (outcome.verdict === "pass" || outcome.verdict === "advisory") {
+      return this._dequeueNextHook(basePath);
+    }
+    this.activeHook = {
+      hookName: config.name,
+      triggerUnitType: block.triggerUnitType,
+      triggerUnitId: block.triggerUnitId,
+      cycle: this.cycleCounts.get(hookCycleKey(config, block)) ?? 1,
+      pendingRetry: false,
+      ...(block.completionOperationId ? { completionOperationId: block.completionOperationId } : {}),
+      ...(block.legacyCompletedAt ? { legacyCompletedAt: block.legacyCompletedAt } : {}),
+    };
+    return this._buildHookDispatch(config, block.triggerUnitId);
   }
 
   private _assessHookCompletion(
@@ -936,6 +997,8 @@ export class RuleRegistry {
       hookName: config.name,
       triggerUnitType: trigger.triggerUnitType,
       triggerUnitId: trigger.triggerUnitId,
+      ...(trigger.completionOperationId ? { completionOperationId: trigger.completionOperationId } : {}),
+      ...(trigger.legacyCompletedAt ? { legacyCompletedAt: trigger.legacyCompletedAt } : {}),
       artifact: opts.outcome?.artifact ?? config.artifact,
       artifactPath: opts.outcome?.artifactPath,
       verdict: opts.outcome?.verdict,
@@ -945,6 +1008,10 @@ export class RuleRegistry {
       maxCycles: opts.maxCycles ?? hookMaxCycles(config),
       retryArtifact: opts.retryArtifact,
     };
+    // Capture the hooks still queued behind the blocked gate so resume can
+    // re-queue them; otherwise later gates are silently skipped once the
+    // blocked gate resolves (#2194).
+    this.gateBlockQueue = [...this.hookQueue];
   }
 
   // ── Pre-dispatch hook evaluation (sync, all-matching with compose) ──
@@ -1097,6 +1164,7 @@ export class RuleRegistry {
     this.retryTrigger = null;
     this.hookFailure = null;
     this.gateBlockPending = null;
+    this.gateBlockQueue = [];
   }
 
   // ── Persistence ─────────────────────────────────────────────────────
@@ -1131,6 +1199,15 @@ export class RuleRegistry {
       })),
       retryPending: this.retryPending,
       retryTrigger: this.retryTrigger ? { ...this.retryTrigger } : null,
+      gateBlockPending: this.gateBlockPending ? { ...this.gateBlockPending } : null,
+      gateBlockQueue: this.gateBlockQueue.map(entry => ({
+        hookName: entry.config.name,
+        triggerUnitType: entry.triggerUnitType,
+        triggerUnitId: entry.triggerUnitId,
+        forceRun: entry.forceRun,
+        completionOperationId: entry.completionOperationId,
+        legacyCompletedAt: entry.legacyCompletedAt,
+      })),
       savedAt: new Date().toISOString(),
     };
     const dir = join(basePath, ".gsd");
@@ -1167,23 +1244,7 @@ export class RuleRegistry {
       this.activeHook = state.activeHook && typeof state.activeHook === "object"
         ? { ...state.activeHook }
         : null;
-      this.hookQueue = [];
-      if (Array.isArray(state.hookQueue)) {
-        const hooks = resolvePostUnitHooks(basePath);
-        for (const entry of state.hookQueue) {
-          const config = hooks.find(h => h.name === entry.hookName);
-          if (config) {
-            this.hookQueue.push({
-              config,
-              triggerUnitType: entry.triggerUnitType,
-              triggerUnitId: entry.triggerUnitId,
-              forceRun: entry.forceRun,
-              completionOperationId: entry.completionOperationId,
-              legacyCompletedAt: entry.legacyCompletedAt,
-            });
-          }
-        }
-      }
+      this.hookQueue = this._restoreQueueEntries(basePath, state.hookQueue);
       const retryTrigger = state.retryTrigger;
       if (
         state.retryPending === true &&
@@ -1197,9 +1258,47 @@ export class RuleRegistry {
         this.retryPending = false;
         this.retryTrigger = null;
       }
+      const gateBlock = state.gateBlockPending;
+      if (
+        gateBlock &&
+        typeof gateBlock === "object" &&
+        typeof gateBlock.hookName === "string" &&
+        typeof gateBlock.triggerUnitType === "string" &&
+        typeof gateBlock.triggerUnitId === "string"
+      ) {
+        this.gateBlockPending = { ...gateBlock };
+      } else {
+        this.gateBlockPending = null;
+      }
+      this.gateBlockQueue = this._restoreQueueEntries(basePath, state.gateBlockQueue);
     } catch (e) {
       logWarning("registry", `failed to restore hook state: ${(e as Error).message}`);
     }
+  }
+
+  /** Rehydrate persisted queue entries against current hook configuration;
+   *  entries whose hook no longer exists are dropped. */
+  private _restoreQueueEntries(
+    basePath: string,
+    entries: PersistedHookState["hookQueue"] | PersistedHookState["gateBlockQueue"],
+  ): HookQueueEntry[] {
+    const restored: HookQueueEntry[] = [];
+    if (!Array.isArray(entries)) return restored;
+    const hooks = resolvePostUnitHooks(basePath);
+    for (const entry of entries) {
+      const config = hooks.find(h => h.name === entry.hookName);
+      if (config) {
+        restored.push({
+          config,
+          triggerUnitType: entry.triggerUnitType,
+          triggerUnitId: entry.triggerUnitId,
+          forceRun: entry.forceRun,
+          completionOperationId: entry.completionOperationId,
+          legacyCompletedAt: entry.legacyCompletedAt,
+        });
+      }
+    }
+    return restored;
   }
 
   /** Clear persisted hook state file from disk. */
@@ -1216,6 +1315,8 @@ export class RuleRegistry {
             hookQueue: [],
             retryPending: false,
             retryTrigger: null,
+            gateBlockPending: null,
+            gateBlockQueue: [],
             savedAt: new Date().toISOString(),
           }, null, 2),
           "utf-8",
