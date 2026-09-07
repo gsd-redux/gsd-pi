@@ -509,10 +509,9 @@ export async function runWithTaskExecutionAttempt(
         terminalRecovery.action === "abort"
       ) {
         if (terminalRecovery.resumeEligibility?.failedGuard === "already-resumed") {
-          // A consumed authorization proves that a successor claim committed
-          // after the predecessor snapshot was read. Refresh and evaluate that
-          // newer lineage head instead of returning the dead abort lever from
-          // the stale finalize/retry race (#2112).
+          // The resume event may still await a claim or already be consumed.
+          // Refresh in case a successor committed after the predecessor read,
+          // avoiding the stale finalize/retry abort lever (#2112).
           const refreshed = deps.readLatestTaskAttempt(task);
           if (refreshed && refreshed.attemptId !== predecessor.attemptId) {
             return runWithTaskExecutionAttempt(input, run, deps);
