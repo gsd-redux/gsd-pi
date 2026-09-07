@@ -8,16 +8,11 @@ import { resolve } from "node:path";
 /**
  * Patterns matching authoritative .gsd/ state files that agents must NOT write directly.
  *
- * Only STATE.md is blocked — it is purely engine-rendered from DB state.
- * All other .gsd/ files are agent-authored content that agents create and
- * update during discuss, plan, and execute phases:
- * - REQUIREMENTS.md — agents create during discuss, read during planning
- * - PROJECT.md — agents create during discuss, update at milestone close
- * - ROADMAP.md / PLAN.md — agents create during planning, engine renders checkboxes
- * - SUMMARY.md, KNOWLEDGE.md, CONTEXT.md — non-authoritative content
+ * Projection ownership is defined in
+ * docs/dev/state-db-cutover-projection-contract.md, section 1.
  */
 const BLOCKED_PATTERNS: RegExp[] = [
-  // STATE.md is the only purely engine-rendered file.
+  // STATE.md is rendered from authoritative DB state.
   // Case-insensitive to prevent bypass on macOS (case-insensitive APFS).
   // (^|[/\\]) matches both absolute paths (/project/.gsd/…) and bare relative
   // paths (.gsd/STATE.md) so a path without a leading separator is also blocked.
@@ -30,11 +25,9 @@ const BLOCKED_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Bash command patterns that target STATE.md.
- * Covers common shell write patterns: redirect, tee, cp, mv, sed -i, etc.
- * (#2200) Read-only access is not blocked: sqlite3 opened with -readonly/--readonly,
- * file-op commands where the state file is the SOURCE, and commands that only
- * mention the paths as text (e.g. grep search patterns).
+ * Bash write patterns for STATE.md, gsd.db, and database sidecars.
+ * Guard behavior and parsing limits are documented in
+ * docs/dev/state-db-cutover-projection-contract.md, section 1.
  */
 const BASH_STATE_PATTERNS: RegExp[] = [
   // Redirect writes: > STATE.md, >> STATE.md, >| STATE.md.
@@ -44,8 +37,8 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   // tee to STATE.md
   /\btee\b.*STATE\.md/i,
   // cp/mv with STATE.md as the destination — the state file must be the last
-  // argument before a command separator, so copying it OUT passes (#2200);
-  // an optional closing quote still counts (cp x ".gsd/STATE.md")
+  // significant argument, allowing a closing quote and trailing redirections
+  // or comments. Redirection operators within the segment are not separators.
   /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>)|(?<=[<>])&(?=[0-9-])|(?<=>)\|)*STATE\.md(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
   // sed -i editing STATE.md
   /\bsed\b.*-i.*STATE\.md/i,
@@ -98,7 +91,7 @@ export function isBlockedStateFile(filePath: string): boolean {
 }
 
 /**
- * Tests whether a bash command appears to target STATE.md for writing.
+ * Tests whether a bash command appears to write protected state files.
  */
 export function isBashWriteToStateFile(command: string): boolean {
   if (BASH_STATE_PATTERNS.some((pattern) => pattern.test(command))) return true;
