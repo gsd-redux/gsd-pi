@@ -252,3 +252,19 @@ describe('cp/mv ampersand redirection boundaries (#2200 R5)', () => {
     }
   }
 });
+
+
+describe('cp/mv descriptor and noclobber redirections (#2200 R6)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      for (const redirection of ['2>&1', '0<&3', '2>&-', '>|/tmp/copy.log']) {
+        test(`${operation} ${file} with ${redirection} before destination`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ${redirection} .gsd/${file}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ${redirection} ".gsd/${file}"`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} ${redirection} /tmp/copy.db`), false);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy.db ${redirection}`), false);
+        });
+      }
+    }
+  }
+});

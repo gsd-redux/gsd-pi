@@ -46,7 +46,7 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   // cp/mv with STATE.md as the destination — the state file must be the last
   // argument before a command separator, so copying it OUT passes (#2200);
   // an optional closing quote still counts (cp x ".gsd/STATE.md")
-  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>))*STATE\.md(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
+  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>)|(?<=[<>])&(?=[0-9-])|(?<=>)\|)*STATE\.md(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
   // sed -i editing STATE.md
   /\bsed\b.*-i.*STATE\.md/i,
   // dd output to STATE.md
@@ -55,7 +55,7 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   />{1,2}\|?\s*\S*gsd\.db/i,
   // cp/mv with gsd.db (or its WAL/SHM sidecars) as the destination (#2200);
   // an optional closing quote still counts (cp x ".gsd/gsd.db")
-  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>))*gsd\.db(?:-wal|-shm)?(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
+  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>)|(?<=[<>])&(?=[0-9-])|(?<=>)\|)*gsd\.db(?:-wal|-shm)?(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
   // dd output to gsd.db
   /\bdd\b.*of=\S*gsd\.db/i,
   // sqlite3 CLI writing gsd.db, unless opened read-only (#2200): -readonly/--readonly
