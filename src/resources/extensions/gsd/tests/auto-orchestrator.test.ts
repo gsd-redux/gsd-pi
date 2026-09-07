@@ -1052,7 +1052,11 @@ test("retryActiveUnit clears in-flight idempotency without marking the unit fina
   assert.ok(f.journalNames().includes("unit-retry"));
 });
 
-test("retryActiveUnit stops explicitly when finalize-retry trips the liveness backstop", async (t) => {
+// #2198: the finalize-retry recurrence is known to be non-progressing, so the
+// trip must pause with the concrete finalize-failure cause instead of wedging
+// behind a generic notice + `--resume-wedge` acknowledgement. The signature
+// ledger still re-trips an unchanged re-entry.
+test("retryActiveUnit pauses with the finalize cause when finalize-retry trips the liveness backstop", async (t) => {
   const notifications: Array<[string, string]> = [];
   const f = makeFixture();
   t.after(() => f.cleanup());
@@ -1071,11 +1075,20 @@ test("retryActiveUnit stops explicitly when finalize-retry trips the liveness ba
   await f.orchestrator.retryActiveUnit(second.unit);
 
   assert.equal(f.orchestrator.getStatus().phase, "stopped");
-  assert.ok(notifications.some(([message, level]) => level === "error" && /liveness backstop tripped/.test(message)));
+  const pause = notifications.find(([message, level]) => level === "error" && /pausing auto-mode/.test(message));
+  assert.ok(pause, "the trip must pause with the concrete finalize cause");
+  assert.match(pause[0], /failed finalize twice with identical inputs/);
+  assert.doesNotMatch(pause[0], /liveness backstop tripped/);
   const wedge = getOpenWedge(normalizeRealPath(f.base));
   assert.equal(wedge.ok, true);
-  assert.equal(wedge.ok ? wedge.wedge?.guardId : null, "finalize-retry");
-  assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
+  assert.equal(wedge.ok ? wedge.wedge : null, null, "no wedge record may gate plain /gsd auto re-entry");
+
+  await f.orchestrator.retryActiveUnit(second.unit);
+  assert.equal(
+    f.orchestrator.getStatus().phase,
+    "stopped",
+    "an unchanged re-entry after the pause must still trip the signature ledger",
+  );
 });
 
 test("settle canceled clears a deferred dispatch claim without finalizing the unit", async (t) => {

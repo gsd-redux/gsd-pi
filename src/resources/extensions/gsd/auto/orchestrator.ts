@@ -75,6 +75,7 @@ import {
   hashBackstopInput,
   lookupLatestLedgerError,
   recordNonAdvancingOutcome,
+  recordNonAdvancingRecurrence,
   serializeNonAdvancingEvidence,
   snapshotUnitTargetRows,
 } from "../auto-liveness-backstop.js";
@@ -1839,22 +1840,28 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const scopeId = this.backstopScopeId();
     if (scopeId) {
       const ledgerError = lookupLatestLedgerError(unit.unitType, unit.unitId);
-      const outcome = recordNonAdvancingOutcome({
+      // #2198: the finalize-retry recurrence is already known to be
+      // non-progressing, so the trip pauses with the concrete finalize-failure
+      // cause instead of minting a wedge — the acknowledge gate would only
+      // repeat what the pause says, and the guard's own sanctioned exit resumes
+      // with plain `/gsd auto`. The signature ledger still re-trips an
+      // unchanged re-entry (recordNonAdvancingRecurrence).
+      const outcome = recordNonAdvancingRecurrence({
         scopeId,
         guardId: "finalize-retry",
         unitType: unit.unitType,
         unitId: unit.unitId,
         inputPayload: ledgerError ?? "finalize-retry",
-      }, {
-        sanctionedExit:
-          `${unit.unitType} ${unit.unitId} failed finalize twice with identical inputs` +
-          (ledgerError ? `: ${ledgerError.slice(0, 300)}` : "") +
-          ` — fix the underlying failure before re-running.`,
       });
       if ('error' in outcome) {
         this.pendingBackstopFailure = outcome.error;
-      } else if (outcome.tripped) {
-        const reason = formatWedgeTripNotice(outcome.wedge);
+      } else if (outcome.recurred) {
+        const detail = ledgerError && ledgerError !== "finalize-retry" ? `: ${ledgerError}` : "";
+        const reason =
+          `${unit.unitType} ${unit.unitId} failed finalize twice with identical inputs${detail}. ` +
+          `Retrying unchanged inputs cannot resolve this failure — fix the finalize failure ` +
+          `(new verification evidence, changed source revision, or a recovery action), ` +
+          `then re-run /gsd auto; pausing auto-mode.`;
         this.status.phase = "stopped";
         this.ctx.ui.notify(reason, "error");
         this.notifyLifecycle({ name: "stopped", detail: reason });

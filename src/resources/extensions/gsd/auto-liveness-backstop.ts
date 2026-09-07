@@ -57,6 +57,11 @@ export type RecordOutcomeResult =
   | { tripped: true; count: number; wedge: WedgeRecord }
   | { tripped: false; count: 0; error: string };
 
+export type RecordRecurrenceResult =
+  | { recurred: false; count: number }
+  | { recurred: true; count: number }
+  | { recurred: false; count: 0; error: string };
+
 export type OpenWedgeResult =
   | { ok: true; wedge: WedgeRecord | null }
   | { ok: false; error: string };
@@ -187,6 +192,43 @@ export function recordNonAdvancingOutcome(
   } catch (err) {
     return {
       tripped: false,
+      count: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Count-only variant of recordNonAdvancingOutcome for guards whose trip
+ * converts to a deterministic pause-with-cause instead of a wedge (#2198):
+ * the same ADR-047 signature ledger and trip-at-2 threshold, but no wedge
+ * record is minted, so plain `/gsd auto` re-entry is not gated behind
+ * `--resume-wedge` acknowledgement. An unchanged re-entry after the pause
+ * trips again; changed input supersedes the row as usual (ADR-047 §3).
+ */
+export function recordNonAdvancingRecurrence(
+  input: BlockSignatureInput,
+): RecordRecurrenceResult {
+  if (!isDbAvailable()) {
+    return { recurred: false, count: 0, error: 'workflow database unavailable' };
+  }
+  try {
+    return transaction(() => {
+      const count = upsertLivenessBlockSignature(
+        {
+          scopeId: input.scopeId,
+          guardId: input.guardId,
+          unitType: input.unitType,
+          unitId: input.unitId,
+          inputHash: hashBackstopInput(input.inputPayload),
+        },
+        nowIso(),
+      );
+      return { recurred: count >= LIVENESS_TRIP_THRESHOLD, count };
+    });
+  } catch (err) {
+    return {
+      recurred: false,
       count: 0,
       error: err instanceof Error ? err.message : String(err),
     };
