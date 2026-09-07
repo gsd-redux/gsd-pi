@@ -1,9 +1,9 @@
 // Project/App: gsd-pi
 // File Purpose: Copilot Chat language model tools backed by the existing GSD RPC client.
 
-import { resolve } from "node:path";
 import * as vscode from "vscode";
 import type { GsdClient } from "./gsd-client.js";
+import { assertActiveWorkspaceRoot, assertEmptyToolInput, awaitWithCancellation } from "./copilot-tools-guards.js";
 
 interface EmptyToolInput {
 	[key: string]: never;
@@ -16,33 +16,12 @@ function toJsonToolResult(value: unknown): vscode.LanguageModelToolResult {
 }
 
 function assertEmptyInput(input: unknown): void {
-	if (input === undefined) return;
-	if (input === null || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length > 0) {
-		throw new Error("GSD project read tools do not accept input parameters. They use the active workspace project.");
-	}
+	assertEmptyToolInput(input);
 }
 
-function assertActiveWorkspaceRoot(projectRoot: string): void {
+function assertWorkspaceRootMatchesClient(projectRoot: string): void {
 	const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
-	if (workspaceFolders.length !== 1) {
-		throw new Error("GSD project read tools require exactly one workspace folder. Open the target project in its own VS Code window.");
-	}
-	const activeRoot = resolve(workspaceFolders[0].uri.fsPath);
-	const clientRoot = resolve(projectRoot);
-	if (activeRoot !== clientRoot) {
-		throw new Error("GSD project read tools require the active workspace folder to match the connected GSD agent project. Restart the GSD agent for this workspace, then retry.");
-	}
-}
-
-async function awaitWithCancellation<T>(operation: () => Promise<T>, token: vscode.CancellationToken): Promise<T> {
-	if (token.isCancellationRequested) {
-		throw new Error("GSD project read was cancelled.");
-	}
-
-	return await new Promise<T>((resolve, reject) => {
-		const cancellation = token.onCancellationRequested(() => reject(new Error("GSD project read was cancelled.")));
-		operation().then(resolve, reject).finally(() => cancellation.dispose());
-	});
+	assertActiveWorkspaceRoot(projectRoot, workspaceFolders.map((folder) => folder.uri.fsPath));
 }
 
 function readConfirmationMessages(title: string, detail: string): vscode.LanguageModelToolConfirmationMessages {
@@ -70,7 +49,7 @@ export class ProjectProgressTool implements vscode.LanguageModelTool<EmptyToolIn
 		token: vscode.CancellationToken,
 	): Promise<vscode.LanguageModelToolResult> {
 		assertEmptyInput(options.input);
-		assertActiveWorkspaceRoot(this.client.projectRoot);
+		assertWorkspaceRootMatchesClient(this.client.projectRoot);
 		if (!this.client.isConnected) {
 			throw new Error("GSD agent is not connected. Start the GSD agent, then retry the project progress read.");
 		}
@@ -96,7 +75,7 @@ export class ProjectSnapshotTool implements vscode.LanguageModelTool<EmptyToolIn
 		token: vscode.CancellationToken,
 	): Promise<vscode.LanguageModelToolResult> {
 		assertEmptyInput(options.input);
-		assertActiveWorkspaceRoot(this.client.projectRoot);
+		assertWorkspaceRootMatchesClient(this.client.projectRoot);
 		if (!this.client.isConnected) {
 			throw new Error("GSD agent is not connected. Start the GSD agent, then retry the project snapshot read.");
 		}
