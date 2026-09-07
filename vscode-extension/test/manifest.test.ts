@@ -141,10 +141,16 @@ test("Copilot read tools are contributed and registered against the existing RPC
 		assert.equal(tool.canBeReferencedInPrompt, true);
 		assert.equal(tool.inputSchema, undefined);
 		assert.equal("readOnlyHint" in tool, false);
+		assert.equal(typeof tool.icon, "string");
 	}
 
 	assert.deepEqual(tools.map((tool) => tool.toolReferenceName), ["gsdProjectProgress", "gsdProjectSnapshot"]);
 	assert.match(extensionSource, /registerCopilotTools\(context, client\)/);
+	assert.match(toolSource, /typeof vscode\.lm\.registerTool !== "function"/);
+	assert.match(toolSource, /if \(input === undefined\) return/);
+	assert.match(toolSource, /resolve\(workspaceFolders\[0\]\.uri\.fsPath\)/);
+	assert.match(toolSource, /resolve\(projectRoot\)/);
+	assert.match(toolSource, /this\.client\.projectRoot/);
 	assert.match(toolSource, /vscode\.lm\.registerTool\("gsd_project_progress", new ProjectProgressTool\(client\)\)/);
 	assert.match(toolSource, /vscode\.lm\.registerTool\("gsd_project_snapshot", new ProjectSnapshotTool\(client\)\)/);
 	assert.match(toolSource, /The result is read-only, but it will be sent to the active chat\/model context/);
@@ -155,8 +161,17 @@ test("Copilot read tools are contributed and registered against the existing RPC
 	assert.match(toolSource, /this\.client\.getProjectProgress\(\)/);
 	assert.match(toolSource, /this\.client\.getProjectSnapshot\(\)/);
 	assert.doesNotMatch(toolSource, /new GsdClient/);
+	assert.match(clientSource, /get projectRoot\(\): string/);
 	assert.match(clientSource, /async getProjectSnapshot\(\): Promise<ProjectSnapshot \| null>/);
 	assert.match(clientSource, /type: "get_project_snapshot"/);
+});
+
+test("web bridge treats project progress and snapshot reads as read-only while onboarding is locked", () => {
+	const bridgeSource = readFileSync(join(root, "..", "src", "web", "bridge-service.ts"), "utf8");
+	const allowlist = bridgeSource.match(/const READ_ONLY_RPC_COMMAND_TYPES = new Set<RpcCommand\["type"\]>\(\[([\s\S]*?)\]\);/);
+	assert.ok(allowlist);
+	assert.match(allowlist[1], /"get_project_progress"/);
+	assert.match(allowlist[1], /"get_project_snapshot"/);
 });
 
 test("agent git helpers scope git output to tracked agent files", () => {

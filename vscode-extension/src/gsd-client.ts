@@ -77,6 +77,10 @@ export class GsdClient implements vscode.Disposable {
 		return this.process !== null && this.process.exitCode === null;
 	}
 
+	get projectRoot(): string {
+		return this.cwd;
+	}
+
 	get autoRetryEnabled(): boolean {
 		return this._autoRetryEnabled;
 	}
