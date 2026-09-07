@@ -997,22 +997,21 @@ describe('createMcpServer tool registration', () => {
     t.after(() => {
       if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
     });
-    let server: Awaited<ReturnType<typeof createMcpServer>>['server'];
+    let result: { content: Array<{ text: string }> };
     try {
       const standaloneServerModule = await import(
         `${pathToFileURL(join(moduleDir, `server${serverExtension}`)).href}?workflow-bridge-disabled=${Date.now()}`
       ) as typeof import('./server.js');
-      ({ server } = await standaloneServerModule.createMcpServer(
+      const { server } = await standaloneServerModule.createMcpServer(
         sm,
         { includeWorkflowTools: false },
-      ));
+      );
+      const progressTool = (server as any)._registeredTools?.gsd_progress;
+      assert.ok(progressTool, 'gsd_progress should be registered');
+      result = await progressTool.handler({ projectDir });
     } finally {
       if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
     }
-    const progressTool = (server as any)._registeredTools?.gsd_progress;
-    assert.ok(progressTool, 'gsd_progress should be registered');
-
-    const result = await progressTool.handler({ projectDir });
     const progress = JSON.parse(result.content[0].text);
     assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
     assert.equal(progress.phase, 'plan');
