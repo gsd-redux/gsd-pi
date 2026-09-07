@@ -32,24 +32,43 @@ const BLOCKED_PATTERNS: RegExp[] = [
 /**
  * Bash command patterns that target STATE.md.
  * Covers common shell write patterns: redirect, tee, cp, mv, sed -i, etc.
+ * (#2200) Read-only access is not blocked: sqlite3 opened with -readonly/--readonly,
+ * file-op commands where the state file is the SOURCE, and commands that only
+ * mention the paths as text (e.g. grep search patterns).
  */
 const BASH_STATE_PATTERNS: RegExp[] = [
-  // Redirect/pipe writes: > STATE.md, >> STATE.md, >| STATE.md
-  /[>|]+\s*\S*STATE\.md/i,
+  // Redirect writes: > STATE.md, >> STATE.md, >| STATE.md.
+  // (#2200) A bare '|' is not a redirect — piping into a filename writes nothing,
+  // and a quoted grep alternation like "gsd.db\|STATE.md" was misread as one.
+  />{1,2}\|?\s*\S*STATE\.md/i,
   // tee to STATE.md
   /\btee\b.*STATE\.md/i,
-  // cp/mv targeting STATE.md
-  /\b(cp|mv)\b.*STATE\.md/i,
+  // cp/mv with STATE.md as the destination — the state file must be the last
+  // argument before a command separator, so copying it OUT passes (#2200);
+  // an optional closing quote still counts (cp x ".gsd/STATE.md")
+  /\b(?:cp|mv)\b[^;&|]*\.gsd[/\\]STATE\.md(?=["']?\s*(?:$|[;&|]))/i,
   // sed -i editing STATE.md
   /\bsed\b.*-i.*STATE\.md/i,
   // dd output to STATE.md
   /\bdd\b.*of=\S*STATE\.md/i,
-  // Direct DB access via sqlite3/sql.js/better-sqlite3 targeting gsd.db (#3625)
-  /\b(sqlite3|sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
-  /\bgsd\.db\b.*\b(sqlite3|sql\.js|better-sqlite3)\b/i,
-  // Shell writes targeting gsd.db files
-  /[>|]+\s*\S*gsd\.db/i,
-  /\b(cp|mv|dd)\b.*gsd\.db/i,
+  // Redirect writes to gsd.db (see STATE.md note re: '|')
+  />{1,2}\|?\s*\S*gsd\.db/i,
+  // cp/mv with gsd.db (or its WAL/SHM sidecars) as the destination (#2200);
+  // an optional closing quote still counts (cp x ".gsd/gsd.db")
+  /\b(?:cp|mv)\b[^;&|]*\.gsd[/\\]gsd\.db(?:-wal|-shm)?(?=["']?\s*(?:$|[;&|]))/i,
+  // dd output to gsd.db
+  /\bdd\b.*of=\S*gsd\.db/i,
+  // sqlite3 CLI writing gsd.db, unless opened read-only (#2200): -readonly/--readonly
+  // anywhere among the leading option flags makes the whole connection read-only.
+  // Without the flag the CLI executes arbitrary SQL, so SELECT/.dump/.schema text
+  // does not exempt the invocation. The db path must be the first non-option
+  // argument (sqlite3 [OPTIONS] FILE [SQL]); the option region is flags-only, so
+  // SQL text after the path cannot inject the exemption, and the required db-path
+  // token prevents backtracking from skipping over a later -readonly flag.
+  /\bsqlite3\s+(?:(?!-{1,2}readonly\b)-{1,2}[^\s]+\s+)*(?!-{1,2}readonly\b)[^\s]*gsd\.db/i,
+  // In-process sqlite libs touching gsd.db (#3625), either argument order
+  /\b(?:sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
+  /\bgsd\.db\b.*\b(?:sql\.js|better-sqlite3|node:sqlite)\b/i,
 ];
 
 /**
