@@ -1,19 +1,14 @@
 {
-  "name": "@opengsd/openclaw-plugin",
+  "name": "@opengsd/open-gsd-openclaw",
   "version": "1.17.0",
-  "description": "OpenClaw plugin for GSD Pi — /gsd commands, supervised headless runs, and chat notifications",
+  "description": "OpenClaw plugin for GSD Pi \u2014 /gsd commands, supervised headless runs, and chat notifications",
   "license": "MIT",
-  "gsd": {
-    "linkable": true,
-    "scope": "@opengsd",
-    "name": "openclaw-plugin"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/open-gsd/gsd-pi.git",
-    "directory": "packages/openclaw-plugin"
+    "directory": "integrations/openclaw"
   },
-  "homepage": "https://github.com/open-gsd/gsd-pi/tree/main/packages/openclaw-plugin#readme",
+  "homepage": "https://github.com/open-gsd/gsd-pi/tree/main/integrations/openclaw#readme",
   "bugs": {
     "url": "https://github.com/open-gsd/gsd-pi/issues"
   },
@@ -40,7 +35,7 @@
       "./dist/index.js"
     ],
     "install": {
-      "npmSpec": "@opengsd/openclaw-plugin",
+      "npmSpec": "@opengsd/open-gsd-openclaw",
       "defaultChoice": "npm",
       "minHostVersion": ">=2026.8.1"
     },
