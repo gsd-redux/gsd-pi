@@ -94,11 +94,15 @@ test("checkpoint view is contributed in the extension manifest", () => {
 });
 
 test("project progress uses the existing RPC client and one sidebar refresh loop", () => {
+	const contractSource = readFileSync(join(root, "..", "packages", "contracts", "src", "rpc.ts"), "utf8");
 	const clientSource = readSource("gsd-client.ts");
 	const sidebarSource = readSource("sidebar.ts");
 
+	assert.match(contractSource, /type ProjectProgressReadMetadata/);
+	assert.match(contractSource, /readMetadata\?: ProjectProgressReadMetadata/);
 	assert.match(clientSource, /type: "get_project_progress"/);
 	assert.match(clientSource, /async getProjectProgress\(\): Promise<ProjectProgress \| null>/);
+	assert.match(clientSource, /return response\.data as ProjectProgress \| null/);
 	assert.match(sidebarSource, /case "refreshProgress":/);
 	assert.match(sidebarSource, /this\.client\.getProjectProgress\(\)/);
 	assert.match(sidebarSource, /data-section="project-progress"/);

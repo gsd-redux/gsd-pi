@@ -914,6 +914,14 @@ describe('createMcpServer tool registration', () => {
     assert.match(result.content[0].text, /projectDir must be an absolute path/);
   });
 
+  it('gsd_progress advertises readMetadata provenance', async () => {
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
+    const progressTool = (server as any)._registeredTools?.gsd_progress;
+    assert.ok(progressTool, 'gsd_progress should be registered');
+
+    assert.match(progressTool.description, /readMetadata provenance/);
+  });
+
   it('registered gsd_progress prefers the DB payload when the bridge is configured', async (t) => {
     const projectDir = mkdtempSync(join(tmpdir(), 'gsd-progress-handler-'));
     const bridge = await importWorkflowBridgeFixture();
@@ -955,6 +963,7 @@ describe('createMcpServer tool registration', () => {
     const progress = JSON.parse(result.content[0].text);
     assert.deepEqual(progress.activeMilestone, { id: 'M001', title: 'Database Authority' });
     assert.equal(progress.milestones.total, 1);
+    assert.deepEqual(progress.readMetadata, { source: 'database', authority: 'db-authoritative' });
   });
 
   it('registered gsd_progress uses projections without a workflow bridge', async (t) => {
@@ -981,14 +990,10 @@ describe('createMcpServer tool registration', () => {
     });
 
     const moduleDir = dirname(fileURLToPath(import.meta.url));
-    const standaloneRoot = mkdtempSync(join(dirname(moduleDir), 'standalone-mcp-'));
-    const standaloneModuleDir = join(standaloneRoot, 'runtime');
-    cpSync(moduleDir, standaloneModuleDir, { recursive: true });
-    t.after(() => rmSync(standaloneRoot, { recursive: true, force: true }));
     const serverExtension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-    const standaloneServerModule = await import(pathToFileURL(
-      join(standaloneModuleDir, `server${serverExtension}`),
-    ).href) as typeof import('./server.js');
+    const standaloneServerModule = await import(
+      `${pathToFileURL(join(moduleDir, `server${serverExtension}`)).href}?workflow-bridge-disabled=${Date.now()}`
+    ) as typeof import('./server.js');
     const { server } = await standaloneServerModule.createMcpServer(
       sm,
       { includeWorkflowTools: false },
@@ -1000,6 +1005,7 @@ describe('createMcpServer tool registration', () => {
     const progress = JSON.parse(result.content[0].text);
     assert.deepEqual(progress.activeMilestone, { id: 'M999', title: 'Projection Only' });
     assert.equal(progress.phase, 'plan');
+    assert.deepEqual(progress.readMetadata, { source: 'projection', authority: 'projection-fallback' });
   });
 
   it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {

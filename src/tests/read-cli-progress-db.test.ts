@@ -172,6 +172,7 @@ test("gsd read progress falls back when the DB disappears before the DB reader o
   assert.equal(run.exitCode, 0);
   const envelope = JSON.parse(run.stdout);
   assert.equal(envelope.data.phase, "plan");
+  assert.deepEqual(envelope.data.readMetadata, { source: "projection", authority: "projection-fallback" });
 });
 
 test("gsd read progress refuses loudly when the DB-backed read fails", async (t) => {
@@ -227,4 +228,23 @@ test("gsd read progress does not invoke the DB reader when no DB exists", async 
   const envelope = JSON.parse(run.stdout);
   assert.equal(envelope.kind, "progress");
   assert.equal(envelope.data.phase, "plan");
+  assert.deepEqual(envelope.data.readMetadata, { source: "projection", authority: "projection-fallback" });
+});
+
+test("gsd read progress preserves DB read metadata when the DB reader supplies it", async (t) => {
+  const base = makeProject();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  closeDatabase();
+
+  const run = await captureReadCli(readProgressArgv(base), {
+    reader: async () => ({
+      phase: "db-derived",
+      readMetadata: { source: "database", authority: "db-authoritative" },
+    }),
+  });
+
+  assert.equal(run.exitCode, 0);
+  const envelope = JSON.parse(run.stdout);
+  assert.deepEqual(envelope.data.readMetadata, { source: "database", authority: "db-authoritative" });
 });

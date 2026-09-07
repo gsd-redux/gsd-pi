@@ -126,7 +126,9 @@ test("readProgressFromDb emits exactly the ProgressResult key set", async (t) =>
     "requirements",
     "blockers",
     "nextAction",
+    "readMetadata",
   ]);
+  assert.deepEqual(result.readMetadata, { source: "database", authority: "db-authoritative" });
   assert.deepEqual(Object.keys(result.milestones), ["total", "done", "active", "pending", "parked"]);
   assert.deepEqual(Object.keys(result.slices), ["total", "done", "active", "pending"]);
   assert.deepEqual(Object.keys(result.tasks), ["total", "done", "pending"]);

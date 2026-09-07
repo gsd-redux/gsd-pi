@@ -23,6 +23,28 @@ test("project progress read forwards the active session CWD and request ID", asy
 	});
 });
 
+test("project progress read preserves provenance metadata", async () => {
+	const response = await invokeProjectProgressRead(
+		async () => ({
+			phase: "execute",
+			readMetadata: { source: "database", authority: "db-authoritative" },
+		}),
+		"request-789",
+		"/workspace/project",
+	);
+
+	assert.deepEqual(response, {
+		id: "request-789",
+		type: "response",
+		command: "get_project_progress",
+		success: true,
+		data: {
+			phase: "execute",
+			readMetadata: { source: "database", authority: "db-authoritative" },
+		},
+	});
+});
+
 test("project progress reader failures preserve the request ID", async () => {
 	const response = await invokeProjectProgressRead(
 		async () => {
