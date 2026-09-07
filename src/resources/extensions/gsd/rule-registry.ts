@@ -451,7 +451,7 @@ export class RuleRegistry {
             );
           }
           if (!isBlockingHook(config)) continue;
-          const decision = this._handleExistingBlockingArtifact(config, { triggerUnitType, triggerUnitId }, basePath);
+          const decision = this._handleExistingBlockingArtifact(config, entry, basePath);
           if (decision === "skip") continue;
           return decision;
         }

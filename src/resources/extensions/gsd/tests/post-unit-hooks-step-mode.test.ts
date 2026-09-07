@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mock } from "node:test";
 
-import { postUnitPostVerification, type PostUnitContext } from "../auto-post-unit.ts";
+import { handlePendingHookOutcome, postUnitPostVerification, type PostUnitContext } from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
 import {
   checkPostUnitHooks,
@@ -642,3 +642,121 @@ test("resume re-arms an execute-task gate with completion identity and schedules
     if (base) rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("resume holds selection when a resolved gate has a blocked sibling", async (t) => {
+  const originalCwd = process.cwd();
+  const base = setupFixture("gsd-step-blocked-sibling-", TWO_BLOCKING_PLAN_SLICE_HOOKS);
+  t.after(() => {
+    closeDatabase();
+    process.chdir(originalCwd);
+    resetHookState();
+    invalidateAllCaches();
+    _clearGsdRootCache();
+    rmSync(base, { recursive: true, force: true });
+  });
+  process.chdir(base);
+  _clearGsdRootCache();
+  resetHookState();
+  assert.ok(checkPostUnitHooks("plan-slice", "M001/S01", base));
+  for (const artifact of ["GATE-A.md", "GATE-B.md"]) {
+    writeFileSync(resolveHookArtifactPath(base, "M001/S01", artifact), "---\nverdict: needs-attention\n---\n");
+  }
+  assert.equal(checkPostUnitHooks("hook/gate-a", "M001/S01", base), null);
+  persistHookState(base);
+  writeFileSync(resolveHookArtifactPath(base, "M001/S01", "GATE-A.md"), "---\nverdict: pass\n---\n");
+  resetHookState();
+  restoreHookState(base);
+  const resumed = new AutoSession();
+  resumed.basePath = base;
+  resumed.active = true;
+  resumed.stepMode = true;
+  reconcileRestoredGateBlock(base, resumed.sidecarQueue);
+  const { pctx, pauseAuto } = createPctx(base, resumed);
+  assert.equal(resumed.currentUnit, null);
+  assert.equal(await handlePendingHookOutcome(pctx), "stopped");
+  assert.equal(pauseAuto.mock.callCount(), 1);
+  resetHookState();
+  restoreHookState(base);
+  reconcileRestoredGateBlock(base, resumed.sidecarQueue);
+  assert.equal(resumed.sidecarQueue[0]?.unitType, "hook/gate-b");
+});
+
+for (const queuedSibling of [false, true]) {
+  test(`resume preserves existing-artifact completion identity (sibling=${queuedSibling})`, async (t) => {
+    const originalCwd = process.cwd();
+    let base = "";
+    t.after(() => {
+      closeDatabase();
+      process.chdir(originalCwd);
+      resetHookState();
+      invalidateAllCaches();
+      _clearGsdRootCache();
+      if (base) rmSync(base, { recursive: true, force: true });
+    });
+    base = setupFixture("gsd-step-gate-rework-", (queuedSibling
+      ? EXECUTE_TASK_BLOCKING_HOOK.replaceAll("review-gate", "first-gate").replaceAll("REVIEW.md", "FIRST.md") + EXECUTE_TASK_BLOCKING_HOOK
+      : EXECUTE_TASK_BLOCKING_HOOK));
+    process.chdir(base);
+    _clearGsdRootCache();
+    resetHookState();
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+    insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "complete" });
+    seedCompletedTaskLifecycle("gsd-step-gate-rework-op");
+
+    writeFileSync(resolveHookArtifactPath(base, "M001/S01/T01", "REVIEW.md"), "---\nverdict: needs-attention\n---\n");
+    if (queuedSibling) {
+      assert.ok(checkPostUnitHooks("execute-task", "M001/S01/T01", base));
+      writeFileSync(resolveHookArtifactPath(base, "M001/S01/T01", "FIRST.md"), "---\nverdict: needs-attention\n---\n");
+      assert.equal(checkPostUnitHooks("hook/first-gate", "M001/S01/T01", base), null);
+      persistHookState(base);
+      writeFileSync(resolveHookArtifactPath(base, "M001/S01/T01", "FIRST.md"), "---\nverdict: pass\n---\n");
+      resetHookState();
+      restoreHookState(base);
+      reconcileRestoredGateBlock(base, []);
+    } else {
+      assert.equal(checkPostUnitHooks("execute-task", "M001/S01/T01", base), null);
+    }
+    persistHookState(base);
+
+    resetHookState();
+    restoreHookState(base);
+    const resumed = new AutoSession();
+    resumed.basePath = base;
+    resumed.active = true;
+    resumed.stepMode = true;
+    reconcileRestoredGateBlock(base, resumed.sidecarQueue);
+    assert.equal(resumed.sidecarQueue.length, 1);
+    assert.equal(resumed.sidecarQueue[0].unitType, "hook/review-gate");
+    const rearmed = getActiveHook();
+    assert.ok(rearmed, "gate is re-armed in flight");
+    assert.ok(rearmed.completionOperationId, "re-armed hook keeps the completion operation id");
+    resumed.sidecarQueue.length = 0;
+
+    writeFileSync(
+      resolveHookArtifactPath(base, "M001/S01/T01", "REVIEW.md"),
+      "---\nverdict: needs-rework\n---\n\nRework requested.\n",
+      "utf-8",
+    );
+    resumed.currentUnit = { type: "hook/review-gate", id: "M001/S01/T01", startedAt: Date.now() };
+    const retryActiveUnit = mock.fn(async (_unit: { unitType: string; unitId: string }) => {});
+    resumed.orchestration = {
+      start: async () => ({ kind: "started" }),
+      advance: async () => ({ kind: "stopped", reason: "unused" }),
+      settle: async () => {},
+      completeActiveUnit: async () => {},
+      retryActiveUnit,
+      abandonActiveUnit: async () => {},
+      resume: async () => ({ kind: "resumed" }),
+      stop: async (reason: string) => ({ kind: "stopped", reason }),
+      getStatus: () => ({ phase: "running", transitionCount: 0 }),
+    } as any;
+    const { pctx } = createPctx(base, resumed);
+    assert.equal(await postUnitPostVerification(pctx), "step-wizard");
+    assert.equal(retryActiveUnit.mock.callCount(), 1);
+    assert.deepEqual(retryActiveUnit.mock.calls[0]?.arguments[0], {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    assert.equal(getTask("M001", "S01", "T01")?.status, "pending", "rework reopens the task");
+  });
+}

@@ -65,6 +65,7 @@ import {
   consumeHookFailure,
   peekRetryTrigger,
   consumeGateBlock,
+  isGateBlockPending,
   persistHookState,
   resolveHookArtifactPath,
 } from "./post-unit-hooks.js";
@@ -536,6 +537,48 @@ function resolveTaskArtifactPath(
   const taskDir = resolveTasksDir(basePath, mid, sid) ?? slicePath;
   const file = resolveFile(taskDir, tid, suffix);
   return file ? join(taskDir, file) : null;
+}
+
+export async function handlePendingHookOutcome(
+  { s, ctx, pi, pauseAuto }: Pick<PostUnitContext, "s" | "ctx" | "pi" | "pauseAuto">,
+): Promise<"stopped" | null> {
+  const trigger = peekRetryTrigger();
+  if (!trigger && !isGateBlockPending()) return null;
+  persistHookState(s.basePath);
+  if (trigger) {
+    ctx.ui.notify(
+      `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
+      "info",
+    );
+    try {
+      const disposition = await prepareHookRetry(trigger, s.canonicalProjectRoot);
+      if (disposition === "retry") {
+        if (!s.orchestration) throw new Error("Hook retry requires an active orchestration session");
+        await s.orchestration.retryActiveUnit({
+          unitType: trigger.unitType,
+          unitId: trigger.unitId,
+        });
+      }
+      acknowledgeRetryTrigger(s.basePath);
+    } catch (e) {
+      debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
+      throw e;
+    }
+  }
+
+  const gateBlock = consumeGateBlock();
+  if (gateBlock) {
+    const verdict = gateBlock.verdict ? ` verdict=${gateBlock.verdict};` : "";
+    const artifact = gateBlock.artifact ? ` artifact=${gateBlock.artifact};` : "";
+    const message =
+      `Post-unit gate "${gateBlock.hookName}" blocked ${gateBlock.triggerUnitType} ${gateBlock.triggerUnitId} ` +
+      (s.currentUnit ? `(detected on completion of ${s.currentUnit.type} ${s.currentUnit.id}):` : "(detected on resume):") +
+      `${verdict}${artifact} ${gateBlock.reason}. Run /gsd status to inspect, then /gsd auto after recovery.`;
+    ctx.ui.notify(message, "warning");
+    await pauseAuto(ctx, pi);
+    return "stopped";
+  }
+  return null;
 }
 
 type PendingHookRetry = NonNullable<ReturnType<typeof peekRetryTrigger>>;
@@ -2815,45 +2858,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       return "stopped";
     }
 
-    // Check if a hook requested a retry of the trigger unit
-    const trigger = peekRetryTrigger();
-    if (trigger) {
-      ctx.ui.notify(
-        `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
-        "info",
-      );
-      try {
-        const disposition = await prepareHookRetry(trigger, s.canonicalProjectRoot);
-        if (disposition === "retry") {
-          if (!s.orchestration) throw new Error("Hook retry requires an active orchestration session");
-          await s.orchestration.retryActiveUnit({
-            unitType: trigger.unitType,
-            unitId: trigger.unitId,
-          });
-        }
-        acknowledgeRetryTrigger(s.basePath);
-      } catch (e) {
-        debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
-        throw e;
-      }
-      // Fall through to normal dispatch — deriveState will re-derive the unit.
-    }
-
-    const gateBlock = consumeGateBlock();
-    if (gateBlock) {
-      // The block reached disk in the persistHookState above (it was still
-      // pending), so a resumed session re-arms the gate instead of selecting
-      // past it (#2194).
-      const verdict = gateBlock.verdict ? ` verdict=${gateBlock.verdict};` : "";
-      const artifact = gateBlock.artifact ? ` artifact=${gateBlock.artifact};` : "";
-      const message =
-        `Post-unit gate "${gateBlock.hookName}" blocked ${gateBlock.triggerUnitType} ${gateBlock.triggerUnitId} ` +
-        `(detected on completion of ${s.currentUnit.type} ${s.currentUnit.id}):` +
-        `${verdict}${artifact} ${gateBlock.reason}. Run /gsd status to inspect, then /gsd auto after recovery.`;
-      ctx.ui.notify(message, "warning");
-      await pauseAuto(ctx, pi);
-      return "stopped";
-    }
+    if (await handlePendingHookOutcome(pctx)) return "stopped";
   }
 
   // ── Fast-path stop detection (#3487) ──
