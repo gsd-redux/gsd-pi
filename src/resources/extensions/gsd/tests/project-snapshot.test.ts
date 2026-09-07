@@ -226,10 +226,12 @@ test("readProjectSnapshotFromDb emits exactly the DbProjectSnapshot key set", as
   assert.deepEqual(Object.keys(snapshot).sort(), [
     "authority",
     "blockers",
+    "blockersTruncated",
     "capturedAt",
     "current",
     "milestones",
     "openQuestions",
+    "openQuestionsTruncated",
     "progress",
     "verification",
   ]);
@@ -293,6 +295,7 @@ test("readProjectSnapshotFromDb assembles authority, current, progress, open ite
   assert.deepEqual(snapshot.progress.tasks, { total: 2, done: 1, pending: 1 });
 
   assert.equal(snapshot.blockers.length, 3);
+  assert.equal(snapshot.blockersTruncated, false);
   assert.deepEqual(
     snapshot.blockers.map((b) => b.blockerId),
     ["B-snap-zz", "B-snap-aa", "B-snap-ab"],
@@ -308,6 +311,7 @@ test("readProjectSnapshotFromDb assembles authority, current, progress, open ite
   });
 
   assert.equal(snapshot.openQuestions.length, 3);
+  assert.equal(snapshot.openQuestionsTruncated, false);
   assert.deepEqual(
     snapshot.openQuestions.map((q) => q.questionId),
     ["Q-snap-a", "Q-snap-b", "Q-snap-later"],

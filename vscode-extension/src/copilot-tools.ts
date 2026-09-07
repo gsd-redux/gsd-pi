@@ -34,14 +34,14 @@ function assertActiveWorkspaceRoot(projectRoot: string): void {
 	}
 }
 
-async function awaitWithCancellation<T>(operation: Promise<T>, token: vscode.CancellationToken): Promise<T> {
+async function awaitWithCancellation<T>(operation: () => Promise<T>, token: vscode.CancellationToken): Promise<T> {
 	if (token.isCancellationRequested) {
 		throw new Error("GSD project read was cancelled.");
 	}
 
 	return await new Promise<T>((resolve, reject) => {
 		const cancellation = token.onCancellationRequested(() => reject(new Error("GSD project read was cancelled.")));
-		operation.then(resolve, reject).finally(() => cancellation.dispose());
+		operation().then(resolve, reject).finally(() => cancellation.dispose());
 	});
 }
 
@@ -74,7 +74,7 @@ export class ProjectProgressTool implements vscode.LanguageModelTool<EmptyToolIn
 		if (!this.client.isConnected) {
 			throw new Error("GSD agent is not connected. Start the GSD agent, then retry the project progress read.");
 		}
-		return toJsonToolResult(await awaitWithCancellation(this.client.getProjectProgress(), token));
+		return toJsonToolResult(await awaitWithCancellation(() => this.client.getProjectProgress(), token));
 	}
 }
 
@@ -100,7 +100,7 @@ export class ProjectSnapshotTool implements vscode.LanguageModelTool<EmptyToolIn
 		if (!this.client.isConnected) {
 			throw new Error("GSD agent is not connected. Start the GSD agent, then retry the project snapshot read.");
 		}
-		return toJsonToolResult(await awaitWithCancellation(this.client.getProjectSnapshot(), token));
+		return toJsonToolResult(await awaitWithCancellation(() => this.client.getProjectSnapshot(), token));
 	}
 }
 

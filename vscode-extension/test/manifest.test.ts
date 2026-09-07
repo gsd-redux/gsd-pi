@@ -30,6 +30,7 @@ function readPackage(): {
 			userDescription?: string;
 			canBeReferencedInPrompt?: boolean;
 			toolReferenceName?: string;
+			icon?: string;
 			inputSchema?: unknown;
 			readOnlyHint?: boolean;
 		}>;
@@ -157,6 +158,9 @@ test("Copilot read tools are contributed and registered against the existing RPC
 	assert.match(toolSource, /GSD project read tools do not accept input parameters/);
 	assert.match(toolSource, /GSD project read tools require exactly one workspace folder/);
 	assert.match(toolSource, /GSD project read was cancelled/);
+	assert.match(toolSource, /awaitWithCancellation\(operation: \(\) => Promise<T>/);
+	assert.match(toolSource, /awaitWithCancellation\(\(\) => this\.client\.getProjectProgress\(\), token\)/);
+	assert.match(toolSource, /awaitWithCancellation\(\(\) => this\.client\.getProjectSnapshot\(\), token\)/);
 	assert.match(toolSource, /GSD agent is not connected/);
 	assert.match(toolSource, /this\.client\.getProjectProgress\(\)/);
 	assert.match(toolSource, /this\.client\.getProjectSnapshot\(\)/);

@@ -168,7 +168,9 @@ export interface ProjectSnapshot {
 		tasks: { total: number; done: number; pending: number };
 	};
 	blockers: ProjectSnapshotBlocker[];
+	blockersTruncated?: boolean;
 	openQuestions: ProjectSnapshotOpenQuestion[];
+	openQuestionsTruncated?: boolean;
 	verification: ProjectSnapshotVerification;
 	milestones: {
 		items: Array<{ id: string; title: string; status: string; sequence: number }>;
