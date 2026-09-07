@@ -46,7 +46,7 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   // cp/mv with STATE.md as the destination — the state file must be the last
   // argument before a command separator, so copying it OUT passes (#2200);
   // an optional closing quote still counts (cp x ".gsd/STATE.md")
-  /\b(?:cp|mv)\b[^;&|]*\.gsd[/\\]STATE\.md(?=["']?\s*(?:$|[;&|]))/i,
+  /\b(?:cp|mv)\b[^;&|\r\n]*STATE\.md(?=["']?\s*(?:$|[;&|\r\n]))/i,
   // sed -i editing STATE.md
   /\bsed\b.*-i.*STATE\.md/i,
   // dd output to STATE.md
@@ -55,7 +55,7 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   />{1,2}\|?\s*\S*gsd\.db/i,
   // cp/mv with gsd.db (or its WAL/SHM sidecars) as the destination (#2200);
   // an optional closing quote still counts (cp x ".gsd/gsd.db")
-  /\b(?:cp|mv)\b[^;&|]*\.gsd[/\\]gsd\.db(?:-wal|-shm)?(?=["']?\s*(?:$|[;&|]))/i,
+  /\b(?:cp|mv)\b[^;&|\r\n]*gsd\.db(?:-wal|-shm)?(?=["']?\s*(?:$|[;&|\r\n]))/i,
   // dd output to gsd.db
   /\bdd\b.*of=\S*gsd\.db/i,
   // sqlite3 CLI writing gsd.db, unless opened read-only (#2200): -readonly/--readonly
@@ -66,9 +66,12 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   // SQL text after the path cannot inject the exemption, and the required db-path
   // token prevents backtracking from skipping over a later -readonly flag.
   /\bsqlite3\s+(?:(?!-{1,2}readonly\b)-{1,2}[^\s]+\s+)*(?!-{1,2}readonly\b)[^\s]*gsd\.db/i,
+];
+
+const BASH_SQLITE_LIBRARY_PATTERNS: RegExp[] = [
   // In-process sqlite libs touching gsd.db (#3625), either argument order
-  /\b(?:sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
-  /\bgsd\.db\b.*\b(?:sql\.js|better-sqlite3|node:sqlite)\b/i,
+  /\b(?:sqlite3|sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
+  /\bgsd\.db\b.*\b(?:sqlite3|sql\.js|better-sqlite3|node:sqlite)\b/i,
 ];
 
 /**
@@ -98,7 +101,13 @@ export function isBlockedStateFile(filePath: string): boolean {
  * Tests whether a bash command appears to target STATE.md for writing.
  */
 export function isBashWriteToStateFile(command: string): boolean {
-  return BASH_STATE_PATTERNS.some((pattern) => pattern.test(command));
+  if (BASH_STATE_PATTERNS.some((pattern) => pattern.test(command))) return true;
+
+  const libraryCommand = command.replace(
+    /\bsqlite3\s+(?:-{1,2}[^\s;&|]+\s+)*[^\s;&|]*gsd\.db\b/gi,
+    "",
+  );
+  return BASH_SQLITE_LIBRARY_PATTERNS.some((pattern) => pattern.test(libraryCommand));
 }
 
 function matchesBlockedPattern(path: string): boolean {

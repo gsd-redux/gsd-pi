@@ -148,3 +148,52 @@ describe('isBashWriteToStateFile still blocks genuine writes (#2200 controls)', 
     assert.ok(isBashWriteToStateFile('sqlite3 -batch .gsd/gsd.db "DELETE FROM tasks"'));
   });
 });
+
+
+describe('state write guard review regressions (#2200)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'gsd.db-wal', 'gsd.db-shm', 'STATE.md']) {
+      for (const destination of [file, `~/.gsd/projects/myproj/${file}`, `/workspace/nested/project/.gsd/${file}`]) {
+        test(`blocks ${operation} to ${destination}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup "${destination}"`), true);
+        });
+      }
+      for (const separator of ['\n', '\r\n']) {
+        test(`blocks ${operation} to ${file} before ${JSON.stringify(separator)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}${separator}echo done`), true);
+        });
+        test(`allows ${operation} from ${file} before ${JSON.stringify(separator)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy${separator}cat .gsd/${file}`), false);
+        });
+      }
+    }
+  }
+
+  const libraryWrites = [
+    `python3 -c "import sqlite3; sqlite3.connect('.gsd/gsd.db').execute('DROP TABLE tasks')"`,
+    `python3 -c "db='.gsd/gsd.db'; import sqlite3; sqlite3.connect(db).execute('DROP TABLE tasks')"`,
+    `python3 -c "import sqlite3; marker='-readonly'; sqlite3.connect('.gsd/gsd.db').execute('DROP TABLE tasks')"`,
+  ];
+  for (const command of libraryWrites) {
+    test(`blocks SQLite library write: ${command}`, () => {
+      assert.equal(isBashWriteToStateFile(command), true);
+      assert.equal(isBashWriteToStateFile(`sqlite3 -readonly .gsd/gsd.db 'SELECT 1'; ${command}`), true);
+    });
+  }
+
+  for (const command of [
+    'cd .gsd && cp /tmp/backup.db gsd.db',
+    'cp backup.db ~/.gsd/projects/myproj/gsd.db',
+    'sqlite3 .gsd/gsd.db "SELECT 1; DROP TABLE tasks; -- -readonly"',
+    'echo x >| .gsd/gsd.db',
+    'echo x >| .gsd/STATE.md',
+    'echo x | tee -a .gsd/STATE.md',
+    'dd if=/dev/zero of=.gsd/gsd.db-wal',
+    'echo start; cp backup .gsd/gsd.db; echo done',
+    `node -e "const db='.gsd/gsd.db'; require('node:sqlite')"`,
+  ]) {
+    test(`blocks write control: ${command}`, () => {
+      assert.equal(isBashWriteToStateFile(command), true);
+    });
+  }
+});
