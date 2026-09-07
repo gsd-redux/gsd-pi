@@ -226,3 +226,29 @@ describe('cp/mv trailing shell constructs (#2200 R4)', () => {
     }
   }
 });
+
+
+describe('cp/mv ampersand redirection boundaries (#2200 R5)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      const cases: [string, boolean][] = [
+        [`${operation} .gsd/${file} </dev/null &>/tmp/copy.log /tmp/copy.db`, false],
+        [`${operation} x .gsd/${file} > /dev/null`, true],
+        [`${operation} x .gsd/${file} &>/dev/null`, true],
+        [`${operation} x .gsd/${file}`, true],
+        [`${operation} .gsd/${file} /tmp/copy.db`, false],
+        [`${operation} .gsd/${file} </dev/null &>>/tmp/copy.log /tmp/copy.db`, false],
+        [`${operation} x &>/tmp/copy.log .gsd/${file}`, true],
+        [`${operation} x &>>/tmp/copy.log .gsd/${file}`, true],
+        [`${operation} x .gsd/${file} && echo done`, true],
+        [`${operation} x .gsd/${file} & echo done`, true],
+        [`${operation} .gsd/${file} /tmp/copy.db && cat .gsd/${file}`, false],
+      ];
+      for (const [command, blocked] of cases) {
+        test(`${blocked ? 'blocks' : 'allows'} ${command}`, () => {
+          assert.equal(isBashWriteToStateFile(command), blocked);
+        });
+      }
+    }
+  }
+});
