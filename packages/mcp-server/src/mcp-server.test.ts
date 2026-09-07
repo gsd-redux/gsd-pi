@@ -12,7 +12,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -991,13 +991,24 @@ describe('createMcpServer tool registration', () => {
 
     const moduleDir = dirname(fileURLToPath(import.meta.url));
     const serverExtension = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-    const standaloneServerModule = await import(
-      `${pathToFileURL(join(moduleDir, `server${serverExtension}`)).href}?workflow-bridge-disabled=${Date.now()}`
-    ) as typeof import('./server.js');
-    const { server } = await standaloneServerModule.createMcpServer(
-      sm,
-      { includeWorkflowTools: false },
-    );
+    const bridgePath = resolve(moduleDir, '../../../src/resources/extensions/gsd/mcp-bridge.ts');
+    const hiddenBridgePath = `${bridgePath}.hidden-for-standalone-test`;
+    if (existsSync(bridgePath)) renameSync(bridgePath, hiddenBridgePath);
+    t.after(() => {
+      if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
+    });
+    let server: Awaited<ReturnType<typeof createMcpServer>>['server'];
+    try {
+      const standaloneServerModule = await import(
+        `${pathToFileURL(join(moduleDir, `server${serverExtension}`)).href}?workflow-bridge-disabled=${Date.now()}`
+      ) as typeof import('./server.js');
+      ({ server } = await standaloneServerModule.createMcpServer(
+        sm,
+        { includeWorkflowTools: false },
+      ));
+    } finally {
+      if (existsSync(hiddenBridgePath)) renameSync(hiddenBridgePath, bridgePath);
+    }
     const progressTool = (server as any)._registeredTools?.gsd_progress;
     assert.ok(progressTool, 'gsd_progress should be registered');
 
