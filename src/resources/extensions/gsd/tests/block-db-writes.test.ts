@@ -197,3 +197,32 @@ describe('state write guard review regressions (#2200)', () => {
     });
   }
 });
+
+
+describe('cp/mv trailing shell constructs (#2200 R4)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      for (const suffix of [
+        ' > /dev/null',
+        ' 2>/dev/null',
+        ' >> /dev/null 2>&1',
+        ' >| /dev/null',
+        ' &>/dev/null',
+        ' < /dev/null',
+        ' # backup',
+        ' > /dev/null # backup\necho done',
+      ]) {
+        test(`${operation} ${file} with ${JSON.stringify(suffix)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db .gsd/${file}${suffix}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ".gsd/${file}"${suffix}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy.db${suffix}`), false);
+        });
+      }
+      test(`${operation} ${file} still requires the last file argument`, () => {
+        assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} > /dev/null /tmp/copy.db`), false);
+        assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}2>/dev/null`), false);
+        assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}#copy`), false);
+      });
+    }
+  }
+});
