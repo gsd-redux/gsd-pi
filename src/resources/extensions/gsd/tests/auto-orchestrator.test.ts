@@ -1064,31 +1064,40 @@ test("retryActiveUnit pauses with the finalize cause when finalize-retry trips t
     notifications.push([message, level]);
   };
 
+  const cause = "finalize-retry: source-integrity inconclusive: host snapshot no longer matches closeout evidence";
   const first = await f.orchestrator.advance();
   assert.equal(first.kind, "advanced");
   if (first.kind !== "advanced") throw new Error("expected first advance");
-  await f.orchestrator.retryActiveUnit(first.unit);
+  await f.orchestrator.settle(first.dispatchId, "retry", cause);
+  assert.notEqual(f.orchestrator.getStatus().phase, "stopped");
+  assert.equal(notifications.length, 0, "first failure must allow a retry");
 
   const second = await f.orchestrator.advance();
   assert.equal(second.kind, "advanced");
   if (second.kind !== "advanced") throw new Error("expected retry advance");
-  await f.orchestrator.retryActiveUnit(second.unit);
+  await f.orchestrator.settle(second.dispatchId, "retry", cause);
 
   assert.equal(f.orchestrator.getStatus().phase, "stopped");
   const pause = notifications.find(([message, level]) => level === "error" && /pausing auto-mode/.test(message));
   assert.ok(pause, "the trip must pause with the concrete finalize cause");
   assert.match(pause[0], /failed finalize twice with identical inputs/);
+  assert.ok(pause[0].includes(cause));
   assert.doesNotMatch(pause[0], /liveness backstop tripped/);
   const wedge = getOpenWedge(normalizeRealPath(f.base));
   assert.equal(wedge.ok, true);
   assert.equal(wedge.ok ? wedge.wedge : null, null, "no wedge record may gate plain /gsd auto re-entry");
 
-  await f.orchestrator.retryActiveUnit(second.unit);
-  assert.equal(
-    f.orchestrator.getStatus().phase,
-    "stopped",
-    "an unchanged re-entry after the pause must still trip the signature ledger",
-  );
+  assert.equal((await f.orchestrator.resume()).kind, "resumed");
+  const resumed = await f.orchestrator.advance();
+  assert.equal(resumed.kind, "advanced", "plain resume must redispatch without wedge acknowledgement");
+  if (resumed.kind !== "advanced") throw new Error("expected resumed dispatch");
+  assert.deepEqual(resumed.unit, first.unit);
+  await f.orchestrator.settle(resumed.dispatchId, "retry", cause);
+  assert.equal(f.orchestrator.getStatus().phase, "stopped");
+  assert.equal(notifications.length, 2, "one unchanged resumed failure must pause again");
+  assert.equal(notifications[1][0], pause[0]);
+  assert.deepEqual(getOpenWedge(normalizeRealPath(f.base)), { ok: true, wedge: null });
+  t.diagnostic(JSON.stringify({ scenario: "finalize-retry then plain resume", notifications, wedge: getOpenWedge(normalizeRealPath(f.base)), resumedUnit: resumed.unit }));
 });
 
 test("settle canceled clears a deferred dispatch claim without finalizing the unit", async (t) => {

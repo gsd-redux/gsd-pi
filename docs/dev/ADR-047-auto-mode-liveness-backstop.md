@@ -17,7 +17,7 @@ The common design gap: **no layer guarantees that when a guard blocks progress, 
 
 Auto mode gains a single **liveness invariant**, enforced centrally:
 
-> A block signature may not recur with unchanged inputs. Either some reachable operation changes the inputs the guard reads, or auto mode escalates to a surfaced, acknowledged pause. Silent infinite wedging is structurally impossible.
+> A block signature may not recur with unchanged inputs. Either some reachable operation changes the inputs the guard reads, or auto mode escalates to a surfaced pause with a recovery path. Silent infinite wedging is structurally impossible.
 
 Five locked design points:
 
@@ -45,7 +45,7 @@ Ledger entries are not limited to explicit guard blocks. Any dispatch outcome th
 
 ### 5. Resume contract: explicit acknowledgment, Rule 1 deleted
 
-On trip, the backstop persists a **wedge record** — id, signature, occurrence count, the sanctioned exit for that guard, forensics bundle path — and auto exits with the existing blocked exit code (10). While an unacknowledged wedge record exists, `gsd auto` **refuses to re-enter** and reprints the exit instructions; restarting is no longer a silent counter reset. The explicit command `gsd auto --resume-wedge <id>` acknowledges the wedge, clears that signature's counter, and re-enters. A correct repair changes the input hash and the backstop stays quiet; a wrong one re-trips at 2.
+On trip, wedge-producing guards persist a **wedge record** — id, signature, occurrence count, the sanctioned exit for that guard, forensics bundle path. Retry closeout instead uses the count-only `recordNonAdvancingRecurrence` in `auto-liveness-backstop.ts`. The authoritative [auto-mode recovery guide](../user-docs/auto-mode.md#liveness-backstop) describes wedge acknowledgment and the [finalize-pause exception](../user-docs/auto-mode.md#repeated-finalize-failures).
 
 Acknowledgment is always explicit — from a human, or from an orchestrator knowingly passing the flag. Headless runs do **not** auto-acknowledge: exit code 10 already means "blocked, human needed," and a wedge is exactly that.
 

@@ -2466,6 +2466,7 @@ test("autoLoop pauses with the finalize cause at the retry closeout when orchest
   let orchestrationPhase: AutoStatus["phase"] = "running";
   const stopReasons: Array<string | undefined> = [];
   const pauseReasons: Array<string | undefined> = [];
+  const journalEvents: Array<{ eventType: string; data?: any }> = [];
   const s = makeLoopSession({ currentMilestoneId: "M001" });
   s.orchestration = {
     start: async () => ({ kind: "stopped" as const, reason: "unused" }),
@@ -2494,6 +2495,7 @@ test("autoLoop pauses with the finalize cause at the retry closeout when orchest
   } satisfies AutoOrchestrationModule;
   openLoopDatabase(t, s);
   const deps = makeMockDeps({
+    emitJournalEvent: (entry: any) => { journalEvents.push(entry); },
     adjudicateNonAdvancingOutcome: undefined,
     taskExecutionBoundary: async () => ({
       action: "retry" as const,
@@ -2515,6 +2517,11 @@ test("autoLoop pauses with the finalize cause at the retry closeout when orchest
   assert.equal(stopReasons.length, 0, "the generic wedge stop must not be emitted");
   assert.equal(pauseReasons.length, 1, "auto-mode must pause with the concrete finalize cause");
   assert.match(pauseReasons[0] ?? "", /source-integrity inconclusive/);
+  const iterationEnd = journalEvents.find((entry) => entry.eventType === "iteration-end");
+  assert.equal(iterationEnd?.data?.status, "paused");
+  assert.equal(iterationEnd?.data?.reason, pauseReasons[0]);
+  assert.equal(mapStatusToExitCode(iterationEnd?.data?.status), 10);
+  t.diagnostic(JSON.stringify({ scenario: "loop retry closeout", pauseReasons, iterationEnd, headlessExitCode: mapStatusToExitCode(iterationEnd?.data?.status) }));
 });
 
 test("custom-engine recovery fails loudly when dispatch terminalization cannot be confirmed", async (t) => {

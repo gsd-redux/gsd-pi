@@ -238,9 +238,15 @@ Transient git failures such as `.git/index.lock` contention still use the short 
 
 ### Liveness Backstop
 
-GSD records every non-advancing auto-mode outcome in the project database using the guard, target unit, and a hash of the inputs that guard read. A second occurrence with the same hash trips a persisted wedge even when other units ran between the two occurrences or the process restarted.
+GSD records every non-advancing auto-mode outcome in the project database using the guard, target unit, and a hash of the inputs that guard read. A second occurrence with the same hash trips the guard even when other units ran between the two occurrences or the process restarted. Most guards create a persisted wedge; retry closeout uses the pause described below.
 
 When a wedge trips, auto mode stops with blocked exit code 10, prints the guard and its sanctioned recovery, and refuses to re-enter while the wedge remains unacknowledged. Apply the printed recovery first, then run `/gsd auto --resume-wedge <id>` with the ID of the currently open wedge. GSD rechecks that wedge's originating guard before acknowledging it: if the guard still blocks, the wedge and its counter remain intact and auto mode stays stopped. Only after the blocker clears does GSD acknowledge the wedge and open one re-entry probe. The backstop never repairs workflow state itself: if the probe still reads the same unchanged blocker, it immediately reopens the same wedge with its prior evidence and occurrence count; changed input supersedes the old signature.
+
+### Repeated Finalize Failures
+
+With orchestration active, the second `finalize-retry` closeout failure with identical inputs pauses auto mode and surfaces the concrete cause from the dispatch ledger, such as stale source-integrity evidence. This path creates no wedge and needs no `--resume-wedge` acknowledgment. Headless runs retain blocked exit code 10.
+
+Resolve the reported failure by supplying new verification evidence, changing the source revision, or applying the required recovery action, then run `/gsd auto`. Plain re-entry does not reset the persisted counter: unchanged inputs allow one redispatch, then the same failure pauses again. Changed inputs supersede the old signature. Other liveness guards and the loop fallback retain their wedge behavior; the no-orchestration fallback is unchanged.
 
 ### Consecutive Dispatch Blocker
 

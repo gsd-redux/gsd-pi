@@ -146,7 +146,7 @@ Stop the process through its terminal or service manager when possible. Use `kil
 
 ### Auto mode pauses after a timeout or finalize failure
 
-**Symptoms:** Auto mode reports a unit hard timeout, a finalize timeout, or a post-unit closeout failure.
+**Symptoms:** Auto mode reports a unit hard timeout, a finalize timeout, or a post-unit closeout failure. For `failed finalize twice with identical inputs`, follow [Repeated Finalize Failures](auto-mode.md#repeated-finalize-failures).
 
 **What to inspect:**
 - `.gsd/runtime/<unit-type>/<unit-id>.json` shows the latest runtime phase, timeout timestamp, recovery attempts, and progress marker. Timeout recovery uses progress kinds such as `idle-recovery-retry`, `hard-recovery-retry`, `finalize-pre-timeout`, `finalize-post-timeout`, and `finalize-success`.
