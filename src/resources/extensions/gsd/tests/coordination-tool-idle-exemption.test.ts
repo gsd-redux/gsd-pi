@@ -139,6 +139,50 @@ test("a stale ordinary tool is still detected alongside a subagent", (t) => {
   assert.equal(h.notifications.some((message) => message.startsWith("Stalled tool detected:")), true);
 });
 
+test("a bounded execution tool remains in flight after the stalled-tool budget (#2203)", (t) => {
+  const h = startHarness(t);
+  markToolStart("call-1", true, "gsd_exec");
+
+  mock.timers.tick(75_000);
+
+  assert.equal(getInFlightToolCount(), 1);
+  assert.equal(readUnitRuntimeRecord(h.base, "validate-milestone", "M002")?.lastProgressKind, "coordination-tool-in-flight");
+  assert.equal(h.notifications.some((message) => message.startsWith("Stalled tool detected:")), false);
+});
+
+test("a UAT execution tool remains in flight after the stalled-tool budget (#2203)", (t) => {
+  const h = startHarness(t);
+  markToolStart("call-1", true, "gsd_uat_exec");
+
+  mock.timers.tick(75_000);
+
+  assert.equal(getInFlightToolCount(), 1);
+  assert.equal(readUnitRuntimeRecord(h.base, "validate-milestone", "M002")?.lastProgressKind, "coordination-tool-in-flight");
+  assert.equal(h.notifications.some((message) => message.startsWith("Stalled tool detected:")), false);
+});
+
+test("bounded execution tools are excluded from stall aging (#2203)", (t) => {
+  t.after(() => clearInFlightTools());
+  markToolStart("call-1", true, "gsd_exec");
+  markToolStart("call-2", true, "gsd_uat_exec");
+  markToolStart("call-3", true, "async_bash");
+  markToolStart("call-4", true, "await_job");
+  markToolStart("call-5", true, "bg_shell");
+  markToolStart("call-6", true, "mcp__gsd__gsd_exec");
+  assert.equal(getOldestStallDetectableToolStart(), undefined);
+});
+
+test("a stale non-exempt tool is still detected alongside a bounded execution tool (#2203)", (t) => {
+  const h = startHarness(t);
+  markToolStart("call-1", true, "read_file");
+  markToolStart("call-2", true, "gsd_exec");
+
+  mock.timers.tick(75_000);
+
+  assert.equal(getInFlightToolCount(), 0);
+  assert.equal(h.notifications.some((message) => message.startsWith("Stalled tool detected:")), true);
+});
+
 test("subagent does not re-arm the unit hard timeout", (t) => {
   const h = startHarness(t);
   markToolStart("call-1", true, "subagent");
@@ -147,4 +191,17 @@ test("subagent does not re-arm the unit hard timeout", (t) => {
 
   assert.equal(h.s.unitTimeoutHandle, null);
   assert.equal(readUnitRuntimeRecord(h.base, "validate-milestone", "M002")?.phase, "timeout");
+});
+
+test("bounded execution tools do not re-arm the unit hard timeout (#2203)", (t) => {
+  for (const toolName of ["gsd_exec", "gsd_uat_exec", "async_bash", "await_job", "bg_shell"]) {
+    const h = startHarness(t);
+    markToolStart("call-1", true, toolName);
+
+    mock.timers.tick(120_000);
+
+    assert.equal(h.s.unitTimeoutHandle, null, toolName);
+    assert.equal(readUnitRuntimeRecord(h.base, "validate-milestone", "M002")?.phase, "timeout", toolName);
+    cleanup(h);
+  }
 });

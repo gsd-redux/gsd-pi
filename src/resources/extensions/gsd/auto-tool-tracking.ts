@@ -21,10 +21,22 @@ const inFlightTools = new Map<string, InFlightTool>();
 const INTERACTIVE_TOOLS = new Set(["ask_user_questions", "secure_env_collect"]);
 
 /**
- * Coordination tools that can legitimately run until their child work finishes.
- * The idle watchdog must leave these to the unit-level hard timeout.
+ * Coordination and bounded execution tools that can legitimately run until
+ * their child work or own timeout finishes. Execution bounds per tool:
+ * gsd_exec/gsd_uat_exec — exec sandbox clamp (600s); async_bash — returns a
+ * job ID immediately; await_job — resolves at its own wait timeout;
+ * bg_shell — action-based with bounded per-action timeouts. The idle watchdog
+ * must leave these to the unit-level hard timeout.
  */
-const LONG_RUNNING_COORDINATION_TOOLS = new Set(["subagent", "Task"]);
+const LONG_RUNNING_BOUNDED_TOOLS = new Set([
+  "subagent",
+  "Task",
+  "gsd_exec",
+  "gsd_uat_exec",
+  "async_bash",
+  "await_job",
+  "bg_shell",
+]);
 
 /**
  * Mode-agnostic refcount of in-flight interactive elicitations that are an
@@ -122,12 +134,13 @@ export function hasInteractiveToolInFlight(): boolean {
 
 /**
  * Returns the oldest start time among tools eligible for idle stall detection.
- * Long-running coordination tools are excluded, but remain hard-timeout bound.
+ * Long-running bounded tools (coordination, execution) are excluded, but remain
+ * hard-timeout bound.
  */
 export function getOldestStallDetectableToolStart(): number | undefined {
   let oldest = Infinity;
   for (const { startedAt, toolName } of inFlightTools.values()) {
-    if (!LONG_RUNNING_COORDINATION_TOOLS.has(toolName) && startedAt < oldest) oldest = startedAt;
+    if (!LONG_RUNNING_BOUNDED_TOOLS.has(toolName) && startedAt < oldest) oldest = startedAt;
   }
   return oldest === Infinity ? undefined : oldest;
 }
