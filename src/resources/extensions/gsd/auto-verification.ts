@@ -39,6 +39,7 @@ import {
   formatFailureSignature,
   captureRuntimeErrors,
   runDependencyAudit,
+  hasQualifyingTaskEvidence,
 } from "./verification-gate.js";
 import type { VerificationTarget, TaskVerificationEvidence } from "./verification-gate.js";
 import { writeVerificationJSON, type PostExecutionCheckJSON, type EvidenceJSON } from "./verification-evidence.js";
@@ -1061,10 +1062,18 @@ export async function runPostUnitVerification(
       }
     }
 
-    const verdict = decideVerificationVerdict(s.currentUnit.type, result);
+    const verdict = decideVerificationVerdict(s.currentUnit.type, result, {
+      hasQualifyingEvidence: hasQualifyingTaskEvidence(taskEvidence),
+    });
+    // #2209: a command-not-found check is a platform fault, not a requirement
+    // failure. When qualifying task evidence proves the task, the verdict
+    // passes and downstream branches treat the gate as passed.
     const unrunnableCheck = result.checks.find((check) => check.failureClass === "command-not-found");
+    const unrunnablePause = unrunnableCheck && !verdict.passed;
     if (!verdict.passed) {
       result.passed = false;
+    } else if (verdict.reason === "passed-via-task-evidence") {
+      result.passed = true;
     }
 
     if (verdict.reason === "execution-fault") {
@@ -1087,15 +1096,15 @@ export async function runPostUnitVerification(
         id: "verification-gate",
         type: "verification",
         execute: async () => ({
-          outcome: unrunnableCheck ? "manual-attention" : result.passed ? "pass" : "fail",
-          failureClass: unrunnableCheck
+          outcome: unrunnablePause ? "manual-attention" : result.passed ? "pass" : "fail",
+          failureClass: unrunnablePause
             ? "manual-attention"
             : result.runtimeErrors?.some((e) => e.blocking)
             ? "execution"
             : "verification",
           rationale: result.passed
             ? "verification checks passed"
-            : unrunnableCheck
+            : unrunnablePause
               ? verdict.failureContext
               : verdict.reason === "no-host-checks"
                 ? "no runnable host-owned verification checks discovered"
@@ -1124,7 +1133,7 @@ export async function runPostUnitVerification(
       const total = result.checks.length;
       if (result.passed) {
         ctx.ui.notify(formatPostUnitStatusCard("✓ Verification Gate", `${passCount}/${total} checks passed`));
-      } else if (unrunnableCheck) {
+      } else if (unrunnablePause) {
         ctx.ui.notify(formatPostUnitStatusCard("⚠ Verification Gate", verdict.failureContext), "warning");
       } else {
         const failures = result.checks.filter((c) => c.exitCode !== 0);
@@ -1344,7 +1353,7 @@ export async function runPostUnitVerification(
       !postExecInfrastructureError &&
       (result.passed || browserUatContinuation);
     const hostTechnicalVerdict: RecordTaskTechnicalVerdictInput["verdict"] =
-      unrunnableCheck || sourceError || postExecInfrastructureError
+      unrunnablePause || sourceError || postExecInfrastructureError
         ? "inconclusive"
         : hostTechnicalPassed
           ? "pass"
@@ -1362,7 +1371,7 @@ export async function runPostUnitVerification(
           ? "Canonical executor Result succeeded; browser-facing behavior continues to automated slice UAT."
           : "All host-owned technical verification checks passed.";
       }
-      if (!unrunnableCheck) {
+      if (!unrunnablePause) {
         canonicalVerdictWriteStarted = true;
         const recordedVerdict = recordHostTechnicalVerdict({
           context: vctx,
@@ -1420,7 +1429,7 @@ export async function runPostUnitVerification(
             const nextAttempt = attempt + 1;
             const includeRetryMetadata =
               !result.passed &&
-              !unrunnableCheck &&
+              !unrunnablePause &&
               !browserUatContinuation &&
               autoFixEnabled &&
               nextAttempt <= maxRetries;
@@ -1474,7 +1483,7 @@ export async function runPostUnitVerification(
     }
 
     // ── Auto-fix retry logic ──
-    if (unrunnableCheck) {
+    if (unrunnablePause) {
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;

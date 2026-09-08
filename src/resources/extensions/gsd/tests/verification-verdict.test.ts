@@ -189,3 +189,140 @@ test("execute-task passes when a discovered host check succeeds", () => {
   assert.equal(verdict.passed, true);
   assert.equal(verdict.reason, "passed");
 });
+
+test("command-not-found passes via qualifying task evidence when it is the only failure (#2209)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [
+        {
+          command: `npx tsc --noEmit && ! grep -q "PLACEHOLDER" src/Footer.tsx`,
+          exitCode: 127,
+          stdout: "",
+          stderr: "'grep' is not recognized as an internal or external command",
+          durationMs: 10,
+          failureClass: "command-not-found",
+        },
+      ],
+    }),
+    { hasQualifyingEvidence: true },
+  );
+
+  assert.equal(verdict.passed, true);
+  assert.equal(verdict.reason, "passed-via-task-evidence");
+  assert.equal(verdict.retryable, false);
+});
+
+test("command-not-found still pauses when task evidence is not qualifying (#2209)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [{
+        command: "grep -q expected app.css",
+        exitCode: 127,
+        stdout: "",
+        stderr: "'grep' is not recognized as an internal or external command",
+        durationMs: 10,
+        failureClass: "command-not-found",
+      }],
+    }),
+    { hasQualifyingEvidence: false },
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "command-not-found");
+  assert.equal(verdict.retryable, false);
+  assert.match(verdict.failureContext, /Verify command not runnable on this platform/);
+});
+
+test("command-not-found without any task evidence keeps the existing pause (#2209)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [{
+        command: "grep -q expected app.css",
+        exitCode: 127,
+        stdout: "",
+        stderr: "'grep' is not recognized as an internal or external command",
+        durationMs: 10,
+        failureClass: "command-not-found",
+      }],
+    }),
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "command-not-found");
+  assert.equal(verdict.retryable, false);
+});
+
+test("a genuine failing check next to command-not-found cannot be laundered into a pass (#2209)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [
+        {
+          command: "! grep -q PLACEHOLDER src/Footer.tsx",
+          exitCode: 127,
+          stdout: "",
+          stderr: "'grep' is not recognized as an internal or external command",
+          durationMs: 10,
+          failureClass: "command-not-found",
+        },
+        {
+          command: "npm test",
+          exitCode: 1,
+          stdout: "",
+          stderr: "2 tests failed",
+          durationMs: 10,
+        },
+      ],
+    }),
+    { hasQualifyingEvidence: true },
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "command-not-found");
+  assert.equal(verdict.retryable, false);
+});
+
+test("a blocking runtime error next to command-not-found cannot be laundered into a pass (#2209)", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "task-plan",
+      checks: [
+        {
+          command: "! grep -q PLACEHOLDER src/Footer.tsx",
+          exitCode: 127,
+          stdout: "",
+          stderr: "'grep' is not recognized as an internal or external command",
+          durationMs: 10,
+          failureClass: "command-not-found",
+        },
+      ],
+      runtimeErrors: [
+        {
+          source: "bg-shell",
+          severity: "crash",
+          message: "vite preview exited with code 143",
+          blocking: true,
+        },
+      ],
+    }),
+    { hasQualifyingEvidence: true },
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "command-not-found");
+  assert.equal(verdict.retryable, false);
+  assert.match(verdict.failureContext, /Verify command not runnable on this platform/);
+});
