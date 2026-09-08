@@ -52,6 +52,7 @@ planning_depth: deep
 | Project | `.gsd/PREFERENCES.md` | Current project only |
 
 **Merge behavior:**
+
 - **Scalar fields** (`skill_discovery`, `budget_ceiling`): project wins if defined
 - **Array fields** (`always_use_skills`, etc.): concatenated (global first, then project)
 - **Object fields** (`models`, `git`, `auto_supervisor`): shallow-merged, project overrides per-key
@@ -424,6 +425,7 @@ models:
 Define custom models and providers in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints (Ollama, vLLM, LM Studio), fine-tuned models, proxies, or new provider releases.
 
 GSD resolves models.json with fallback logic:
+
 1. `~/.gsd/agent/models.json` — primary (GSD)
 2. `~/.pi/agent/models.json` — fallback (Pi)
 3. If neither exists, creates `~/.gsd/agent/models.json`
@@ -608,9 +610,15 @@ auto_supervisor:
   stalled_tool_timeout_minutes: 5  # recover a tool that hangs mid-call (default: 5)
 ```
 
-Long-running coordination tools (`subagent`, and its `Task` alias) are exempt from
-`stalled_tool_timeout_minutes`: a subagent running parallel reviewers can legitimately
-outlast this budget. A genuinely hung subagent is still bounded by `hard_timeout_minutes`.
+Long-running coordination tools (`subagent` and its `Task` alias) and bounded execution
+tools (`gsd_exec`, `gsd_uat_exec`, `async_bash`, `await_job`, and `bg_shell`) are exempt
+from `stalled_tool_timeout_minutes`, including their MCP-prefixed names. These calls
+can legitimately outlast the stalled-tool budget. Execution tools retain their own
+limits: `gsd_exec` and `gsd_uat_exec` use the 600-second exec sandbox clamp;
+`async_bash` returns a job ID immediately; `await_job` has its own wait timeout;
+and `bg_shell` has bounded per-action timeouts. All exempt tools remain subject to
+`hard_timeout_minutes` and do not re-arm that timeout. Other non-interactive tools
+remain subject to the stalled-tool budget.
 
 ### `min_request_interval_ms`
 
@@ -875,6 +883,7 @@ git:
 ```
 
 The script receives two environment variables:
+
 - `SOURCE_DIR` — the original project root
 - `WORKTREE_DIR` — the newly created worktree path
 
@@ -902,10 +911,12 @@ git:
 ```
 
 **Requirements:**
+
 - `auto_push: true` — the milestone branch must be pushed before a PR can be created
 - [`gh` CLI](https://cli.github.com/) installed and authenticated (`gh auth login`)
 
 **How it works:**
+
 1. Milestone completes → GSD squash-merges the worktree to the main branch
 2. Pushes the main branch to remote (if `auto_push: true`)
 3. Pushes the milestone branch to remote
@@ -933,11 +944,13 @@ github:
 | `project` | string | (none) | GitHub Project ID for project board integration |
 
 **Requirements:**
+
 - `gh` CLI installed and authenticated (`gh auth login`)
 - Sync mapping is persisted in `.gsd/github-sync.json`
 - Rate-limit aware — skips sync when GitHub API rate limit is low
 
 **Commands:**
+
 - `/github-sync bootstrap` — initial setup and sync
 - `/github-sync status` — show sync mapping counts
 
@@ -969,6 +982,7 @@ workspace:
 | `repositories.<id>.commit_policy` | string | (none) | Optional per-repo auto-mode turn commit policy: `auto` or `skip`. |
 
 **Path-scope behavior:**
+
 - During planning (`plan-slice`/`replan-slice`), file paths are validated against the selected `targetRepositories`.
 - `gsd_plan_slice.targetRepositories` sets the slice-wide default repository IDs.
 - `gsd_plan_task.targetRepositories` records or overrides the repository IDs for an individual task.

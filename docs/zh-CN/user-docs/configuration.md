@@ -52,6 +52,7 @@ token_profile: balanced
 - **对象字段**（`models`、`git`、`auto_supervisor`）：浅合并，项目级按 key 覆盖
 
 <a id="global-api-keys-gsd-config"></a>
+
 ## 全局 API Keys（`/gsd config`）
 
 工具 API keys 会全局保存在 `~/.gsd/agent/auth.json` 中，并自动应用到所有项目。只需用 `/gsd config` 配置一次，无需在每个项目里维护 `.env`。
@@ -331,8 +332,7 @@ auto_supervisor:
   stalled_tool_timeout_minutes: 5  # 恢复在调用中卡死的 tool（默认：5）
 ```
 
-长时协调工具（`subagent` 及其 `Task` 别名）不受 `stalled_tool_timeout_minutes` 约束——并行
-reviewer 的 subagent 合法运行可能远超该预算。真正卡死的 subagent 仍由 `hard_timeout_minutes` 兜底。
+`stalled_tool_timeout_minutes` 的工具豁免范围及超时限制，参见[英文配置指南](../../user-docs/configuration.md#auto_supervisor)。
 
 ### `budget_ceiling`
 
@@ -391,6 +391,7 @@ verification_max_retries: 2       # 最大重试次数（默认：2）
 如果 shell 找不到可执行文件，GSD 会将该检查归类为 `failureClass: command-not-found`。这包括退出码 127、`command not found` 输出，以及 Windows 的 `is not recognized as an internal or external command` 错误。该检查会在 verification evidence 中记为 `inconclusive`，不会消耗 `verification_max_retries`，并会暂停自动模式，等待你安装缺失的可执行文件或修正命令后再恢复。
 
 <a id="url-blocking-fetch_page"></a>
+
 ### URL Blocking（`fetch_page`）
 
 `fetch_page` 工具默认会阻止访问私有网络和内部网络地址，以防 SSRF（server-side request forgery）。这能防止 agent 被诱导去访问内部服务、云 metadata endpoint 或本地文件。
@@ -513,6 +514,7 @@ ln -sf "$SOURCE_DIR/assets" "$WORKTREE_DIR/assets"
 路径既可以是绝对路径，也可以相对项目根目录。脚本有 30 秒超时限制。失败不会中断流程，GSD 会记录告警后继续。
 
 <a id="gitauto_pr"></a>
+
 #### `git.auto_pr`
 
 在 milestone 完成时自动创建 pull request。适用于 Gitflow 或分支工作流团队，在合并到目标分支前通过 PR 做审查。
