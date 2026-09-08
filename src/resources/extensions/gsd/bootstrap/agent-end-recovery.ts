@@ -513,7 +513,7 @@ async function pauseTransientWithBackoff(
     ctx.ui.notify(`Transient provider errors persisted after ${MAX_TRANSIENT_AUTO_RESUMES} auto-resume attempts. Pausing for manual review.`, "warning");
   }
   await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi, {
-    message: `Provider error: ${errorDetail}`,
+    message: `Provider error${errorDetail}`,
     category: "provider",
     isTransient: allowAutoResume,
     retryAfterMs,
@@ -931,7 +931,7 @@ export async function handleAgentEnd(
     // state (split-brain, #1973). The transient branch above deliberately does
     // NOT abort — it auto-resumes the same unit in the same session.
     await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi, {
-      message: `Provider error: ${errorDetail}`,
+      message: `Provider error${errorDetail}`,
       category: "provider",
       isTransient: false,
     }, { abortActiveTurn: true }), {

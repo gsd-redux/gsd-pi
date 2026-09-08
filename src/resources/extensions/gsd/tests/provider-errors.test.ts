@@ -718,6 +718,60 @@ test("usage-limit agent_end resolves a credential-cooldown cancellation without 
   }
 });
 
+test("transient provider-error pause message has a single colon (#2227)", async (t) => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const timers: Array<{ fn: () => void; delay?: number }> = [];
+  globalThis.setTimeout = ((fn: () => void, delay?: number) => {
+    timers.push({ fn, delay });
+    return 0 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  t.after(() => {
+    globalThis.setTimeout = originalSetTimeout;
+    _resetPendingResolve();
+    resetTransientRetryState();
+    autoSession.reset();
+  });
+
+  resetTransientRetryState();
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+  const resultPromise = new Promise<any>((resolve) => _setCurrentResolve(resolve));
+
+  // No basePath on the session, so tryProviderModelFallback short-circuits
+  // and the exhausted transient error falls through to pauseTransientWithBackoff.
+  await handleAgentEnd({
+    sendMessage: () => {},
+  } as any, {
+    willRetry: false,
+    messages: [{
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Connection error.",
+    }],
+  } as any, {
+    model: { provider: "openai-codex", id: "gpt-5.5" },
+    modelRegistry: { getAvailable: () => [] },
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWidget: () => {},
+      setWorkingMessage: () => {},
+    },
+  } as any);
+
+  const result = await resultPromise;
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.errorContext.category, "provider");
+  assert.equal(result.errorContext.isTransient, true);
+  assert.equal(
+    result.errorContext.message,
+    "Provider error: Connection error.",
+    "pause message must contain exactly one colon-space (#2227)",
+  );
+  assert.equal(timers.length, 1, "transient pause schedules exactly one auto-resume timer");
+});
+
 test("retry-exhausted transient provider errors trigger model fallback (#1364, #2031)", async () => {
   const originalCwd = process.cwd();
   const originalSetTimeout = globalThis.setTimeout;
@@ -1428,4 +1482,64 @@ test("#1973: permanent/unknown provider-error pause aborts the still-live host t
     process.chdir(originalCwd);
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("permanent/unknown provider-error pause message has a single colon (#2227)", async (t) => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-unknown-pause-colon-"));
+  let abortCalls = 0;
+  t.after(() => {
+    _resetPendingResolve();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  resetTransientRetryState();
+  autoSession.reset();
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  process.chdir(base);
+
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+  const resultPromise = new Promise<any>((resolve) => _setCurrentResolve(resolve));
+
+  const ctx = {
+    model: { provider: "anthropic", id: "claude-opus-4" },
+    modelRegistry: { getAvailable: () => [] },
+    isIdle: () => false,
+    abort: () => {
+      abortCalls += 1;
+    },
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWidget: () => {},
+      setWorkingMessage: () => {},
+    },
+  } as any;
+  const pi = {
+    setModel: async () => false,
+    sendMessage: () => {},
+  } as any;
+
+  await handleAgentEnd(pi, {
+    messages: [{
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Anthropic stream ended before message_stop",
+    }],
+  } as any, ctx);
+
+  const result = await resultPromise;
+  assert.equal(abortCalls, 1, "permanent/unknown pause must abort the live host turn");
+  assert.deepEqual(result, {
+    status: "cancelled",
+    errorContext: {
+      message: "Provider error: Anthropic stream ended before message_stop",
+      category: "provider",
+      isTransient: false,
+    },
+  });
 });
