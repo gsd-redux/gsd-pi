@@ -585,7 +585,10 @@ export async function handleCompleteTask(
       id: params.taskId,
       sliceId: params.sliceId,
       milestoneId: params.milestoneId,
-      title: params.oneLiner,
+      // A completion must not rewrite planning data (#2216): pass the stored
+      // title through so the upsert cannot replace it with the executor's
+      // one-liner. Fall back to the one-liner only for a genuinely new row.
+      title: existingTask?.title ?? params.oneLiner,
       status: "complete",
       oneLiner: params.oneLiner,
       narrative: params.narrative,
