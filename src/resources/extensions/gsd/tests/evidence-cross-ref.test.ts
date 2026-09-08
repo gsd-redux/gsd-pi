@@ -100,6 +100,86 @@ test("newer script-wrapped pass is not shadowed by a stale exact failing run", (
   assert.deepEqual(mismatches, []);
 });
 
+test("token-matched verification is judged by its newest run, not the highest-scoring one", () => {
+  // Issue #2205: three runs share verification vocabulary. The newest run (the
+  // genuine pass) scores lowest on token overlap (0.5 vs 1.0 / 0.75), so the
+  // bestScore filter kept only the superseded failures and the harness flagged
+  // a passing task. Token overlap identifies WHICH command; the newest run of
+  // that command is the authoritative outcome.
+  const claim = "node test persistence verify";
+  const mismatches = crossReferenceEvidence(
+    [{ command: claim, exitCode: 0, verdict: "passed after retry" }],
+    [
+      {
+        kind: "bash",
+        toolCallId: "call-1",
+        command: "fake persistence verify node test idempotency",
+        exitCode: 1,
+        outputSnippet: "Error: invariant violated",
+        timestamp: 1,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-2",
+        command: "runtime persistence node test fake proof",
+        exitCode: 1,
+        outputSnippet: "Error: module not found",
+        timestamp: 2,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-3",
+        command: "verify node fake idempotency proof",
+        exitCode: 0,
+        outputSnippet: "ALL_OK",
+        timestamp: 3,
+      },
+    ] as EvidenceEntry[],
+  );
+
+  assert.deepEqual(mismatches, []);
+});
+
+test("a newest token-matched failure still flags after earlier passing runs", () => {
+  // Complement of #2205: newest-run authority must not hide a failure. When
+  // the newest token-matched run failed, the claimed pass is still falsified
+  // even though older runs passed.
+  const claim = "node test persistence verify";
+  const mismatches = crossReferenceEvidence(
+    [{ command: claim, exitCode: 0, verdict: "passed" }],
+    [
+      {
+        kind: "bash",
+        toolCallId: "call-1",
+        command: "fake persistence verify node test idempotency",
+        exitCode: 0,
+        outputSnippet: "ALL_OK",
+        timestamp: 1,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-2",
+        command: "runtime persistence node test fake proof",
+        exitCode: 0,
+        outputSnippet: "ALL_OK",
+        timestamp: 2,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-3",
+        command: "verify node fake idempotency proof",
+        exitCode: 1,
+        outputSnippet: "Error: invariant violated",
+        timestamp: 3,
+      },
+    ] as EvidenceEntry[],
+  );
+
+  assert.equal(mismatches.length, 1);
+  assert.equal(mismatches[0].severity, "error");
+  assert.match(mismatches[0].reason, /Claimed exitCode=0/);
+});
+
 test("later containing script does not override an exact successful run", () => {
   const command = "npm test";
   const mismatches = crossReferenceEvidence(
@@ -313,4 +393,37 @@ test("claimed command absent from bash calls reports a warning mismatch with nul
   const missing = mismatches.filter((m) => m.severity === "warning" && m.actual === null);
   assert.equal(missing.length, 1);
   assert.equal(missing[0].actual, null);
+});
+
+test("accepted tradeoff: a newer overlapping command passing masks an older same-vocabulary failure (#2205 review)", () => {
+  // Codex review case, pinned as an ACCEPTED tradeoff of newest-run authority
+  // in the fuzzy token tier: an older failure of the claimed command is masked
+  // when a newer, only partially-overlapping command passes. The alternative
+  // (bestScore outcome filtering) was the #2205 wedge itself — it let a
+  // superseded failed run out-vote a newer pass. If this masking ever matters
+  // in practice, the fix is a command-family grouping, not score filtering.
+  const claim = "node --test tests/auth.test.js";
+  const mismatches = crossReferenceEvidence(
+    [{ command: claim, exitCode: 0, verdict: "passed" }],
+    [
+      {
+        kind: "bash",
+        toolCallId: "call-1",
+        command: "node --test --test-reporter=spec tests/auth.test.js",
+        exitCode: 1,
+        outputSnippet: "tests/auth.test.js failing",
+        timestamp: 1,
+      },
+      {
+        kind: "bash",
+        toolCallId: "call-2",
+        command: "node --test tests/unrelated.test.js",
+        exitCode: 0,
+        outputSnippet: "unrelated pass",
+        timestamp: 2,
+      },
+    ] as EvidenceEntry[],
+  );
+
+  assert.deepEqual(mismatches, []);
 });
