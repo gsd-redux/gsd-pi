@@ -1429,3 +1429,73 @@ test("#1973: permanent/unknown provider-error pause aborts the still-live host t
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("permanent provider-error pause message does not double the leading colon", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-pause-message-double-colon-"));
+  const notifications: Array<{ message: string; level: string }> = [];
+  let pauseErrorContext: any;
+
+  try {
+    resetTransientRetryState();
+    autoSession.reset();
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+
+    // Intercept the cancellation errorContext that carries the pause message.
+    const resolveProbe = new Promise<any>((resolve) => {
+      _setCurrentResolve((value: any) => {
+        pauseErrorContext = value?.errorContext;
+        resolve(value);
+      });
+    });
+
+    autoSession.active = true;
+    autoSession.basePath = base;
+    autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+
+    const ctx = {
+      model: { provider: "openai-codex", id: "gpt-5.5" },
+      modelRegistry: { getAvailable: () => [] },
+      isIdle: () => true,
+      ui: {
+        notify(message: string, level?: "info" | "warning" | "error" | "success") {
+          notifications.push({ message, level: level ?? "info" });
+        },
+        setStatus: () => {},
+        setWidget: () => {},
+        setWorkingMessage: () => {},
+      },
+    } as any;
+    const pi = {
+      setModel: async () => false,
+      sendMessage: () => {},
+    } as any;
+
+    await handleAgentEnd(pi, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Anthropic stream ended before message_stop",
+      }],
+    } as any, ctx);
+    await resolveProbe;
+
+    assert.equal(
+      pauseErrorContext?.message,
+      "Provider error: Anthropic stream ended before message_stop",
+      "pause message must include the error detail exactly once — no ': :' from concatenating a colon onto errorDetail's own leading ': '",
+    );
+    for (const n of notifications) {
+      assert.ok(
+        !n.message.includes("error: :") && !n.message.includes("error::"),
+        `notification must not contain a doubled colon: ${n.message}`,
+      );
+    }
+  } finally {
+    _resetPendingResolve();
+    resetTransientRetryState();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});

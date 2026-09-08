@@ -814,6 +814,25 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/**
+	 * Rows the transcript actually displays for this tool — used by the pinned
+	 * zone's offscreen measurement. render() returns the full body render
+	 * regardless of collapse state, which overstates the post-text height and
+	 * mirrors text that is still visible (duplicate "Working · Latest Output"
+	 * content). Compact strips and command cards display exactly one row.
+	 */
+	getDisplayedLineCount(width: number): number {
+		if (this.hideComponent) return 0;
+		if (this.normalizedToolName === "bash" && !this.showExpandedBody() && !this.result?.isError) {
+			return 1;
+		}
+		const hasImages = this.result?.content?.some((block) => block.type === "image") ?? false;
+		if (!this.showExpandedBody() && !this.result?.isError && !hasImages) {
+			return 1;
+		}
+		return this.render(width).length;
+	}
+
 	override render(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
