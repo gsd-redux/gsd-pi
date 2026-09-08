@@ -705,7 +705,7 @@ verification_timeout_ms: 120000   # host verification and verification-oriented 
 | `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts for runnable failures |
 | `verification_timeout_ms` | number | `120000` | Per-command host-verification timeout in milliseconds and the default timeout for verification-oriented `gsd_exec` workloads. Unset keeps the 120s host-verification default. A timeout is reported as `failureClass: timeout`, never as exit 127. |
 
-If the shell cannot find an executable, GSD classifies the check as `failureClass: command-not-found`. This includes exit code 127, `command not found` output, and Windows `is not recognized as an internal or external command` errors. The check is recorded as `inconclusive` in verification evidence, its failure does not consume `verification_max_retries`, and auto mode pauses for you to install the executable or correct the command before resuming.
+For missing-command handling and the task-evidence exception, see [Auto Mode — Verification Enforcement](./auto-mode.md#verification-enforcement).
 
 Verification commands must be simple executable commands. Shell piping (`|`) is supported, but logical OR (`||`) is rejected. GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution (`$(...)`) because verification is run as a controlled command list, not as an arbitrary shell program.
 

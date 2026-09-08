@@ -323,7 +323,7 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
 
 - `verification_max_retries`: number — maximum number of fix-and-retry cycles for runnable verification failures. Default: `2`.
 
-  If the shell cannot find an executable, GSD classifies the check as `command-not-found`. This includes exit code 127, `command not found` output, and Windows `is not recognized as an internal or external command` errors. The check is recorded as `inconclusive` in verification evidence, auto-fix retry state is cleared without consuming this limit, and auto mode pauses so you can install the executable or correct the verification command before resuming.
+  For missing-command handling and the task-evidence exception, see [Auto Mode — Verification Enforcement](../../../../../docs/user-docs/auto-mode.md#verification-enforcement).
 
 - `per_unit_cost_cap_usd`: number — per-unit retry cost ceiling in USD for verification retries. Must be a positive finite number when set; invalid values are rejected during preference validation. Default: `5.0`. During auto-verification and artifact-retry flows, auto-mode pauses when the current unit reaches this cap or when current unit cost spikes to at least `3.0x` the rolling average.
 
@@ -339,8 +339,8 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
 
   These settings control how verification is attempted; they do not grant
   lifecycle authority. Runnable failures are repaired and retried within the
-  configured limits. A missing executable pauses immediately for manual
-  correction; other pauses should mean the agent exhausted its available repair
+  configured limits. For missing executables, see [Verification Enforcement](../../../../../docs/user-docs/auto-mode.md#verification-enforcement);
+  other pauses should mean the agent exhausted its available repair
   path, needs external access or a dependency, or genuinely needs a user decision.
   No preference or Markdown UAT result can bypass canonical Task proof or
   complete a Slice.
@@ -873,7 +873,7 @@ verification_max_retries: 2
 ---
 ```
 
-Runs test, lint, and typecheck after each task. Runnable failures receive up to 2 auto-fix attempts. A missing executable is recorded as inconclusive and pauses auto mode without consuming those attempts.
+Runs test, lint, and typecheck after each task. Runnable failures receive up to 2 auto-fix attempts. For missing-command handling, see [Verification Enforcement](../../../../../docs/user-docs/auto-mode.md#verification-enforcement).
 
 ## Experimental Features Example
 

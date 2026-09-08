@@ -332,7 +332,13 @@ verification_auto_fix: true    # auto-retry runnable failures (default)
 verification_max_retries: 2    # max retry attempts (default: 2)
 ```
 
-Runnable checks that fail are eligible for bounded auto-fix retries — the agent sees the verification output and attempts to fix the issues before advancing. If an executable is missing, including a Windows `is not recognized as an internal or external command` error, GSD classifies the check as `command-not-found`, records its verification evidence as inconclusive, and pauses without consuming an auto-fix retry. Install the executable or update the verification command, then resume auto mode. This ensures code quality gates are enforced mechanically without wasting repair attempts on an environment or configuration problem.
+Runnable checks that fail are eligible for bounded auto-fix retries — the agent sees the verification output and attempts to fix the issues before advancing.
+
+If the shell cannot find an executable, GSD classifies the check as `command-not-found`. This includes exit code 127, `command not found` output, and Windows `is not recognized as an internal or external command` errors. The individual check remains `inconclusive` in verification evidence and does not consume an auto-fix retry.
+
+The verification verdict passes via task evidence when every non-zero check is `command-not-found`, no blocking runtime error is present, and the current task has qualifying structured `verificationEvidence` staged through `gsd_task_complete`. Evidence qualifies when at least one record exists and every record has exit code 0 and a verdict of `pass` or `passed` (case-insensitive, ignoring surrounding whitespace). A genuine failing check or blocking runtime error prevents this exception. Source-integrity and post-execution checks still apply.
+
+Otherwise, auto mode pauses and clears auto-fix retry state. Install the missing executable or correct the verification command, then resume auto mode.
 
 Commands must be directly runnable checks such as `npm run lint`, `npm run test`, or `python3 -m pytest`. GSD supports single shell pipelines with `|`, so commands like `python3 -m pytest | tail -5` are valid. Logical OR fallbacks (`||`) are rejected, and GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution because verification is run as a controlled command list, not as an arbitrary shell program.
 
