@@ -254,6 +254,25 @@ function hasRoadmapReassessmentArtifact(basePath: string, milestoneId: string): 
   return false;
 }
 
+/**
+ * Structural tool match inside one activity JSONL entry (#2223). Only real
+ * toolCall parts and toolResult messages count — the unit's own prompt is
+ * persisted as a custom_message entry that names every tool, so text content
+ * must never match.
+ */
+function activityEntryMentionsTool(rawEntry: unknown, toolName: string): boolean {
+  const entry = rawEntry as { type?: unknown; message?: unknown } | null;
+  if (!entry || entry.type !== "message" || !entry.message) return false;
+  const message = entry.message as { role?: unknown; content?: unknown; toolName?: unknown };
+  if (message.role === "assistant" && Array.isArray(message.content)) {
+    for (const part of message.content) {
+      const typed = part as { type?: unknown; name?: unknown } | null;
+      if (typed && typed.type === "toolCall" && typed.name === toolName) return true;
+    }
+  }
+  return message.role === "toolResult" && message.toolName === toolName;
+}
+
 function unitActivityMentionsTool(basePath: string, unitType: string, unitId: string, toolName: string): boolean {
   const safeUnitId = unitId.replace(/\//g, "-");
   const activityDir = join(basePath, ".gsd", "activity");
@@ -264,7 +283,15 @@ function unitActivityMentionsTool(basePath: string, unitType: string, unitId: st
       if (!entry.isFile()) continue;
       if (!entry.name.endsWith(`${unitType}-${safeUnitId}.jsonl`)) continue;
       const content = readFileSync(join(activityDir, entry.name), "utf-8");
-      if (content.includes(toolName)) return true;
+      for (const line of content.split("\n")) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (activityEntryMentionsTool(parsed, toolName)) return true;
+      }
     }
   } catch {
     return false;
