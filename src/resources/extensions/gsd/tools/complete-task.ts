@@ -272,7 +272,9 @@ export function normalizeListParam(value: unknown): string[] {
  * renderSummaryContent() can be used at completion time (#2720).
  */
 
-function normalizeReworkResolution(params: CompleteTaskParams): Array<{
+export function normalizeReworkResolution(
+  params: Pick<CompleteTaskParams, "milestoneId" | "sliceId" | "taskId" | "reworkResolution">,
+): Array<{
   milestoneId: string;
   sliceId: string;
   taskId: string;
@@ -292,12 +294,12 @@ function normalizeReworkResolution(params: CompleteTaskParams): Array<{
   }));
 }
 
-function unresolvedReworkError(missingFindingIds: string[]): string {
+export function unresolvedReworkError(missingFindingIds: string[]): string {
   const plural = missingFindingIds.length === 1 ? "finding" : "findings";
   return `unresolved blocking rework ${plural}: ${missingFindingIds.join(", ")} — provide reworkResolution entries with status resolved and evidence, or status deferred-with-override with evidence and decisionRef, before completing the task`;
 }
 
-function satisfiesBlockingReworkFinding(resolution: ReturnType<typeof normalizeReworkResolution>[number]): boolean {
+export function satisfiesBlockingReworkFinding(resolution: ReturnType<typeof normalizeReworkResolution>[number]): boolean {
   if (resolution.evidence.trim().length === 0) return false;
   if (resolution.status === "resolved") return true;
   return (resolution.decisionRef ?? "").trim().length > 0;

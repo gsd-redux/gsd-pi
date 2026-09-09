@@ -5,6 +5,7 @@ import { ensureDbOpen } from "../bootstrap/dynamic-tools.js";
 import { sanitizeCompleteMilestoneParams } from "../bootstrap/sanitize-complete-milestone.js";
 import { loadWriteGateSnapshot, shouldBlockContextArtifactSaveInSnapshot, shouldBlockRootArtifactSaveInSnapshot } from "../bootstrap/write-gate.js";
 import {
+  applyReworkResolutions,
   getActiveRequirements,
   getAllMilestones,
   getMilestone,
@@ -12,6 +13,7 @@ import {
   getSliceStatusSummary,
   getSliceTaskCounts,
   getTask,
+  getUnresolvedBlockingReworkFindingsForTask,
   insertMilestone,
   insertAssessment,
   insertGateRun,
@@ -44,7 +46,13 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import type { CompleteMilestoneParams } from "./complete-milestone.js";
 import { handleCompleteMilestone } from "./complete-milestone.js";
-import { handleCompleteTask, resolveTaskSummaryPath } from "./complete-task.js";
+import {
+  handleCompleteTask,
+  normalizeReworkResolution,
+  resolveTaskSummaryPath,
+  satisfiesBlockingReworkFinding,
+  unresolvedReworkError,
+} from "./complete-task.js";
 import {
   resolveTaskCompletionAuthority,
   stageTaskCompletion,
@@ -771,6 +779,12 @@ export interface TaskCompleteParams {
   blockerDiscovered?: boolean;
   escalation?: TaskEscalationInput;
   verificationEvidence?: VerificationEvidenceInput[];
+  reworkResolution?: Array<{
+    findingId: string;
+    status: "resolved" | "deferred-with-override";
+    evidence: string;
+    decisionRef?: string;
+  }>;
 }
 
 type NormalizedVerificationEvidence = {
@@ -953,6 +967,35 @@ export async function executeTaskComplete(
           "tool",
           `complete_task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring on the canonical completion path (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
         );
+      }
+      // Mirror the legacy blocking rework gate (handleCompleteTask) onto the
+      // canonical path (#2231): an unresolved blocking finding rejects the
+      // closeout unless covered by a satisfying reworkResolution.
+      const reworkResolutions = normalizeReworkResolution(params);
+      const resolvedFindingIds = new Set(
+        reworkResolutions
+          .filter(satisfiesBlockingReworkFinding)
+          .map((resolution) => resolution.findingId),
+      );
+      const missingFindingIds = getUnresolvedBlockingReworkFindingsForTask(
+        params.milestoneId,
+        params.sliceId,
+        params.taskId,
+      )
+        .filter((finding) => !resolvedFindingIds.has(finding.finding_id))
+        .map((finding) => finding.finding_id);
+      if (missingFindingIds.length > 0) {
+        throw new Error(unresolvedReworkError(missingFindingIds));
+      }
+      // Apply before staging: stageTaskCompletion settles the Attempt and then
+      // renders projections, so a post-staging apply could be skipped by a
+      // projection throw and leave a succeeded Attempt with pending findings.
+      // Applied first, every failure state is benign — if staging throws, the
+      // worker-attested resolutions stand and a retry passes the gate (findings
+      // no longer pending) with an idempotent no-op apply.
+      const resolutionsToApply = reworkResolutions.filter(satisfiesBlockingReworkFinding);
+      if (resolutionsToApply.length > 0) {
+        applyReworkResolutions(resolutionsToApply);
       }
       const staged = await stageTaskCompletion({
         invocation,
