@@ -2451,7 +2451,10 @@ test("#1769: unit recovery retry releases the active orchestration marker", asyn
   assert.equal(wedgeResult.ok ? wedgeResult.wedge : null, null);
 });
 
-test("autoLoop stops at the retry closeout when orchestration reports a liveness trip", async (t) => {
+// #2198: a finalize-retry recurrence with unchanged inputs cannot succeed, so
+// the retry-closeout liveness trip must pause with the concrete finalize
+// failure cause instead of emitting the generic wedge stop.
+test("autoLoop pauses with the finalize cause at the retry closeout when orchestration trips", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2462,6 +2465,8 @@ test("autoLoop stops at the retry closeout when orchestration reports a liveness
   let advanceCalls = 0;
   let orchestrationPhase: AutoStatus["phase"] = "running";
   const stopReasons: Array<string | undefined> = [];
+  const pauseReasons: Array<string | undefined> = [];
+  const journalEvents: Array<{ eventType: string; data?: any }> = [];
   const s = makeLoopSession({ currentMilestoneId: "M001" });
   s.orchestration = {
     start: async () => ({ kind: "stopped" as const, reason: "unused" }),
@@ -2490,10 +2495,18 @@ test("autoLoop stops at the retry closeout when orchestration reports a liveness
   } satisfies AutoOrchestrationModule;
   openLoopDatabase(t, s);
   const deps = makeMockDeps({
+    emitJournalEvent: (entry: any) => { journalEvents.push(entry); },
     adjudicateNonAdvancingOutcome: undefined,
-    taskExecutionBoundary: async () => ({ action: "retry" as const, reason: "finalize-retry" }),
+    taskExecutionBoundary: async () => ({
+      action: "retry" as const,
+      reason: "finalize-retry: source-integrity inconclusive: host snapshot no longer matches closeout evidence",
+    }),
     stopAuto: async (_ctx, _pi, reason) => {
       stopReasons.push(reason);
+      s.active = false;
+    },
+    pauseAuto: async (_ctx, _pi, errorContext) => {
+      pauseReasons.push(errorContext?.message);
       s.active = false;
     },
   });
@@ -2501,8 +2514,14 @@ test("autoLoop stops at the retry closeout when orchestration reports a liveness
   await autoLoop(ctx, pi, s, deps);
 
   assert.equal(advanceCalls, 1, "the loop must not redispatch after the retry trip");
-  assert.equal(stopReasons.length, 1);
-  assert.match(stopReasons[0] ?? "", /liveness backstop tripped during retry closeout/);
+  assert.equal(stopReasons.length, 0, "the generic wedge stop must not be emitted");
+  assert.equal(pauseReasons.length, 1, "auto-mode must pause with the concrete finalize cause");
+  assert.match(pauseReasons[0] ?? "", /source-integrity inconclusive/);
+  const iterationEnd = journalEvents.find((entry) => entry.eventType === "iteration-end");
+  assert.equal(iterationEnd?.data?.status, "paused");
+  assert.equal(iterationEnd?.data?.reason, pauseReasons[0]);
+  assert.equal(mapStatusToExitCode(iterationEnd?.data?.status), 10);
+  t.diagnostic(JSON.stringify({ scenario: "loop retry closeout", pauseReasons, iterationEnd, headlessExitCode: mapStatusToExitCode(iterationEnd?.data?.status) }));
 });
 
 test("custom-engine recovery fails loudly when dispatch terminalization cannot be confirmed", async (t) => {

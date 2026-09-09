@@ -634,21 +634,25 @@ export async function autoLoop(
         },
       );
       if (outcome === "retry" && s.orchestration?.getStatus().phase === "stopped") {
-        const stopReason = `liveness backstop tripped during retry closeout for ${unit?.unitType ?? "orchestration"} ${unit?.unitId ?? s.currentMilestoneId ?? "workflow"}`;
-        await deferStopAuto(ctx, pi, markBlockedStopReason(stopReason));
-        return stopReason;
+        // #2198: the finalize-retry guard tripped — the retry recurred with
+        // unchanged inputs, so a further redispatch cannot succeed. The
+        // orchestrator surfaced the concrete finalize-failure cause; pause with
+        // it (plain /gsd auto resumes after the fix) instead of the generic
+        // wedge stop.
+        await deps.pauseAuto(ctx, pi, { message: reason, category: "unknown" });
+        return reason;
       }
       return null;
     };
-    const finishRetryCloseoutStop = (reason: string): void => {
+    const finishRetryCloseoutPause = (reason: string): void => {
       finishIncompleteIteration({
-        status: "stopped",
+        status: "paused",
         reason,
         unitType: iterData?.unitType,
         unitId: iterData?.unitId,
         failureClass: "closeout",
       });
-      finishTurn("stopped", "closeout", reason, null);
+      finishTurn("paused", "closeout", reason, null);
     };
     let iterationEndEmitted = false;
     const emitIterationEnd = (details: Record<string, unknown> = {}): void => {
@@ -1074,7 +1078,7 @@ export async function autoLoop(
           dispatchSettled = customDispatchSettled;
           const retryStopReason = await closeRun("retry", unitPhaseResult.reason);
           if (retryStopReason) {
-            finishRetryCloseoutStop(retryStopReason);
+            finishRetryCloseoutPause(retryStopReason);
             break;
           }
           finishIncompleteIteration({
@@ -1994,7 +1998,7 @@ export async function autoLoop(
         }
         const retryStopReason = await closeRun("retry", unitPhaseResult.reason);
         if (retryStopReason) {
-          finishRetryCloseoutStop(retryStopReason);
+          finishRetryCloseoutPause(retryStopReason);
           break;
         }
         finishIncompleteIteration({
@@ -2100,7 +2104,7 @@ export async function autoLoop(
         abortActiveUnitTurn(ctx);
         const retryStopReason = await closeRun("retry", finalizeDecision.ledgerErrorSummary);
         if (retryStopReason) {
-          finishRetryCloseoutStop(retryStopReason);
+          finishRetryCloseoutPause(retryStopReason);
           break;
         }
         finishIncompleteIteration({
