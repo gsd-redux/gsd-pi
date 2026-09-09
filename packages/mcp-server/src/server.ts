@@ -385,7 +385,7 @@ interface McpServerInstance {
 function registerProgressTool(server: Pick<McpServerInstance, 'tool'>): void {
   server.tool(
     'gsd_progress',
-    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
+    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, next action, and readMetadata provenance. No session required — reads the workflow database (the workflow authority) when the GSD runtime is available, .gsd/ projections otherwise.',
     {
       projectDir: z.string().describe('Absolute path to the project directory'),
     },

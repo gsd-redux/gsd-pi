@@ -11,6 +11,7 @@ import {
   findSliceIds,
   findTaskFiles,
 } from './paths.js';
+import type { ProjectProgressReadMetadata } from '@opengsd/contracts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,7 +28,13 @@ export interface ProgressResult {
   requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
   blockers: string[];
   nextAction: string;
+  readMetadata?: ProjectProgressReadMetadata;
 }
+
+const PROJECTION_READ_METADATA: ProjectProgressReadMetadata = {
+  source: 'projection',
+  authority: 'projection-fallback',
+};
 
 // ---------------------------------------------------------------------------
 // STATE.md parser
@@ -173,6 +180,7 @@ export function readProgress(projectDir: string): ProgressResult {
     requirements: null,
     blockers: [],
     nextAction: '',
+    readMetadata: { ...PROJECTION_READ_METADATA },
   };
 
   if (!existsSync(statePath)) {

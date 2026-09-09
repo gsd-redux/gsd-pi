@@ -99,6 +99,10 @@ export interface BashResult {
 	fullOutputPath?: string;
 }
 
+export type ProjectProgressReadMetadata =
+	| { source: "database"; authority: "db-authoritative" }
+	| { source: "projection"; authority: "projection-fallback" };
+
 export interface ProjectProgress {
 	activeMilestone: { id: string; title: string } | null;
 	activeSlice: { id: string; title: string } | null;
@@ -125,6 +129,7 @@ export interface ProjectProgress {
 	}>;
 	milestoneDetailsTruncated?: boolean;
 	milestoneDetailsTasksTruncated?: boolean;
+	readMetadata?: ProjectProgressReadMetadata;
 }
 
 export interface ProjectSnapshotBlocker {

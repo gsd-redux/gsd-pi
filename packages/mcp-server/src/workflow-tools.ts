@@ -972,6 +972,13 @@ export function hasWorkflowToolBridgeConfiguration(
   env: NodeJS.ProcessEnv = process.env,
   moduleExists: (modulePath: string) => boolean = existsSync,
 ): boolean {
+  // Test-only escape hatch: forces "no bridge" without touching real files on
+  // disk, so standalone-fallback tests never rename/hide production source.
+  if (env.GSD_WORKFLOW_BRIDGE_TEST_DISABLE?.trim()) {
+    warnCustomWorkflowModule("GSD_WORKFLOW_BRIDGE_TEST_DISABLE", "true");
+    return false;
+  }
+
   if (
     env.GSD_WORKFLOW_EXECUTORS_MODULE?.trim()
     || env.GSD_WORKFLOW_WRITE_GATE_MODULE?.trim()

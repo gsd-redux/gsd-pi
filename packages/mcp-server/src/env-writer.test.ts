@@ -407,6 +407,11 @@ describe('isSecuritySensitiveEnvKey', () => {
     assert.ok(isSecuritySensitiveEnvKey('path'));
     assert.ok(isSecuritySensitiveEnvKey('Node_Options'));
   });
+
+  it('blocks the workflow-bridge test-only override, since it can force gsd_progress into projection fallback', () => {
+    assert.ok(isSecuritySensitiveEnvKey('GSD_WORKFLOW_BRIDGE_TEST_DISABLE'));
+    assert.ok(isSecuritySensitiveEnvKey('gsd_workflow_bridge_test_disable'));
+  });
 });
 
 describe('isSupportedDeploymentEnvironment', () => {

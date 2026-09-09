@@ -16,9 +16,14 @@ import {
   _getAdapter,
   readTransaction,
 } from "../gsd-db.js";
+import type { ProjectProgressReadMetadata } from "@opengsd/contracts";
 import type { GSDState } from "../types.js";
 
 const MAX_REVISION_ATTEMPTS = 3;
+const DB_READ_METADATA: ProjectProgressReadMetadata = {
+  source: "database",
+  authority: "db-authoritative",
+};
 
 /**
  * Structural mirror of `ProgressResult`
@@ -37,6 +42,7 @@ export interface DbProgressResult {
   requirements: { active: number; validated: number; deferred: number; outOfScope: number } | null;
   blockers: string[];
   nextAction: string;
+  readMetadata?: ProjectProgressReadMetadata;
 }
 
 export interface DbProjectProgressResult extends DbProgressResult {
@@ -137,6 +143,7 @@ function buildProgressResult(
         : null,
     blockers: [...state.blockers],
     nextAction: state.nextAction,
+    readMetadata: { ...DB_READ_METADATA },
   };
 }
 
