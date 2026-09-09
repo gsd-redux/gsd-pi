@@ -12,20 +12,30 @@ jobs:
     if: ${{ github.event_name == 'issues' && contains(github.event.issue.body, 'GSD version') }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
+      - uses: actions/checkout@v7
+
       - name: Check GSD version and comment if outdated
         uses: actions/github-script@v9
         with:
           script: |
+            const { isOutdated, isVersionLike, normalizeReportedVersion } = await import(
+              `${process.cwd()}/scripts/lib/version-check-core.mjs`
+            );
+
             const body = context.payload.issue.body || '';
             const issueNumber = context.payload.issue.number;
 
-            const match = body.match(/###\s+GSD version\s*\n+\s*([^\s\n]+)/i);
+            const match = body.match(/###\s+GSD version\s*\n+\s*((?:GSD\s+)?[^\s\n]+)/i);
             if (!match) {
               core.info('Could not find a GSD version value in the issue body - skipping.');
               return;
             }
 
-            const reportedVersion = match[1].trim().replace(/^v/, '');
+            const reportedVersion = normalizeReportedVersion(match[1]);
+            if (!isVersionLike(reportedVersion)) {
+              core.info('Reported value "' + reportedVersion + '" is not a version - skipping.');
+              return;
+            }
             core.info('Reported version: ' + reportedVersion);
 
             const npmResponse = await fetch('https://registry.npmjs.org/@opengsd%2fgsd-pi/latest');
@@ -36,19 +46,6 @@ jobs:
             const npmData = await npmResponse.json();
             const latestVersion = npmData.version;
             core.info('Latest version: ' + latestVersion);
-
-            function parseVersion(v) {
-              const parts = v.replace(/^v/, '').split('.').map(Number);
-              return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
-            }
-
-            function isOutdated(reported, latest) {
-              const r = parseVersion(reported);
-              const l = parseVersion(latest);
-              if (r[0] !== l[0]) return r[0] < l[0];
-              if (r[1] !== l[1]) return r[1] < l[1];
-              return r[2] < l[2];
-            }
 
             if (!isOutdated(reportedVersion, latestVersion)) {
               core.info('Version ' + reportedVersion + ' is current - no comment needed.');
