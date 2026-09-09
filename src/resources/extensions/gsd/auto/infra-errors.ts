@@ -33,7 +33,8 @@ export const INFRA_ERROR_CODES: ReadonlySet<string> = new Set([
 /**
  * Detect whether an error is an unrecoverable infrastructure failure.
  * Checks the `code` property (Node system errors) and falls back to
- * scanning the message string for known error code tokens.
+ * scanning the message string for known error code tokens, plus
+ * structural SQLite aborts that retrying can never resolve.
  *
  * Returns the matched code string, or null if the error is not an
  * infrastructure failure.
@@ -50,6 +51,13 @@ export function isInfrastructureError(err: unknown): string | null {
   // SQLite WAL corruption is not transient — retrying burns LLM budget
   // for guaranteed failures (#2823).
   if (msg.includes("database disk image is malformed")) return "SQLITE_CORRUPT";
+  // Lease-fencing RAISE(ABORT) is deterministic: the turn no longer holds the
+  // milestone lease, and retrying the identical iteration can never re-acquire
+  // the same fencing token. Retrying only burns LLM budget (the loop's
+  // stale-lease forceReclaim recovery on resume is the sanctioned re-entry).
+  // One substring covers both trigger messages (with and without the
+  // "or current replacement lease" tail).
+  if (msg.includes("requires the current held lease")) return "LEASE_FENCING_LOST";
   return null;
 }
 

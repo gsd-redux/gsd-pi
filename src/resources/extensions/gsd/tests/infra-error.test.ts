@@ -112,6 +112,47 @@ test("returns null for non-infra code property", () => {
   assert.equal(isInfrastructureError(err), null);
 });
 
+// ── isInfrastructureError: structural SQLite aborts ──────────────────────────
+
+test("classifies lease-fencing RAISE(ABORT) as LEASE_FENCING_LOST (long trigger)", () => {
+  const err = new Error(
+    "workflow attempt requires the current held lease or current replacement lease",
+  );
+  assert.equal(isInfrastructureError(err), "LEASE_FENCING_LOST");
+});
+
+test("classifies lease-fencing RAISE(ABORT) as LEASE_FENCING_LOST (short trigger)", () => {
+  const err = new Error("workflow attempt requires the current held lease");
+  assert.equal(isInfrastructureError(err), "LEASE_FENCING_LOST");
+});
+
+test("lease-fencing classification survives sqlite trigger wrapping", () => {
+  // node:sqlite surfaces RAISE(ABORT) text verbatim, but a driver-level
+  // constraint prefix must not break the classification — a non-null code is
+  // what the auto-loop keys on to hard-stop instead of retrying.
+  const err = new Error(
+    "UNIQUE constraint failed: RAISE(ABORT, workflow attempt requires the current held lease or current replacement lease)",
+  );
+  assert.notEqual(isInfrastructureError(err), null);
+  assert.equal(isInfrastructureError(err), "LEASE_FENCING_LOST");
+});
+
+test("does not over-match messages that merely mention leases", () => {
+  assert.equal(isInfrastructureError(new Error("milestone lease acquired")), null);
+});
+
+test("SQLITE_CORRUPT special-case still fires (regression guard)", () => {
+  assert.equal(isInfrastructureError(new Error("database disk image is malformed")), "SQLITE_CORRUPT");
+});
+
+test("ENOSPC code detection still fires (regression guard)", () => {
+  assert.equal(isInfrastructureError(Object.assign(new Error("write ENOSPC"), { code: "ENOSPC" })), "ENOSPC");
+});
+
+test("generic error still returns null (regression guard)", () => {
+  assert.equal(isInfrastructureError(new Error("something broke")), null);
+});
+
 // ── isInfrastructureError: edge cases ────────────────────────────────────────
 
 test("message fallback still fires even if code property is non-infra", () => {
