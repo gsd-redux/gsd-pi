@@ -61,3 +61,210 @@ describe('isBashWriteToStateFile blocks DB shell commands (#3674)', () => {
     assert.ok(!isBashWriteToStateFile('cat .gsd/gsd.db'));
   });
 });
+
+describe('isBashWriteToStateFile allows read-only access (#2200)', () => {
+  test('allows sqlite3 -readonly SELECT inspection', () => {
+    assert.ok(!isBashWriteToStateFile('sqlite3 -readonly .gsd/gsd.db "SELECT count(*) FROM tasks"'));
+  });
+
+  test('allows sqlite3 --readonly .schema inspection', () => {
+    assert.ok(!isBashWriteToStateFile('sqlite3 --readonly .gsd/gsd.db ".schema"'));
+  });
+
+  test('allows -readonly at any option position', () => {
+    assert.ok(!isBashWriteToStateFile('sqlite3 -batch -readonly .gsd/gsd.db ".tables"'));
+    assert.ok(!isBashWriteToStateFile('sqlite3 -csv -header -readonly .gsd/gsd.db "SELECT 1"'));
+    assert.ok(!isBashWriteToStateFile('sqlite3 --batch --readonly .gsd/gsd.db ".schema"'));
+  });
+
+  test('allows copying gsd.db out (db is the source, not the target)', () => {
+    assert.ok(!isBashWriteToStateFile('cp .gsd/gsd.db /tmp/copy.db'));
+  });
+
+  test('allows copying a quoted gsd.db path out', () => {
+    assert.ok(!isBashWriteToStateFile('cp ".gsd/gsd.db" /tmp/copy.db'));
+  });
+
+  test('allows grepping the source tree for the file names', () => {
+    assert.ok(!isBashWriteToStateFile('grep -rn "gsd.db" src/'));
+    assert.ok(!isBashWriteToStateFile('grep -rn "gsd.db|STATE.md" src/'));
+  });
+
+  test('allows grep alternation whose \\| is not a shell redirect', () => {
+    assert.ok(!isBashWriteToStateFile('grep -rln "gsd.db\\|STATE.md.*blocked" src/'));
+  });
+});
+
+describe('isBashWriteToStateFile still blocks genuine writes (#2200 controls)', () => {
+  test('blocks overwrite and append redirects to STATE.md', () => {
+    assert.ok(isBashWriteToStateFile('echo x > .gsd/STATE.md'));
+    assert.ok(isBashWriteToStateFile('echo x >> .gsd/STATE.md'));
+  });
+
+  test('blocks cp/mv targeting STATE.md', () => {
+    assert.ok(isBashWriteToStateFile('cp x .gsd/STATE.md'));
+    assert.ok(isBashWriteToStateFile('mv x .gsd/STATE.md'));
+  });
+
+  test('blocks cp/mv targeting quoted STATE.md paths', () => {
+    assert.ok(isBashWriteToStateFile('cp x ".gsd/STATE.md"'));
+    assert.ok(isBashWriteToStateFile("mv x '.gsd/STATE.md'"));
+  });
+
+  test('blocks tee to STATE.md', () => {
+    assert.ok(isBashWriteToStateFile('echo x | tee .gsd/STATE.md'));
+  });
+
+  test('blocks sed -i on STATE.md', () => {
+    assert.ok(isBashWriteToStateFile('sed -i s/pending/running/ .gsd/STATE.md'));
+  });
+
+  test('blocks append redirect to gsd.db', () => {
+    assert.ok(isBashWriteToStateFile('echo x >> .gsd/gsd.db'));
+  });
+
+  test('blocks dd writing gsd.db', () => {
+    assert.ok(isBashWriteToStateFile('dd if=/dev/zero of=.gsd/gsd.db'));
+  });
+
+  test('blocks cp/mv targeting gsd.db in compound commands', () => {
+    assert.ok(isBashWriteToStateFile('cp a b && cp c .gsd/gsd.db'));
+    assert.ok(isBashWriteToStateFile('cp x .gsd/gsd.db; echo done'));
+  });
+
+  test('blocks cp/mv targeting quoted gsd.db paths', () => {
+    assert.ok(isBashWriteToStateFile('cp x ".gsd/gsd.db"'));
+    assert.ok(isBashWriteToStateFile('cp a b && mv c ".gsd/gsd.db-wal"'));
+  });
+
+  test('blocks sqlite3 without -readonly, even for SELECT text', () => {
+    // Without -readonly the CLI executes arbitrary SQL (multi-statement strings
+    // can write), so SELECT/.dump/.schema text alone does not exempt it.
+    assert.ok(isBashWriteToStateFile('sqlite3 .gsd/gsd.db "INSERT INTO ..."'));
+    assert.ok(isBashWriteToStateFile('sqlite3 .gsd/gsd.db "SELECT 1"'));
+  });
+
+  test('blocks sqlite3 with other flags but no -readonly', () => {
+    assert.ok(isBashWriteToStateFile('sqlite3 -batch .gsd/gsd.db "DELETE FROM tasks"'));
+  });
+});
+
+
+describe('state write guard review regressions (#2200)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'gsd.db-wal', 'gsd.db-shm', 'STATE.md']) {
+      for (const destination of [file, `~/.gsd/projects/myproj/${file}`, `/workspace/nested/project/.gsd/${file}`]) {
+        test(`blocks ${operation} to ${destination}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup "${destination}"`), true);
+        });
+      }
+      for (const separator of ['\n', '\r\n']) {
+        test(`blocks ${operation} to ${file} before ${JSON.stringify(separator)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}${separator}echo done`), true);
+        });
+        test(`allows ${operation} from ${file} before ${JSON.stringify(separator)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy${separator}cat .gsd/${file}`), false);
+        });
+      }
+    }
+  }
+
+  const libraryWrites = [
+    `python3 -c "import sqlite3; sqlite3.connect('.gsd/gsd.db').execute('DROP TABLE tasks')"`,
+    `python3 -c "db='.gsd/gsd.db'; import sqlite3; sqlite3.connect(db).execute('DROP TABLE tasks')"`,
+    `python3 -c "import sqlite3; marker='-readonly'; sqlite3.connect('.gsd/gsd.db').execute('DROP TABLE tasks')"`,
+  ];
+  for (const command of libraryWrites) {
+    test(`blocks SQLite library write: ${command}`, () => {
+      assert.equal(isBashWriteToStateFile(command), true);
+      assert.equal(isBashWriteToStateFile(`sqlite3 -readonly .gsd/gsd.db 'SELECT 1'; ${command}`), true);
+    });
+  }
+
+  for (const command of [
+    'cd .gsd && cp /tmp/backup.db gsd.db',
+    'cp backup.db ~/.gsd/projects/myproj/gsd.db',
+    'sqlite3 .gsd/gsd.db "SELECT 1; DROP TABLE tasks; -- -readonly"',
+    'echo x >| .gsd/gsd.db',
+    'echo x >| .gsd/STATE.md',
+    'echo x | tee -a .gsd/STATE.md',
+    'dd if=/dev/zero of=.gsd/gsd.db-wal',
+    'echo start; cp backup .gsd/gsd.db; echo done',
+    `node -e "const db='.gsd/gsd.db'; require('node:sqlite')"`,
+  ]) {
+    test(`blocks write control: ${command}`, () => {
+      assert.equal(isBashWriteToStateFile(command), true);
+    });
+  }
+});
+
+
+describe('cp/mv trailing shell constructs (#2200 R4)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      for (const suffix of [
+        ' > /dev/null',
+        ' 2>/dev/null',
+        ' >> /dev/null 2>&1',
+        ' >| /dev/null',
+        ' &>/dev/null',
+        ' < /dev/null',
+        ' # backup',
+        ' > /dev/null # backup\necho done',
+      ]) {
+        test(`${operation} ${file} with ${JSON.stringify(suffix)}`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db .gsd/${file}${suffix}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ".gsd/${file}"${suffix}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy.db${suffix}`), false);
+        });
+      }
+      test(`${operation} ${file} still requires the last file argument`, () => {
+        assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} > /dev/null /tmp/copy.db`), false);
+        assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}2>/dev/null`), false);
+        assert.equal(isBashWriteToStateFile(`${operation} backup .gsd/${file}#copy`), false);
+      });
+    }
+  }
+});
+
+
+describe('cp/mv ampersand redirection boundaries (#2200 R5)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      const cases: [string, boolean][] = [
+        [`${operation} .gsd/${file} </dev/null &>/tmp/copy.log /tmp/copy.db`, false],
+        [`${operation} x .gsd/${file} > /dev/null`, true],
+        [`${operation} x .gsd/${file} &>/dev/null`, true],
+        [`${operation} x .gsd/${file}`, true],
+        [`${operation} .gsd/${file} /tmp/copy.db`, false],
+        [`${operation} .gsd/${file} </dev/null &>>/tmp/copy.log /tmp/copy.db`, false],
+        [`${operation} x &>/tmp/copy.log .gsd/${file}`, true],
+        [`${operation} x &>>/tmp/copy.log .gsd/${file}`, true],
+        [`${operation} x .gsd/${file} && echo done`, true],
+        [`${operation} x .gsd/${file} & echo done`, true],
+        [`${operation} .gsd/${file} /tmp/copy.db && cat .gsd/${file}`, false],
+      ];
+      for (const [command, blocked] of cases) {
+        test(`${blocked ? 'blocks' : 'allows'} ${command}`, () => {
+          assert.equal(isBashWriteToStateFile(command), blocked);
+        });
+      }
+    }
+  }
+});
+
+
+describe('cp/mv descriptor and noclobber redirections (#2200 R6)', () => {
+  for (const operation of ['cp', 'mv']) {
+    for (const file of ['gsd.db', 'STATE.md']) {
+      for (const redirection of ['2>&1', '0<&3', '2>&-', '>|/tmp/copy.log']) {
+        test(`${operation} ${file} with ${redirection} before destination`, () => {
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ${redirection} .gsd/${file}`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} backup.db ${redirection} ".gsd/${file}"`), true);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} ${redirection} /tmp/copy.db`), false);
+          assert.equal(isBashWriteToStateFile(`${operation} .gsd/${file} /tmp/copy.db ${redirection}`), false);
+        });
+      }
+    }
+  }
+});

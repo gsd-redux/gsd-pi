@@ -20,7 +20,19 @@ database — a rendered view, not a record.
   it is drift that the next render silently discards. `.gsd/STATE.md` and
   `.gsd/gsd.db` are additionally protected at the tool boundary by
   `src/resources/extensions/gsd/write-intercept.ts`, which blocks direct Write
-  and shell writes (`>`, `>>`, `tee`, `cp`/`mv`, `sed -i`, `dd`) to them.
+  and common shell writes to them. The Bash guard allows inspection with
+  `sqlite3 -readonly .gsd/gsd.db 'SELECT 1'` (also `--readonly`), copies from
+  the state file to another destination, and filename searches such as
+  `grep -rn 'gsd.db|STATE.md' src/`. The SQLite exemption requires the flag
+  among the leading option flags, before the database path; SQL text alone
+  does not grant an exemption. SQLite library access remains blocked.
+  `cp`/`mv` detection checks the destination, including a closing quote and
+  supported trailing redirections or comments. Source-only `mv` commands
+  also pass this check, even though moving the source removes it.
+  This is a pattern guard, not a full shell parser: general quoted-argument
+  parsing and SQLite options with separate values (such as `-init FILE`)
+  remain outside its supported parsing. Regression cases live in
+  `src/resources/extensions/gsd/tests/block-db-writes.test.ts`.
 - **Readers MUST NOT treat projections as authority.** Reading a projection is
   legitimate for display, for external integrations that only need a snapshot,
   and for drift detection (which compares projection against DB *by design*).
@@ -109,7 +121,7 @@ milestone.
 
 ### 3.1 Exact format
 
-```
+```html
 <!-- gsd:state-version=<projectRevision>:<authorityEpoch> -->
 ```
 

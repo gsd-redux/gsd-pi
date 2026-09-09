@@ -8,16 +8,11 @@ import { resolve } from "node:path";
 /**
  * Patterns matching authoritative .gsd/ state files that agents must NOT write directly.
  *
- * Only STATE.md is blocked — it is purely engine-rendered from DB state.
- * All other .gsd/ files are agent-authored content that agents create and
- * update during discuss, plan, and execute phases:
- * - REQUIREMENTS.md — agents create during discuss, read during planning
- * - PROJECT.md — agents create during discuss, update at milestone close
- * - ROADMAP.md / PLAN.md — agents create during planning, engine renders checkboxes
- * - SUMMARY.md, KNOWLEDGE.md, CONTEXT.md — non-authoritative content
+ * Projection ownership is defined in
+ * docs/dev/state-db-cutover-projection-contract.md, section 1.
  */
 const BLOCKED_PATTERNS: RegExp[] = [
-  // STATE.md is the only purely engine-rendered file.
+  // STATE.md is rendered from authoritative DB state.
   // Case-insensitive to prevent bypass on macOS (case-insensitive APFS).
   // (^|[/\\]) matches both absolute paths (/project/.gsd/…) and bare relative
   // paths (.gsd/STATE.md) so a path without a leading separator is also blocked.
@@ -30,26 +25,46 @@ const BLOCKED_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Bash command patterns that target STATE.md.
- * Covers common shell write patterns: redirect, tee, cp, mv, sed -i, etc.
+ * Bash write patterns for STATE.md, gsd.db, and database sidecars.
+ * Guard behavior and parsing limits are documented in
+ * docs/dev/state-db-cutover-projection-contract.md, section 1.
  */
 const BASH_STATE_PATTERNS: RegExp[] = [
-  // Redirect/pipe writes: > STATE.md, >> STATE.md, >| STATE.md
-  /[>|]+\s*\S*STATE\.md/i,
+  // Redirect writes: > STATE.md, >> STATE.md, >| STATE.md.
+  // (#2200) A bare '|' is not a redirect — piping into a filename writes nothing,
+  // and a quoted grep alternation like "gsd.db\|STATE.md" was misread as one.
+  />{1,2}\|?\s*\S*STATE\.md/i,
   // tee to STATE.md
   /\btee\b.*STATE\.md/i,
-  // cp/mv targeting STATE.md
-  /\b(cp|mv)\b.*STATE\.md/i,
+  // cp/mv with STATE.md as the destination — the state file must be the last
+  // significant argument, allowing a closing quote and trailing redirections
+  // or comments. Redirection operators within the segment are not separators.
+  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>)|(?<=[<>])&(?=[0-9-])|(?<=>)\|)*STATE\.md(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
   // sed -i editing STATE.md
   /\bsed\b.*-i.*STATE\.md/i,
   // dd output to STATE.md
   /\bdd\b.*of=\S*STATE\.md/i,
-  // Direct DB access via sqlite3/sql.js/better-sqlite3 targeting gsd.db (#3625)
-  /\b(sqlite3|sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
-  /\bgsd\.db\b.*\b(sqlite3|sql\.js|better-sqlite3)\b/i,
-  // Shell writes targeting gsd.db files
-  /[>|]+\s*\S*gsd\.db/i,
-  /\b(cp|mv|dd)\b.*gsd\.db/i,
+  // Redirect writes to gsd.db (see STATE.md note re: '|')
+  />{1,2}\|?\s*\S*gsd\.db/i,
+  // cp/mv with gsd.db (or its WAL/SHM sidecars) as the destination (#2200);
+  // an optional closing quote still counts (cp x ".gsd/gsd.db")
+  /\b(?:cp|mv)\b(?:[^;&|\r\n]|&(?=>)|(?<=[<>])&(?=[0-9-])|(?<=>)\|)*gsd\.db(?:-wal|-shm)?(?=["']?(?:(?:[ \t]+[0-9]+|[ \t]*)(?:>>|>\||>&|>|<<|<&|<>|<|&>>?)[ \t]*[^\s;&|<>]+)*(?:[ \t]+#[^\r\n]*)?[ \t]*(?:$|[;|\r\n]|&&|&(?![>&])))/i,
+  // dd output to gsd.db
+  /\bdd\b.*of=\S*gsd\.db/i,
+  // sqlite3 CLI writing gsd.db, unless opened read-only (#2200): -readonly/--readonly
+  // anywhere among the leading option flags makes the whole connection read-only.
+  // Without the flag the CLI executes arbitrary SQL, so SELECT/.dump/.schema text
+  // does not exempt the invocation. The db path must be the first non-option
+  // argument (sqlite3 [OPTIONS] FILE [SQL]); the option region is flags-only, so
+  // SQL text after the path cannot inject the exemption, and the required db-path
+  // token prevents backtracking from skipping over a later -readonly flag.
+  /\bsqlite3\s+(?:(?!-{1,2}readonly\b)-{1,2}[^\s]+\s+)*(?!-{1,2}readonly\b)[^\s]*gsd\.db/i,
+];
+
+const BASH_SQLITE_LIBRARY_PATTERNS: RegExp[] = [
+  // In-process sqlite libs touching gsd.db (#3625), either argument order
+  /\b(?:sqlite3|sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
+  /\bgsd\.db\b.*\b(?:sqlite3|sql\.js|better-sqlite3|node:sqlite)\b/i,
 ];
 
 /**
@@ -76,10 +91,16 @@ export function isBlockedStateFile(filePath: string): boolean {
 }
 
 /**
- * Tests whether a bash command appears to target STATE.md for writing.
+ * Tests whether a bash command appears to write protected state files.
  */
 export function isBashWriteToStateFile(command: string): boolean {
-  return BASH_STATE_PATTERNS.some((pattern) => pattern.test(command));
+  if (BASH_STATE_PATTERNS.some((pattern) => pattern.test(command))) return true;
+
+  const libraryCommand = command.replace(
+    /\bsqlite3\s+(?:-{1,2}[^\s;&|]+\s+)*[^\s;&|]*gsd\.db\b/gi,
+    "",
+  );
+  return BASH_SQLITE_LIBRARY_PATTERNS.some((pattern) => pattern.test(libraryCommand));
 }
 
 function matchesBlockedPattern(path: string): boolean {
