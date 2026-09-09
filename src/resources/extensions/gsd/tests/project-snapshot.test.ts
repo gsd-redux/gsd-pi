@@ -26,6 +26,7 @@ import { deriveState, getDeriveTelemetry, invalidateStateCache, resetDeriveTelem
 import { readProgressFromDb } from "../state/progress-from-db.ts";
 import {
   MAX_SNAPSHOT_MILESTONES,
+  MAX_SNAPSHOT_OPEN_ITEMS,
   readProjectSnapshotFromDb,
 } from "../state/project-snapshot.ts";
 import {
@@ -226,10 +227,12 @@ test("readProjectSnapshotFromDb emits exactly the DbProjectSnapshot key set", as
   assert.deepEqual(Object.keys(snapshot).sort(), [
     "authority",
     "blockers",
+    "blockersTruncated",
     "capturedAt",
     "current",
     "milestones",
     "openQuestions",
+    "openQuestionsTruncated",
     "progress",
     "verification",
   ]);
@@ -293,6 +296,7 @@ test("readProjectSnapshotFromDb assembles authority, current, progress, open ite
   assert.deepEqual(snapshot.progress.tasks, { total: 2, done: 1, pending: 1 });
 
   assert.equal(snapshot.blockers.length, 3);
+  assert.equal(snapshot.blockersTruncated, false);
   assert.deepEqual(
     snapshot.blockers.map((b) => b.blockerId),
     ["B-snap-zz", "B-snap-aa", "B-snap-ab"],
@@ -308,6 +312,7 @@ test("readProjectSnapshotFromDb assembles authority, current, progress, open ite
   });
 
   assert.equal(snapshot.openQuestions.length, 3);
+  assert.equal(snapshot.openQuestionsTruncated, false);
   assert.deepEqual(
     snapshot.openQuestions.map((q) => q.questionId),
     ["Q-snap-a", "Q-snap-b", "Q-snap-later"],
@@ -380,6 +385,66 @@ test("readProjectSnapshotFromDb truncates the milestone registry beyond the cap"
   );
   // Counts stay project-wide even when the registry is truncated.
   assert.deepEqual(snapshot.progress.milestones, { total: 51, done: 0, active: 1, pending: 50, parked: 0 });
+});
+
+test("readProjectSnapshotFromDb truncates blockers and open questions beyond the cap", async (t) => {
+  const fixture = await createWorkflowAuthorityFixture();
+  t.after(() => fixture.cleanup());
+
+  // 55 blockers/questions push both collections past the 50-item cap.
+  // All items share one seeded operation/revision (workflow_blockers and
+  // workflow_open_questions FK their revision columns to that operation's
+  // resulting_revision), so ordering falls back to the (revision, id) /
+  // (created_at, id) tiebreakers: blockers order by id, and distinct
+  // createdAt timestamps make question ordering deterministic too.
+  const TRUNC_REVISION = SEED_REVISION_BASE + 100;
+  transaction(() => {
+    seedOperation("op-snap-trunc", TRUNC_REVISION);
+    seedMilestoneLifecycle("life-snap-trunc", "op-snap-trunc", TRUNC_REVISION);
+
+    for (let n = 1; n <= 55; n += 1) {
+      seedBlocker({
+        blockerId: `B-trunc-${String(n).padStart(3, "0")}`,
+        lifecycleId: "life-snap-trunc",
+        operationId: "op-snap-trunc",
+        revision: TRUNC_REVISION,
+        openedAt: `2026-09-05T01:${String(n).padStart(2, "0")}:00.000Z`,
+      });
+      seedQuestion({
+        questionId: `Q-trunc-${String(n).padStart(3, "0")}`,
+        lifecycleId: "life-snap-trunc",
+        operationId: "op-snap-trunc",
+        revision: TRUNC_REVISION,
+        text: `Truncation fixture question ${n}`,
+        createdAt: `2026-09-05T01:${String(n).padStart(2, "0")}:00.000Z`,
+      });
+    }
+  });
+
+  const snapshot = await readProjectSnapshotFromDb(fixture.root);
+  assert.ok(snapshot);
+
+  assert.equal(MAX_SNAPSHOT_OPEN_ITEMS, 50);
+
+  assert.equal(snapshot.blockersTruncated, true);
+  assert.equal(snapshot.blockers.length, 50);
+  assert.equal(snapshot.blockers[0]?.blockerId, "B-trunc-001");
+  assert.equal(snapshot.blockers[49]?.blockerId, "B-trunc-050");
+  assert.equal(
+    snapshot.blockers.some((b) => b.blockerId === "B-trunc-051"),
+    false,
+    "blockers past the cap must not appear in the snapshot",
+  );
+
+  assert.equal(snapshot.openQuestionsTruncated, true);
+  assert.equal(snapshot.openQuestions.length, 50);
+  assert.equal(snapshot.openQuestions[0]?.questionId, "Q-trunc-001");
+  assert.equal(snapshot.openQuestions[49]?.questionId, "Q-trunc-050");
+  assert.equal(
+    snapshot.openQuestions.some((q) => q.questionId === "Q-trunc-051"),
+    false,
+    "open questions past the cap must not appear in the snapshot",
+  );
 });
 
 test("readProjectSnapshotFromDb returns null when no database exists", async (t) => {

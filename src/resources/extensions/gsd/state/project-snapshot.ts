@@ -35,6 +35,7 @@ const MAX_REVISION_ATTEMPTS = 3;
 
 /** Registry cap: snapshots stay bounded for large projects (issue #2102). */
 export const MAX_SNAPSHOT_MILESTONES = 50;
+export const MAX_SNAPSHOT_OPEN_ITEMS = 50;
 
 export interface DbProjectSnapshotAuthority {
   projectId: string;
@@ -69,7 +70,9 @@ export interface DbProjectSnapshot {
   current: DbProjectSnapshotCurrent;
   progress: DbProjectSnapshotProgress;
   blockers: OpenBlockerRow[];
+  blockersTruncated?: boolean;
   openQuestions: OpenQuestionRow[];
+  openQuestionsTruncated?: boolean;
   verification: VerificationSummaryCounts;
   milestones: { items: DbProjectSnapshotMilestone[]; truncated: boolean };
   capturedAt: string;
@@ -154,11 +157,16 @@ function readSnapshotDb(): SnapshotDbRead {
       truncated,
     };
 
+    const blockers = getOpenBlockers();
+    const openQuestions = getOpenQuestions();
+
     return {
       authority,
       progress,
-      blockers: getOpenBlockers(),
-      openQuestions: getOpenQuestions(),
+      blockers: blockers.slice(0, MAX_SNAPSHOT_OPEN_ITEMS),
+      blockersTruncated: blockers.length > MAX_SNAPSHOT_OPEN_ITEMS,
+      openQuestions: openQuestions.slice(0, MAX_SNAPSHOT_OPEN_ITEMS),
+      openQuestionsTruncated: openQuestions.length > MAX_SNAPSHOT_OPEN_ITEMS,
       verification: getVerificationSummary(),
       milestones,
     };

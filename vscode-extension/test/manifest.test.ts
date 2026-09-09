@@ -23,6 +23,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 function readPackage(): {
 	contributes: {
 		commands: Array<{ command: string; title: string }>;
+		languageModelTools?: Array<{
+			name: string;
+			displayName: string;
+			modelDescription: string;
+			userDescription?: string;
+			canBeReferencedInPrompt?: boolean;
+			toolReferenceName?: string;
+			icon?: string;
+			inputSchema?: unknown;
+			readOnlyHint?: boolean;
+		}>;
 		views: Record<string, Array<{ id: string }>>;
 		configuration: {
 			properties: Record<string, unknown>;
@@ -113,6 +124,60 @@ test("project progress uses the existing RPC client and one sidebar refresh loop
 	assert.match(sidebarSource, /this\.refresh\(true\)/);
 	assert.match(sidebarSource, /applySectionCollapseState\}\)\(document\.querySelectorAll/);
 	assert.equal((sidebarSource.match(/setInterval\(/g) ?? []).length, 1);
+});
+
+test("Copilot read tools are contributed and registered against the existing RPC client", () => {
+	const pkg = readPackage();
+	const extensionSource = readSource("extension.ts");
+	const toolSource = readSource("copilot-tools.ts");
+	const guardSource = readSource("copilot-tools-guards.ts");
+	const clientSource = readSource("gsd-client.ts");
+	const tools = pkg.contributes.languageModelTools ?? [];
+
+	assert.equal(tools.length, 2);
+	assert.deepEqual(tools.map((tool) => tool.name), ["gsd_project_progress", "gsd_project_snapshot"]);
+
+	for (const tool of tools) {
+		assert.equal(typeof tool.displayName, "string");
+		assert.equal(typeof tool.modelDescription, "string");
+		assert.equal(tool.canBeReferencedInPrompt, true);
+		assert.equal(tool.inputSchema, undefined);
+		assert.equal("readOnlyHint" in tool, false);
+		assert.equal(typeof tool.icon, "string");
+	}
+
+	assert.deepEqual(tools.map((tool) => tool.toolReferenceName), ["gsdProjectProgress", "gsdProjectSnapshot"]);
+	assert.match(extensionSource, /registerCopilotTools\(context, client\)/);
+	assert.match(toolSource, /typeof vscode\.lm\.registerTool !== "function"/);
+	assert.match(toolSource, /folder\.uri\.fsPath/);
+	assert.match(toolSource, /this\.client\.projectRoot/);
+	assert.match(toolSource, /vscode\.lm\.registerTool\("gsd_project_progress", new ProjectProgressTool\(client\)\)/);
+	assert.match(toolSource, /vscode\.lm\.registerTool\("gsd_project_snapshot", new ProjectSnapshotTool\(client\)\)/);
+	assert.match(toolSource, /The result is read-only, but it will be sent to the active chat\/model context/);
+	assert.match(toolSource, /awaitWithCancellation\(\(\) => this\.client\.getProjectProgress\(\), token\)/);
+	assert.match(toolSource, /awaitWithCancellation\(\(\) => this\.client\.getProjectSnapshot\(\), token\)/);
+	assert.match(toolSource, /GSD agent is not connected/);
+	assert.match(toolSource, /this\.client\.getProjectProgress\(\)/);
+	assert.match(toolSource, /this\.client\.getProjectSnapshot\(\)/);
+	assert.doesNotMatch(toolSource, /new GsdClient/);
+	assert.match(guardSource, /if \(input === undefined\) return/);
+	assert.match(guardSource, /resolve\(workspaceFolderPaths\[0\]\)/);
+	assert.match(guardSource, /resolve\(projectRoot\)/);
+	assert.match(guardSource, /GSD project read tools do not accept input parameters/);
+	assert.match(guardSource, /GSD project read tools require exactly one workspace folder/);
+	assert.match(guardSource, /GSD project read was cancelled/);
+	assert.match(guardSource, /awaitWithCancellation<T>\(operation: \(\) => Promise<T>/);
+	assert.match(clientSource, /get projectRoot\(\): string/);
+	assert.match(clientSource, /async getProjectSnapshot\(\): Promise<ProjectSnapshot \| null>/);
+	assert.match(clientSource, /type: "get_project_snapshot"/);
+});
+
+test("web bridge treats project progress and snapshot reads as read-only while onboarding is locked", () => {
+	const bridgeSource = readFileSync(join(root, "..", "src", "web", "bridge-service.ts"), "utf8");
+	const allowlist = bridgeSource.match(/const READ_ONLY_RPC_COMMAND_TYPES = new Set<RpcCommand\["type"\]>\(\[([\s\S]*?)\]\);/);
+	assert.ok(allowlist);
+	assert.match(allowlist[1], /"get_project_progress"/);
+	assert.match(allowlist[1], /"get_project_snapshot"/);
 });
 
 test("agent git helpers scope git output to tracked agent files", () => {
