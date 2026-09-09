@@ -1340,5 +1340,62 @@ console.log('\n=== complete-task: invalid deferred duplicate cannot strip decisi
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// complete-task: legacy completion preserves the planned task title (#2216)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: legacy completion preserves the planned task title (#2216) ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Record the corrected acceptance criterion', status: 'pending' });
+
+  const blockerLiner = 'Stopped T01 at its human-in-the-loop precondition';
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask({
+    ...makeValidParams(),
+    oneLiner: blockerLiner,
+    blockerDiscovered: true,
+  }, basePath));
+
+  assertTrue(!('error' in result), 'blocker completion should succeed on the legacy path');
+  const task = getTask('M001', 'S01', 'T01');
+  assertEq(task?.status, 'complete', 'blocker completion should commit');
+  assertEq(task?.title, 'Record the corrected acceptance criterion', 'planned title must not be overwritten by the blocker one-liner (#2216)');
+  assertEq(task?.one_liner, blockerLiner, 'one_liner should hold the blocker prose');
+  assertEq(task?.blocker_discovered, true, 'blocker_discovered should be recorded');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: legacy completion of an unplanned task keeps the one-liner as title
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: legacy completion of an unplanned task keeps the one-liner as title ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask(makeValidParams(), basePath));
+
+  assertTrue(!('error' in result), 'completion of an unplanned task should still succeed');
+  const task = getTask('M001', 'S01', 'T01');
+  assertEq(task?.status, 'complete', 'unplanned task completion should insert a new row');
+  assertEq(task?.title, 'Added test functionality', 'a genuinely new row should take the one-liner as its title');
+  assertEq(task?.one_liner, 'Added test functionality', 'one_liner should match the one-liner');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 report();
