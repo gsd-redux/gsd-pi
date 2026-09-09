@@ -220,9 +220,12 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           });
           return;
         }
-        // Subagent coordinators can legitimately run for many minutes while
-        // bounded child work completes. Leave genuinely hung coordination to
-        // the unit-level hard timeout instead of aborting on wall-clock age.
+        // Subagent coordinators and bounded execution tools (gsd_exec,
+        // gsd_uat_exec, async_bash, await_job, bg_shell) can legitimately run
+        // for many minutes while their work completes — each is bounded by the
+        // exec sandbox clamp or its own job/timeout contract. Leave genuinely
+        // hung work to the unit-level hard timeout instead of aborting on
+        // wall-clock age.
         const oldestStart = getOldestStallDetectableToolStart();
         if (oldestStart === undefined) {
           writeUnitRuntimeRecord(s.basePath, unitType, unitId, s.currentUnit.startedAt, {
