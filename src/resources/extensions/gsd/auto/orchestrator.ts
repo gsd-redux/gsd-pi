@@ -67,6 +67,8 @@ import { preserveProjectionChanges } from "../projection-worker.js";
 import { throwIfTransientProjectionLockError } from "../projection-root-errors.js";
 import { buildDispatchKey } from "./dispatch-key.js";
 import { stableClaimSignature } from "./lease-conflict-notice.js";
+import { abortActiveUnitTurn } from "./unit-turn-abort.js";
+import { clearInFlightTools } from "../auto-tool-tracking.js";
 import {
   COMPLETED_NO_ADVANCE_GUARD_ID,
   formatWedgeRefusalNotice,
@@ -1880,6 +1882,15 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   private async recordAbandonCloseout(unit: UnitRef, reason: string): Promise<void> {
+    // #2212: the abandoned turn may still be parked in a pending
+    // ask_user_questions elicitation. Aborting the turn trips the tool's
+    // abort signal, so showInterviewRound finishes and the TUI dialog
+    // unmounts; the normal tool_execution_end → markToolEnd path retires
+    // the in-flight entry. clearInFlightTools covers the case where that
+    // end event never arrives, so a leaked interactive entry cannot exempt
+    // later units from the idle watchdog and hard timeout.
+    abortActiveUnitTurn(this.ctx);
+    clearInFlightTools();
     this.status.activeUnit = undefined;
     this.pendingTargetSnapshot = null;
     this.bumpTransition();

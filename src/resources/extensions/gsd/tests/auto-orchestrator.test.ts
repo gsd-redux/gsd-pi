@@ -59,6 +59,12 @@ import {
   getOpenWedge,
 } from "../auto-liveness-backstop.js";
 import { renderRoadmapFromDb } from "../markdown-renderer.js";
+import {
+  clearInFlightTools,
+  getInFlightToolCount,
+  hasInteractiveToolInFlight,
+  markToolStart,
+} from "../auto-tool-tracking.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture builder
@@ -1136,6 +1142,37 @@ test("abandonActiveUnit clears an abnormal exit so the same unit can advance aga
   assert.equal(second.kind, "advanced");
   if (second.kind !== "advanced") throw new Error("expected re-advance after abandonment");
   assert.deepEqual(second.unit, first.unit);
+  assert.ok(f.journalNames().includes("unit-abandon"));
+});
+
+test("#2212: abandonActiveUnit aborts the turn hosting a pending elicitation and clears in-flight tool entries", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  t.after(() => clearInFlightTools());
+
+  // Simulate the abandoned turn: still alive (not idle — a pending
+  // ask_user_questions dialog is mounted) with the interactive tool in flight.
+  const extCtx = f.ctx.ctx as { isIdle: () => boolean; abort: () => void };
+  let abortCalls = 0;
+  extCtx.isIdle = () => false;
+  extCtx.abort = () => {
+    abortCalls += 1;
+  };
+  markToolStart("tc-2212-pending-question", true, "ask_user_questions");
+  assert.equal(hasInteractiveToolInFlight(), true, "precondition: interactive elicitation in flight");
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  await f.orchestrator.abandonActiveUnit(first.unit, "verify-gate wedge");
+
+  // The abort is what dismisses the mounted dialog: the tool's abort signal
+  // makes showInterviewRound finish and unmount (mechanism pinned in
+  // shared/tests/interview-abort-dismiss.test.ts).
+  assert.equal(abortCalls, 1, "unit-abandon must abort the turn hosting the pending elicitation");
+  assert.equal(hasInteractiveToolInFlight(), false, "unit-abandon must clear the interactive in-flight watchdog exemption");
+  assert.equal(getInFlightToolCount(), 0, "unit-abandon must clear stale in-flight tool entries");
   assert.ok(f.journalNames().includes("unit-abandon"));
 });
 

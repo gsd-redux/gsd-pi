@@ -303,6 +303,8 @@ Recovery steering nudges the LLM to finish durable output before timing out. Whe
 
 Interactive prompts that block waiting for human input (such as `ask_user_questions` during discuss-phase/milestone, or secure value entry) are exempt from the idle and hard timeouts: while one is in flight, the watchdogs re-arm instead of firing, so a long human deliberation never cancels the prompt or aborts its turn. A genuinely hung non-interactive unit still hits the hard cap as usual.
 
+If a unit is abandoned, auto mode aborts its active turn, dismisses any pending question dialog, and clears its in-flight tool tracking. Transcript scrolling is restored, and the abandoned prompt no longer exempts later units from the idle or hard timeout.
+
 For operator forensics, timeout recovery updates the unit runtime record with fields such as `phase`, `timeoutAt`, `lastProgressAt`, `lastProgressKind`, `recoveryAttempts`, and `lastRecoveryReason`. Finalize timeouts are recorded with `lastProgressKind` values like `finalize-pre-timeout` or `finalize-post-timeout`; successful finalization records `finalize-success`.
 
 The journal also closes every iteration explicitly. After a unit ends, auto mode emits `post-unit-finalize-start` before closeout and `post-unit-finalize-end` with a `status`, `action`, and optional `reason`. Every loop iteration then emits `iteration-end` with the final status and, when available, the failure class, unit type, unit id, and reason. Use these events to distinguish "agent never returned" from "agent returned but finalize/closeout stopped the loop."
