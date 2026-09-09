@@ -155,6 +155,18 @@ describe("models.generated.ts", () => {
 		expect(model.thinkingLevelMap).toMatchObject({ off: null, minimal: "low", medium: "medium", xhigh: "high" });
 	});
 
+	test("includes GPT-6 Astra for GitHub Copilot", () => {
+		const model = MODELS["github-copilot"]["gpt-6-astra"];
+		expect(model).toMatchObject({
+			id: "gpt-6-astra",
+			api: "openai-completions",
+			provider: "github-copilot",
+			contextWindow: 1_050_000,
+			maxTokens: 128_000,
+			cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+		});
+	});
+
 	test("includes GPT-5.6 variants for OpenAI and OpenAI Codex providers", () => {
 		// models.dev now lists the GPT-5.6 family natively; the curated fill in
 		// generate-models.ts stands down when upstream data is present.
