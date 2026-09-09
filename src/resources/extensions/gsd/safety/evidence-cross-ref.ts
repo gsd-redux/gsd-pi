@@ -185,25 +185,19 @@ function findMatches(
   );
   if (substring.length > 0) return substring;
 
-  // Token match: split on whitespace and check significant overlap
+  // Token match: split on whitespace and check significant overlap. The score
+  // only identifies WHICH command the claim refers to; it must not filter
+  // WHICH outcome is authoritative — a passing re-run can score lower than the
+  // superseded failures it replaces, and the newest matching run decides the
+  // verdict (#2205).
   const claimedTokens = normalized.split(/\s+/).filter(t => t.length > 2);
   if (claimedTokens.length === 0) return [];
 
-  const scoredMatches: Array<{ call: BashEvidence; score: number }> = [];
-
-  for (const call of bashCalls) {
+  return bashCalls.filter((call) => {
     const callTokens = new Set(call.command.split(/\s+/));
     const matchCount = claimedTokens.filter(t => callTokens.has(t)).length;
-    const score = matchCount / claimedTokens.length;
-    if (score >= 0.5) {
-      scoredMatches.push({ call, score });
-    }
-  }
-
-  const bestScore = Math.max(0, ...scoredMatches.map((match) => match.score));
-  return scoredMatches
-    .filter((match) => match.score === bestScore)
-    .map((match) => match.call);
+    return matchCount / claimedTokens.length >= 0.5;
+  });
 }
 
 function latestMatch(matches: readonly BashEvidence[]): BashEvidence {
