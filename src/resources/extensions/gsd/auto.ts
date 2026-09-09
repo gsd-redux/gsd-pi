@@ -3121,6 +3121,23 @@ export async function startAuto(
   }
 
   // ── Fresh start path — delegated to auto-start.ts ──
+
+  // ADR-047 §5 (#2219): acknowledge a requested `--resume-wedge <id>` before
+  // any bootstrap work. Once bootstrap has taken over the session, this ctx's
+  // notify surface only persists to notifications.jsonl — a refusal fired
+  // there never renders and the command looks like a hang. The ack needs only
+  // the orchestration recheck (session-independent) and the project-root
+  // scope, so it runs safely pre-bootstrap. On refusal, restore the
+  // milestone-lock env (captured earlier in startAuto) and return — nothing
+  // has been registered or bootstrapped yet.
+  if (options?.resumeWedgeId) {
+    ensureOrchestrationModule(ctx, pi, s.basePath || base);
+    if (!(await acknowledgeRequestedWedge())) {
+      restoreMilestoneLockEnv();
+      return;
+    }
+  }
+
   const bootstrapDeps: BootstrapDeps = {
     shouldUseWorktreeIsolation,
     registerSigtermHandler,
@@ -3158,13 +3175,12 @@ export async function startAuto(
   // s.currentMilestoneId (including worktree setup inside bootstrapAutoSession).
   rebuildScope(s.basePath, s.currentMilestoneId);
   const loopDeps = buildLoopDeps(pi, ctx);
+  // Rebuild the orchestration module now that bootstrap populated the session
+  // base paths. The requested wedge (if any) was already acknowledged
+  // pre-bootstrap above, so no post-bootstrap ack gate is needed here (#2219).
   ensureOrchestrationModule(ctx, pi, s.basePath || base);
   captureProjectRootEnv(s.originalBasePath || s.basePath);
   registerAutoWorkerForSession(s);
-  if (!(await acknowledgeRequestedWedge())) {
-    await cleanupAfterLoopExit(ctx);
-    return;
-  }
   try {
     pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, state: await deriveState(s.basePath) });
   } catch (err) {
