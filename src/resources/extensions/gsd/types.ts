@@ -368,6 +368,10 @@ export interface PostUnitGateBlock {
   triggerUnitType: string;
   /** The unit ID that triggered the gate. */
   triggerUnitId: string;
+  /** Canonical operation that completed an execute-task trigger. */
+  completionOperationId?: string;
+  /** Legacy completion timestamp when no canonical lifecycle row exists. */
+  legacyCompletedAt?: string;
   /** Gate artifact name, when configured. */
   artifact?: string;
   /** Absolute path to the gate artifact, when known. */
@@ -546,6 +550,23 @@ export interface PersistedHookState {
     completionOperationId?: string;
     legacyCompletedAt?: string;
   } | null;
+  /**
+   * Blocked gate retained until resume re-arms the hook, so a failed blocking
+   * gate cannot be bypassed by pausing and resuming (#2194).
+   */
+  gateBlockPending?: PostUnitGateBlock | null;
+  /**
+   * Hooks queued behind the blocked gate, re-queued on resume so later gates
+   * are not skipped once the blocked gate resolves (#2194).
+   */
+  gateBlockQueue?: Array<{
+    hookName: string;
+    triggerUnitType: string;
+    triggerUnitId: string;
+    forceRun?: boolean;
+    completionOperationId?: string;
+    legacyCompletedAt?: string;
+  }>;
   /** Timestamp of last state save. */
   savedAt: string;
 }

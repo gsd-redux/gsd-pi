@@ -65,6 +65,7 @@ import {
   consumeHookFailure,
   peekRetryTrigger,
   consumeGateBlock,
+  isGateBlockPending,
   persistHookState,
   resolveHookArtifactPath,
 } from "./post-unit-hooks.js";
@@ -536,6 +537,48 @@ function resolveTaskArtifactPath(
   const taskDir = resolveTasksDir(basePath, mid, sid) ?? slicePath;
   const file = resolveFile(taskDir, tid, suffix);
   return file ? join(taskDir, file) : null;
+}
+
+export async function handlePendingHookOutcome(
+  { s, ctx, pi, pauseAuto }: Pick<PostUnitContext, "s" | "ctx" | "pi" | "pauseAuto">,
+): Promise<"stopped" | null> {
+  const trigger = peekRetryTrigger();
+  if (!trigger && !isGateBlockPending()) return null;
+  persistHookState(s.basePath);
+  if (trigger) {
+    ctx.ui.notify(
+      `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
+      "info",
+    );
+    try {
+      const disposition = await prepareHookRetry(trigger, s.canonicalProjectRoot);
+      if (disposition === "retry") {
+        if (!s.orchestration) throw new Error("Hook retry requires an active orchestration session");
+        await s.orchestration.retryActiveUnit({
+          unitType: trigger.unitType,
+          unitId: trigger.unitId,
+        });
+      }
+      acknowledgeRetryTrigger(s.basePath);
+    } catch (e) {
+      debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
+      throw e;
+    }
+  }
+
+  const gateBlock = consumeGateBlock();
+  if (gateBlock) {
+    const verdict = gateBlock.verdict ? ` verdict=${gateBlock.verdict};` : "";
+    const artifact = gateBlock.artifact ? ` artifact=${gateBlock.artifact};` : "";
+    const message =
+      `Post-unit gate "${gateBlock.hookName}" blocked ${gateBlock.triggerUnitType} ${gateBlock.triggerUnitId} ` +
+      (s.currentUnit ? `(detected on completion of ${s.currentUnit.type} ${s.currentUnit.id}):` : "(detected on resume):") +
+      `${verdict}${artifact} ${gateBlock.reason}. Run /gsd status to inspect, then /gsd auto after recovery.`;
+    ctx.ui.notify(message, "warning");
+    await pauseAuto(ctx, pi);
+    return "stopped";
+  }
+  return null;
 }
 
 type PendingHookRetry = NonNullable<ReturnType<typeof peekRetryTrigger>>;
@@ -2783,8 +2826,15 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   }
 
   // ── Post-unit hooks ──
-  if (s.currentUnit && !s.stepMode) {
-    const hookUnit = checkPostUnitHooks(s.currentUnit.type, s.currentUnit.id, s.basePath);
+  // A `criticality: blocking` hook is a gate, not a side effect: it must
+  // complete — or pause for manual recovery — before the next unit is
+  // selected, in auto mode and step mode alike (#2194). Step mode skips
+  // non-blocking hooks, so it dispatches with a blocking-only filter.
+  if (s.currentUnit) {
+    // Persist while a synchronously-set gate block is still pending so the
+    // pause is durable: resume restores the block and re-arms the blocked
+    // hook instead of selecting past the failed gate (#2194).
+    const hookUnit = checkPostUnitHooks(s.currentUnit.type, s.currentUnit.id, s.basePath, { blockingOnly: s.stepMode });
     persistHookState(s.basePath);
     if (hookUnit) {
       if (s.currentUnit) {
@@ -2808,43 +2858,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       return "stopped";
     }
 
-    // Check if a hook requested a retry of the trigger unit
-    const trigger = peekRetryTrigger();
-    if (trigger) {
-      ctx.ui.notify(
-        `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
-        "info",
-      );
-      try {
-        const disposition = await prepareHookRetry(trigger, s.canonicalProjectRoot);
-        if (disposition === "retry") {
-          if (!s.orchestration) throw new Error("Hook retry requires an active orchestration session");
-          await s.orchestration.retryActiveUnit({
-            unitType: trigger.unitType,
-            unitId: trigger.unitId,
-          });
-        }
-        acknowledgeRetryTrigger(s.basePath);
-      } catch (e) {
-        debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
-        throw e;
-      }
-      // Fall through to normal dispatch — deriveState will re-derive the unit.
-    }
-
-    const gateBlock = consumeGateBlock();
-    if (gateBlock) {
-      persistHookState(s.basePath);
-      const verdict = gateBlock.verdict ? ` verdict=${gateBlock.verdict};` : "";
-      const artifact = gateBlock.artifact ? ` artifact=${gateBlock.artifact};` : "";
-      const message =
-        `Post-unit gate "${gateBlock.hookName}" blocked ${gateBlock.triggerUnitType} ${gateBlock.triggerUnitId} ` +
-        `(detected on completion of ${s.currentUnit.type} ${s.currentUnit.id}):` +
-        `${verdict}${artifact} ${gateBlock.reason}. Run /gsd status to inspect, then /gsd auto after recovery.`;
-      ctx.ui.notify(message, "warning");
-      await pauseAuto(ctx, pi);
-      return "stopped";
-    }
+    if (await handlePendingHookOutcome(pctx)) return "stopped";
   }
 
   // ── Fast-path stop detection (#3487) ──

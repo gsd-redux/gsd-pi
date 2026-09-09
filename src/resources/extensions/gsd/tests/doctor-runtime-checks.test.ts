@@ -193,3 +193,46 @@ test("doctor surfaces unresolved projection evidence with recovery instructions"
   assert.match(issue.message, /--action=restore/u);
   assert.equal(issue.fixable, false);
 });
+
+test("doctor fix preserves a pending gate block in hook-state.json (#2194)", async (t) => {
+  const dir = createGitProject();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  const hookStatePath = join(dir, ".gsd", "hook-state.json");
+  const writeHookState = (gateBlockPending: unknown): void => {
+    writeFileSync(hookStatePath, JSON.stringify({
+      cycleCounts: { "slice-plan-review/plan-slice/M001/S01": 1 },
+      redispatchedGateKeys: [],
+      activeHook: null,
+      hookQueue: [],
+      retryPending: false,
+      retryTrigger: null,
+      gateBlockPending,
+      savedAt: new Date().toISOString(),
+    }), "utf-8");
+  };
+  writeHookState({
+    hookName: "slice-plan-review",
+    triggerUnitType: "plan-slice",
+    triggerUnitId: "M001/S01",
+    artifact: "SLICE-REVIEW.md",
+    action: "pause",
+    reason: "gate cycle budget exhausted before slice-plan-review produced a passing outcome",
+    cycle: 1,
+    maxCycles: 1,
+  });
+
+  // A pending block re-arms a failed gate on resume; the stale-state fix
+  // must not erase it.
+  await runGSDDoctor(dir, { fix: true });
+  const preserved = JSON.parse(readFileSync(hookStatePath, "utf-8"));
+  assert.equal(preserved.gateBlockPending?.hookName, "slice-plan-review");
+  assert.equal(preserved.gateBlockPending?.triggerUnitId, "M001/S01");
+
+  // Without a pending block the same residual state is still stale and cleared.
+  writeHookState(null);
+  await runGSDDoctor(dir, { fix: true });
+  const cleared = JSON.parse(readFileSync(hookStatePath, "utf-8"));
+  assert.deepEqual(cleared.cycleCounts, {});
+});

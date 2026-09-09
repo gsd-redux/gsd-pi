@@ -27,8 +27,9 @@ export function checkPostUnitHooks(
   completedUnitType: string,
   completedUnitId: string,
   basePath: string,
+  opts?: { blockingOnly?: boolean },
 ): HookDispatchResult | null {
-  return getOrCreateRegistry().evaluatePostUnit(completedUnitType, completedUnitId, basePath);
+  return getOrCreateRegistry().evaluatePostUnit(completedUnitType, completedUnitId, basePath, opts);
 }
 
 export function getActiveHook(): HookExecutionState | null {
@@ -88,6 +89,25 @@ export function restoreHookState(basePath: string): void {
   getOrCreateRegistry().restoreState(basePath);
 }
 
+/** Shared tail of the resume reconciles: enqueue a hook dispatch unless an
+ *  equivalent item is already queued. */
+function enqueueHookDispatch(
+  dispatch: HookDispatchResult,
+  sidecarQueue: SidecarItem[],
+): void {
+  const alreadyQueued = sidecarQueue.some(
+    item => item.kind === "hook" && item.unitType === dispatch.unitType,
+  );
+  if (alreadyQueued) return;
+  sidecarQueue.push({
+    kind: "hook",
+    unitType: dispatch.unitType,
+    unitId: dispatch.unitId,
+    prompt: dispatch.prompt,
+    model: dispatch.model,
+  });
+}
+
 /**
  * Reconcile a restored `activeHook` against the session's sidecar queue.
  *
@@ -106,17 +126,26 @@ export function reconcileRestoredHookDispatch(
 ): void {
   const dispatch = getOrCreateRegistry().getPendingHookDispatch(basePath);
   if (!dispatch) return;
-  const alreadyQueued = sidecarQueue.some(
-    item => item.kind === "hook" && item.unitType === dispatch.unitType,
-  );
-  if (alreadyQueued) return;
-  sidecarQueue.push({
-    kind: "hook",
-    unitType: dispatch.unitType,
-    unitId: dispatch.unitId,
-    prompt: dispatch.prompt,
-    model: dispatch.model,
-  });
+  enqueueHookDispatch(dispatch, sidecarQueue);
+}
+
+/**
+ * Reconcile a restored gate block against the session's sidecar queue (#2194).
+ *
+ * A blocking gate that paused auto-mode clears `activeHook` and persists its
+ * block. Without this, resume finds no hook dispatch and the next
+ * `/gsd next`/`/gsd auto` can select an execute-task unit without the hook
+ * passing. Re-enqueue the blocked hook so it re-runs before any unit is
+ * selected; the registry re-arms it as in-flight so its completion is
+ * re-assessed against the gate artifact.
+ */
+export function reconcileRestoredGateBlock(
+  basePath: string,
+  sidecarQueue: SidecarItem[],
+): void {
+  const dispatch = getOrCreateRegistry().reconcileRestoredGateBlock(basePath);
+  if (!dispatch) return;
+  enqueueHookDispatch(dispatch, sidecarQueue);
 }
 
 export function clearPersistedHookState(basePath: string): void {

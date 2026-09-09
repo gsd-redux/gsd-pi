@@ -73,7 +73,7 @@ import { worktreePath as getWorktreeDir, isInsideWorktreesDir } from "./worktree
 import { emitWorktreeOrphaned } from "./worktree-telemetry.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
-import { restoreHookState, resetHookState, reconcileRestoredHookDispatch } from "./post-unit-hooks.js";
+import { restoreHookState, resetHookState, reconcileRestoredHookDispatch, reconcileRestoredGateBlock } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
 import {
@@ -1723,6 +1723,9 @@ export async function bootstrapAutoSession(
     // persisted); re-enqueue it so the hook runs instead of blocking the next
     // unrelated unit's close-out (#1246).
     reconcileRestoredHookDispatch(base, s.sidecarQueue);
+    // A restored gate block has no dispatch either; re-enqueue the blocked
+    // hook so a failed blocking gate cannot be bypassed by resuming (#2194).
+    reconcileRestoredGateBlock(base, s.sidecarQueue);
     resetProactiveHealing();
     // Notify user on health level transitions (green→yellow→red and back)
     setLevelChangeCallback((_from, to, summary) => {

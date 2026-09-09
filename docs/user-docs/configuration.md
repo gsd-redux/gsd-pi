@@ -1022,7 +1022,9 @@ See [Remote Questions](./remote-questions.md) for setup instructions and Telegra
 
 ### `post_unit_hooks`
 
-Custom hooks that fire after specific unit types complete:
+Custom hooks that fire after specific unit types complete. See the
+[preferences reference](../../src/resources/extensions/gsd/docs/preferences-reference.md#field-guide)
+for blocking gates, step-mode behavior, and pause/resume recovery.
 
 ```yaml
 post_unit_hooks:

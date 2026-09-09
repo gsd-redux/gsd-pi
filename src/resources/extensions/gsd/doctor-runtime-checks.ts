@@ -290,9 +290,14 @@ export async function checkRuntimeHealth(
       const state = JSON.parse(raw);
       const hasCycleCounts = state.cycleCounts && typeof state.cycleCounts === "object"
         && Object.keys(state.cycleCounts).length > 0;
+      // A persisted gate block re-arms a failed blocking gate on resume;
+      // clearing it would let unreviewed work execute, so it is never stale (#2194).
+      const hasPendingGateBlock = state.gateBlockPending
+        && typeof state.gateBlockPending === "object"
+        && typeof state.gateBlockPending.hookName === "string";
 
       // Only flag if there are actual cycle counts AND no auto-mode is running
-      if (hasCycleCounts) {
+      if (hasCycleCounts && !hasPendingGateBlock) {
         const lock = readCrashLock(basePath);
         const autoRunning = lock ? isLockProcessAlive(lock) : false;
 

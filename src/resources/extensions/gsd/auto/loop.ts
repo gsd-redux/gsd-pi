@@ -29,6 +29,7 @@ import {
 import { _clearCurrentResolve } from "./resolve.js";
 import { runGuards } from "./phases.js";
 import { runFinalize } from "./finalize.js";
+import { handlePendingHookOutcome } from "../auto-post-unit.js";
 import {
   resetSessionTimeoutState,
   restoreTaskHostVerificationContext,
@@ -775,6 +776,11 @@ export async function autoLoop(
       // ── Blanket try/catch: one bad iteration must not kill the session
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
+
+      if (await handlePendingHookOutcome({ s, ctx, pi, pauseAuto: deps.pauseAuto })) {
+        finishTurn("stopped", "manual-attention", "gate-blocked", "gate-blocked");
+        break;
+      }
 
       // ── Check sidecar queue before deriveState ──
       // NOTE: Sidecar dequeue MUST run before validateWorkflowSessionLock so a

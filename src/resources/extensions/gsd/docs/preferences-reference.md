@@ -351,8 +351,8 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   - `prompt`: string — prompt sent to the LLM. Supports `{milestoneId}`, `{sliceId}`, `{taskId}` substitutions.
   - `max_cycles`: number — max times this hook fires per trigger (default: 1, max: 10).
   - `model`: optional model override. Accepts a bare model ID **or** the same `{ model, provider?, fallbacks? }` object form as `models.<phase>`. With `fallbacks[]`, a transient trip of the primary provider falls back to the next entry instead of hard-failing the hook — which, for a `blocking` hook with `on_block: { action: pause }`, would otherwise pause the whole run.
-  - `artifact`: string — expected output file name (relative to task/slice dir). Hook is skipped if file already exists (idempotent).
-  - `criticality`: `"advisory"` or `"blocking"` — advisory preserves current best-effort behavior; blocking requires clean hook completion plus a valid outcome verdict before auto-mode advances. Default: `"advisory"`.
+  - `artifact`: string — expected output file name (relative to task/slice dir). Advisory hooks skip an existing artifact; blocking hooks assess its outcome before continuing.
+  - `criticality`: `"advisory"` or `"blocking"` — advisory preserves best-effort behavior in auto mode and is skipped in step mode (`/gsd next`). Blocking hooks require clean completion plus a valid outcome verdict before either mode advances. Default: `"advisory"`.
   - `retry_on`: string — if this file is produced instead of the artifact, re-run the trigger unit then re-run hooks.
   - `on_block`: object — optional routing for blocking findings:
     - `action`: `"retry-unit"`, `"retry-task"`, `"queue-task"`, `"queue-slice"`, or `"pause"`.
@@ -363,6 +363,11 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   Blocking hook artifacts must begin with YAML frontmatter containing either `verdict` or `outcome.verdict`.
   Supported verdicts are `pass`, `advisory`, `needs-rework`, `needs-remediation`, and `needs-attention`.
   `pass` and `advisory` continue; `needs-rework` retries the trigger unit when routed with `retry-unit`/`retry-task`; `needs-remediation` and `needs-attention` pause with recovery guidance.
+  Pending gate blocks survive pause/resume, including queued sibling gates and
+  the trigger's completion identity for retry routing. Resume reconciles these
+  gates before selecting the next unit: a resolved gate releases its siblings;
+  a sibling that still needs attention holds selection. Doctor's stale hook-state
+  cleanup preserves pending gate blocks.
   Hook artifacts are compatibility inputs to hook routing, not lifecycle
   authority. Any resulting Task or Slice retry, cancellation, completion, or
   reopen still commits through the canonical database operation; editing a hook
