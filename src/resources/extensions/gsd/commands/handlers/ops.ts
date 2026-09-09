@@ -147,7 +147,9 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     return true;
   }
   if (trimmed === "rebuild" || trimmed.startsWith("rebuild ")) {
-    await handleRebuild(ctx, projectRoot(), trimmed.replace(/^rebuild\s*/, "").trim());
+    // Projection destination is the invocation root (worktree-local inside an
+    // active worktree); DB authority stays with the open project-scoped DB (#2232).
+    await handleRebuild(ctx, currentDirectoryRoot(), trimmed.replace(/^rebuild\s*/, "").trim());
     return true;
   }
   if (trimmed === "db restore-backup" || trimmed.startsWith("db restore-backup ")) {
