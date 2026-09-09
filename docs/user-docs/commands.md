@@ -24,7 +24,7 @@
 | `/gsd debug list` | List persisted debug sessions |
 | `/gsd debug status <slug>` | Show status for one debug session slug |
 | `/gsd debug continue <slug>` | Resume an existing debug session slug |
-| `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> | <issue text>]`) |
+| `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> \| <issue text>]`) |
 | `/gsd dispatch` | Dispatch a specific phase directly (research, plan, execute, complete, validate, reassess, uat, replan) |
 | `/gsd verdict <pass\|needs-attention\|needs-remediation>` | Override an unadopted compatibility milestone's recorded validation verdict with an explicit rationale; adopted milestones must rerun canonical validation with current evidence |
 | `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
@@ -109,6 +109,8 @@ After writing the file, GSD attempts to open it in a browser using the local pla
 | `/gsd rebuild markdown` | Preserve externally edited modeled projections under `.gsd/quarantine/projections/`, then rebuild from the canonical database without importing markdown |
 | `/gsd rebuild database` | Reserved for DB-native rebuilds; does not import markdown projections |
 | `/gsd language <language\|off\|clear>` | Set or clear the global response language |
+
+Use `/gsd run-hook <hook-name> <unit-type> <unit-id>` to trigger a configured hook. Run `/gsd run-hook` without arguments for the supported unit types. The ID must match the selected type's scope: for example, `review complete-milestone M001`, `review plan-slice M001/S01`, or `review execute-task M001/S01/T01` after `/gsd run-hook`. Unique milestone IDs such as `M001-abc123` also work, including within slice and task IDs. Unsupported unit types are rejected with the supported-type list; an invalid ID reports the expected format for its type before the hook is triggered.
 
 The two `/gsd recover` forms serve different recovery domains. Use the no-argument command (and its `--preview`, `--application`, and related flags) only for the evidence-bound legacy markdown/database import flow. When auto mode reports a terminal Task recovery abort or a settled Task with a current `remediate` Recovery Action, repair the underlying defect and run `/gsd recover <recoveryActionId>`. GSD checks that the action is still eligible, prompts for a nonblank repair summary and concrete verification evidence, and authorizes exactly one fresh lineage-linked retry; it does not run that retry itself, so rerun `/gsd auto` after the command succeeds. Stale actions, duplicate authorizations, open blockers, and actions superseded by later Attempts remain rejected.
 
