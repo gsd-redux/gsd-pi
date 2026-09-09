@@ -85,15 +85,21 @@ export interface DiscoverCommandsOptions {
 
 /**
  * Task-specific evidence qualifies when at least one record exists and every
- * record reports a passing verdict with a zero exit code (#1591).
+ * record reports a passing outcome (#1591). The executor's staged verdict is
+ * authoritative: negated verify idioms (`! grep -q`, `grep -v`,
+ * `git diff --exit-code`) succeed on a non-zero exit, so a "pass" verdict
+ * qualifies even with a non-zero exitCode. `exitCode === 0` is the fallback
+ * for records staged without a verdict (#2213).
  */
 export function hasQualifyingTaskEvidence(
   evidence: TaskVerificationEvidence[] | undefined,
 ): boolean {
   if (!evidence || evidence.length === 0) return false;
-  return evidence.every((record) =>
-    record.exitCode === 0 && /^(pass|passed)$/i.test((record.verdict ?? "").trim())
-  );
+  return evidence.every((record) => {
+    const verdict = (record.verdict ?? "").trim();
+    if (verdict) return /^(pass|passed)$/i.test(verdict);
+    return record.exitCode === 0;
+  });
 }
 
 export interface DiscoveredCommands {

@@ -5,6 +5,7 @@ import type { VerificationResult as VerificationGateResult } from "./types.js";
 
 export type VerificationVerdictReason =
   | "passed"
+  | "passed-via-task-evidence"
   | "no-host-checks"
   | "command-not-found"
   | "execution-fault"
@@ -40,12 +41,38 @@ export function describeHostVerificationRationale(input: {
   return `Host verification ${input.verdict}: check ${input.checkName} observed ${input.observed}, expected ${input.expected}. Evidence: ${input.evidenceRef}.${next}`;
 }
 
+export interface DecideVerificationVerdictOptions {
+  /**
+   * Structured task evidence qualifies (all records exit 0 / verdict pass,
+   * per #1591). #2209: when the only non-zero checks are `command-not-found`
+   * — a platform fault, not a requirement failure — qualifying evidence
+   * proves the task and the verdict passes instead of pausing.
+   */
+  hasQualifyingEvidence?: boolean;
+}
+
 export function decideVerificationVerdict(
   unitType: string,
   result: VerificationGateResult,
+  options?: DecideVerificationVerdictOptions,
 ): VerificationVerdict {
   const unrunnableCheck = result.checks.find((check) => check.failureClass === "command-not-found");
   if (unrunnableCheck) {
+    // Only bypass the pause when the unrunnable command is the sole failure —
+    // a genuine failing check next to it can never be laundered into a pass,
+    // and neither can a blocking runtime error on the result.
+    const onlyUnrunnable = result.checks.every(
+      (check) => check.exitCode === 0 || check.failureClass === "command-not-found",
+    );
+    const hasBlockingRuntimeError = (result.runtimeErrors ?? []).some((error) => error.blocking);
+    if (onlyUnrunnable && !hasBlockingRuntimeError && options?.hasQualifyingEvidence) {
+      return {
+        passed: true,
+        reason: "passed-via-task-evidence",
+        retryable: false,
+        failureContext: "",
+      };
+    }
     return {
       passed: false,
       reason: "command-not-found",

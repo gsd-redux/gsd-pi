@@ -84,11 +84,15 @@ describe("getTaskVerificationEvidence: unknown exit codes", () => {
     assert.equal(evidence.durationMs, undefined);
   });
 
-  test("evidence with an unknown exit_code does not qualify as passing", () => {
+  test("evidence with an unknown exit_code qualifies via its staged verdict (#2213)", () => {
     if (!isDbAvailable()) return;
+    // #2213: the executor's staged verdict is authoritative when present —
+    // exit_code is only the fallback for verdictless records. A NULL exit_code
+    // with an explicit "pass" verdict (e.g. a negated idiom whose code the
+    // harness could not capture) now qualifies.
     insertRawEvidence({ command: "pnpm test", exitCode: null, verdict: "pass", durationMs: null });
 
-    assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), false);
+    assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), true);
   });
 
   test("a genuinely passing row still qualifies", () => {
@@ -110,7 +114,7 @@ describe("getTaskVerificationEvidence: unknown exit codes", () => {
     assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), true);
   });
 
-  test("one unknown exit_code disqualifies an otherwise passing evidence set", () => {
+  test("one unknown exit_code no longer disqualifies an otherwise passing set (#2213)", () => {
     if (!isDbAvailable()) return;
     insertVerificationEvidence({
       taskId: TID,
@@ -126,6 +130,83 @@ describe("getTaskVerificationEvidence: unknown exit codes", () => {
     const evidence = getTaskVerificationEvidence(MID, SID, TID);
 
     assert.equal(evidence.length, 2);
-    assert.equal(hasQualifyingTaskEvidence(evidence), false);
+    // #2213: the staged verdict is authoritative when present, so an unknown
+    // exit_code on an explicitly passing record no longer poisons the set.
+    assert.equal(hasQualifyingTaskEvidence(evidence), true);
+  });
+});
+
+// ─── Negated-idiom evidence: deliberate non-zero exits (#2213) ──────────────
+describe("hasQualifyingTaskEvidence: negated verify idioms", () => {
+  beforeEach(() => {
+    openDatabase(":memory:");
+    if (!isDbAvailable()) return;
+    insertMilestone({ id: MID });
+    insertSlice({ id: SID, milestoneId: MID });
+    insertTask({ id: TID, sliceId: SID, milestoneId: MID });
+  });
+
+  test("a negated-idiom record (exit 1 = pass, verdict pass) qualifies", () => {
+    if (!isDbAvailable()) return;
+    insertVerificationEvidence({
+      taskId: TID,
+      sliceId: SID,
+      milestoneId: MID,
+      // `! grep -q "X" file` exits 1 when the absence check PASSES.
+      command: '! grep -q "VBA" src/lib/content/service-pages.ts',
+      exitCode: 1,
+      verdict: "pass",
+      durationMs: 400,
+    });
+
+    assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), true);
+  });
+
+  test("a mixed set (exit-0 pass + deliberate exit-1 pass) qualifies", () => {
+    if (!isDbAvailable()) return;
+    insertVerificationEvidence({
+      taskId: TID,
+      sliceId: SID,
+      milestoneId: MID,
+      command: "npx tsc --noEmit",
+      exitCode: 0,
+      verdict: "pass",
+      durationMs: 900,
+    });
+    insertVerificationEvidence({
+      taskId: TID,
+      sliceId: SID,
+      milestoneId: MID,
+      command: '! grep -q "VBA" src/lib/content/service-pages.ts',
+      exitCode: 1,
+      verdict: "pass",
+      durationMs: 300,
+    });
+
+    assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), true);
+  });
+
+  test("a record the executor marked fail still disqualifies the set", () => {
+    if (!isDbAvailable()) return;
+    insertVerificationEvidence({
+      taskId: TID,
+      sliceId: SID,
+      milestoneId: MID,
+      command: "npx tsc --noEmit",
+      exitCode: 0,
+      verdict: "pass",
+      durationMs: 900,
+    });
+    insertVerificationEvidence({
+      taskId: TID,
+      sliceId: SID,
+      milestoneId: MID,
+      command: "npx playwright test",
+      exitCode: 1,
+      verdict: "fail",
+      durationMs: 400,
+    });
+
+    assert.equal(hasQualifyingTaskEvidence(getTaskVerificationEvidence(MID, SID, TID)), false);
   });
 });
