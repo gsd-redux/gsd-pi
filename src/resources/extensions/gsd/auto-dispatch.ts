@@ -182,6 +182,12 @@ export interface DispatchContext {
   sessionBaseUrl?: string;
   /** Session model auth mode, used for transport preflight checks. */
   sessionAuthMode?: "apiKey" | "oauth" | "externalCli" | "none";
+  /**
+   * Preview mode (read-only `gsd headless ... query`): dispatch decisions are
+   * computed exactly as in a real turn, but no rule may persist a dispatch
+   * side effect (DB writes, file writes, counters, markers).
+   */
+  preview?: boolean;
 }
 
 function resolveExistingExpectedArtifact(
@@ -377,12 +383,20 @@ export async function readUatGateVerdict(
  * Returns false in light mode (or when prefs absent) so the milestone
  * rules behave exactly as before.
  */
-export function getDeepStageGate(prefs: GSDPreferences | undefined, basePath: string): DeepStageGate {
-  return resolveDeepProjectSetupState(prefs, basePath);
+export function getDeepStageGate(
+  prefs: GSDPreferences | undefined,
+  basePath: string,
+  preview = false,
+): DeepStageGate {
+  return resolveDeepProjectSetupState(prefs, basePath, preview);
 }
 
-export function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath: string): boolean {
-  const gate = getDeepStageGate(prefs, basePath);
+export function hasPendingDeepStage(
+  prefs: GSDPreferences | undefined,
+  basePath: string,
+  preview = false,
+): boolean {
+  const gate = getDeepStageGate(prefs, basePath, preview);
   return gate.status === "pending" || gate.status === "blocked";
 }
 
@@ -835,17 +849,21 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "rewrite-docs (override gate)",
-    match: async ({ mid, midTitle, state, basePath, session }) => {
+    match: async ({ mid, midTitle, state, basePath, session, preview }) => {
       const pendingOverrides = await loadActiveOverrides(basePath);
       if (pendingOverrides.length === 0) return null;
       const count = getRewriteCount(basePath);
       if (count >= MAX_REWRITE_ATTEMPTS) {
-        const { resolveAllOverrides } = await import("./files.js");
-        await resolveAllOverrides(basePath);
-        setRewriteCount(basePath, 0);
+        // Preview: same fall-through decision, no override resolution or
+        // counter reset persisted.
+        if (!preview) {
+          const { resolveAllOverrides } = await import("./files.js");
+          await resolveAllOverrides(basePath);
+          setRewriteCount(basePath, 0);
+        }
         return null;
       }
-      setRewriteCount(basePath, count + 1);
+      if (!preview) setRewriteCount(basePath, count + 1);
       const unitId = state.activeSlice ? `${mid}/${state.activeSlice.id}` : mid;
       return {
         action: "dispatch",
@@ -875,7 +893,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // Fire BEFORE the execution-entry phase rules so we redispatch to
     // `discuss-milestone` instead of hitting the plan-v2 gate.
     name: "execution-entry phase (no context) → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, session, prefs, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, session, prefs, structuredQuestionsAvailable, preview }) => {
       if (!EXECUTION_ENTRY_PHASES.has(state.phase)) return null;
       if (!MILESTONE_ID_RE.test(mid)) return null;
       if (isRegistryMilestoneComplete(state, mid)) return null;
@@ -904,7 +922,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // deadlock. Deep planning is still user-driven even inside auto-mode,
       // so it must wait for explicit approval instead of taking this bypass.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        hostWriteGateAdapter.markDepthVerified(mid, basePath);
+        if (!preview) hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -954,6 +972,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       activeTools,
       registeredTools,
       sessionBaseUrl,
+      preview,
     }) => {
       const needsRunUat = await checkNeedsRunUat(
         basePath,
@@ -1012,7 +1031,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
           level: "warning" as const,
         };
       }
-      incrementUatCount(basePath, mid, sliceId);
+      // Preview must not burn a retry attempt; the dispatch decision is shared.
+      if (!preview) incrementUatCount(basePath, mid, sliceId);
       const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
       const uatContent = await loadFile(uatFile);
       return {
@@ -1083,18 +1103,18 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "needs-discussion → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, prefs, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, structuredQuestionsAvailable, preview }) => {
       if (state.phase !== "needs-discussion") return null;
       // Deep mode bypass: yield to the project-level deep stage gates
       // (workflow-prefs, discuss-project, discuss-requirements,
       // research-decision, research-project) when any of them still have
       // work pending. Without this guard, the milestone discuss rule wins
       // before the deep rules ever get a chance to fire.
-      if (hasPendingDeepStage(prefs, basePath)) return null;
+      if (hasPendingDeepStage(prefs, basePath, preview)) return null;
       // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
       // pre-verify deep planning's user-facing milestone approval gate.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        hostWriteGateAdapter.markDepthVerified(mid, basePath);
+        if (!preview) hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -1117,11 +1137,12 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // defaults-writing. Keep it in-process so missing preferences cannot loop
     // on the same no-input unit until the liveness backstop trips.
     name: "deep: pre-planning (no workflow prefs) → workflow-preferences",
-    match: async ({ state, basePath, prefs }) => {
+    match: async ({ state, basePath, prefs, preview }) => {
       if (prefs?.planning_depth !== "deep") return null;
       if (state.phase !== "pre-planning" && state.phase !== "needs-discussion") return null;
       if (isWorkflowPrefsCaptured(basePath)) return null; // already captured — fall through
-      ensureWorkflowPreferencesCaptured(basePath);
+      // Preview: report the same fall-through without writing the defaults.
+      if (!preview) ensureWorkflowPreferencesCaptured(basePath);
       return null;
     },
   },
@@ -1175,10 +1196,10 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // rule reads the marker to decide whether to fan out 4 parallel research subagents.
     // Light mode skips entirely.
     name: "deep: pre-planning (no research decision) → research-decision",
-    match: async ({ state, basePath, prefs, structuredQuestionsAvailable }) => {
+    match: async ({ state, basePath, prefs, structuredQuestionsAvailable, preview }) => {
       if (prefs?.planning_depth !== "deep") return null;
       if (state.phase !== "pre-planning" && state.phase !== "needs-discussion") return null;
-      const gate = resolveDeepProjectSetupState(prefs, basePath);
+      const gate = resolveDeepProjectSetupState(prefs, basePath, preview);
       if (gate.status !== "pending" || gate.stage !== "research-decision") return null;
       return {
         action: "dispatch",
@@ -1196,10 +1217,10 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // out 4 parallel subagents (stack, features, architecture, pitfalls).
     // Skipped entirely when user chose "skip" at the research-decision gate.
     name: "deep: pre-planning (research approved, files missing) → research-project",
-    match: async ({ state, basePath, prefs, structuredQuestionsAvailable, sessionProvider }) => {
+    match: async ({ state, basePath, prefs, structuredQuestionsAvailable, sessionProvider, preview }) => {
       if (prefs?.planning_depth !== "deep") return null;
       if (state.phase !== "pre-planning" && state.phase !== "needs-discussion") return null;
-      const gate = resolveDeepProjectSetupState(prefs, basePath);
+      const gate = resolveDeepProjectSetupState(prefs, basePath, preview);
       if (gate.status === "blocked" && gate.stage === "project-research") {
         return {
           action: "stop" as const,
@@ -1219,18 +1240,22 @@ export const DISPATCH_RULES: DispatchRule[] = [
         level: "info" as const,
       };
       if (existsSync(inflightMarkerPath)) return researchInFlightStop;
-      mkdirSync(runtimeDir, { recursive: true });
-      try {
-        writeFileSync(
-          inflightMarkerPath,
-          JSON.stringify({ started: new Date().toISOString() }) + "\n",
-          { encoding: "utf-8", flag: "wx" },
-        );
-      } catch (err) {
-        if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
-          return researchInFlightStop;
+      // Preview: the in-flight marker is a dispatch effect — report the
+      // dispatch without claiming the fan-out.
+      if (!preview) {
+        mkdirSync(runtimeDir, { recursive: true });
+        try {
+          writeFileSync(
+            inflightMarkerPath,
+            JSON.stringify({ started: new Date().toISOString() }) + "\n",
+            { encoding: "utf-8", flag: "wx" },
+          );
+        } catch (err) {
+          if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
+            return researchInFlightStop;
+          }
+          throw err;
         }
-        throw err;
       }
       try {
         const prompt = await researchProjectPromptBuilder(basePath, structuredQuestionsAvailable, sessionProvider);
@@ -1242,7 +1267,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
         };
       } catch (err) {
         try {
-          if (existsSync(inflightMarkerPath)) unlinkSync(inflightMarkerPath);
+          // Preview never created the marker — unlinking could delete one a
+          // concurrent dispatch just created (#2230).
+          if (!preview && existsSync(inflightMarkerPath)) unlinkSync(inflightMarkerPath);
         } catch (cleanupErr) {
           logWarning(
             "dispatch",
@@ -1255,7 +1282,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "pre-planning (no context) → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, prefs, session, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, session, structuredQuestionsAvailable, preview }) => {
       if (state.phase !== "pre-planning") return null;
       if (isRegistryMilestoneComplete(state, mid)) return null;
       const contextBasePath = resolveWorktreeProjectRoot(basePath, session?.originalBasePath);
@@ -1268,7 +1295,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
       // pre-verify deep planning's user-facing milestone approval gate.
       if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
-        hostWriteGateAdapter.markDepthVerified(mid, basePath);
+        if (!preview) hostWriteGateAdapter.markDepthVerified(mid, basePath);
       }
       return {
         action: "dispatch",
@@ -1456,7 +1483,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // PLAN.md is only a projection, so plan-slice/refine-slice handlers must
     // explicitly clear `is_sketch` when a sketch becomes a full plan.
     name: "refining → refine-slice",
-    match: async ({ state, mid, midTitle, basePath, prefs, sessionContextWindow, modelRegistry, sessionProvider }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, sessionContextWindow, modelRegistry, sessionProvider, preview }) => {
       if (state.phase !== "refining") return null;
       if (!state.activeSlice) return missingSliceStop(mid, state.phase);
       const sid = state.activeSlice.id;
@@ -1467,7 +1494,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (isDbAvailable()) {
         const planFile = resolveSliceFile(basePath, mid, sid, "PLAN");
         if (planFile && existsSync(planFile)) {
-          setSliceSketchFlag(mid, sid, false);
+          // Preview shares the skip decision; only the heal write is
+          // suppressed.
+          if (!preview) setSliceSketchFlag(mid, sid, false);
           return { action: "skip" };
         }
       }
@@ -1548,7 +1577,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "evaluating-gates → gate-evaluate",
-    match: async ({ state, mid, midTitle, basePath, prefs }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, preview }) => {
       if (state.phase !== "evaluating-gates") return null;
       if (!state.activeSlice) return missingSliceStop(mid, state.phase);
       const sid = state.activeSlice.id;
@@ -1557,7 +1586,10 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Gate evaluation is opt-in via preferences
       const gateConfig = prefs?.gate_evaluation;
       if (!gateConfig?.enabled) {
-        markPendingGatesOmittedForTurn(mid, sid, "gate-evaluate");
+        // Preview contract: a preview must not persist dispatch effects. The
+        // skip decision is shared; only the omission write is suppressed
+        // (#2230 — a headless query must not flip pending gates).
+        if (!preview) markPendingGatesOmittedForTurn(mid, sid, "gate-evaluate");
         return { action: "skip" };
       }
 
@@ -1631,7 +1663,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "executing → reactive-execute (parallel dispatch)",
-    match: async ({ state, mid, midTitle, basePath, prefs, sessionContextWindow, modelRegistry, sessionProvider }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, sessionContextWindow, modelRegistry, sessionProvider, preview }) => {
       if (state.phase !== "executing" || !state.activeTask) return null;
       if (!state.activeSlice) return null; // fall through
 
@@ -1719,15 +1751,18 @@ export const DISPATCH_RULES: DispatchRule[] = [
         );
 
         // Persist dispatched batch so verification and recovery can check
-        // exactly which tasks were sent.
-        const { saveReactiveState } = await import("./reactive-graph.js");
-        saveReactiveState(basePath, mid, sid, {
-          sliceId: sid,
-          completed: [...completed],
-          dispatched: selected,
-          graphSnapshot: metrics,
-          updatedAt: new Date().toISOString(),
-        });
+        // exactly which tasks were sent. Preview reports the batch without
+        // persisting it.
+        if (!preview) {
+          const { saveReactiveState } = await import("./reactive-graph.js");
+          saveReactiveState(basePath, mid, sid, {
+            sliceId: sid,
+            completed: [...completed],
+            dispatched: selected,
+            graphSnapshot: metrics,
+            updatedAt: new Date().toISOString(),
+          });
+        }
 
         // Encode selected task IDs in unitId for artifact verification.
         // Format: M001/S01/reactive+T02,T03
@@ -1763,7 +1798,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "executing → execute-task (recover missing task plan → plan-slice)",
-    match: async ({ state, mid, midTitle, basePath, session, sessionContextWindow, modelRegistry, sessionProvider }) => {
+    match: async ({ state, mid, midTitle, basePath, session, sessionContextWindow, modelRegistry, sessionProvider, preview }) => {
       if (state.phase !== "executing" || !state.activeTask) return null;
       if (!state.activeSlice) return missingSliceStop(mid, state.phase);
       const sid = state.activeSlice!.id;
@@ -1807,29 +1842,48 @@ export const DISPATCH_RULES: DispatchRule[] = [
         // artifacts rather than at a hardcoded canonical path.
         let planRenderError: string | null = null;
         if (!resolveSliceFile(artifactBasePath, mid, sid, "PLAN")) {
-          try {
-            const { renderPlanFromDb } = await import("./markdown-renderer.js");
-            const rendered = await renderPlanFromDb(artifactBasePath, mid, sid);
-            process.stderr.write(
-              `gsd-projection-heal: re-rendered missing slice PLAN for ${unitId} from the DB at ${rendered.planPath}\n`,
-            );
-          } catch (err) {
-            // A Windows sharing violation is transient contention, not a DB
-            // projection gap. Preserve it as a typed throw so Recovery
-            // Classification routes through the loop's existing retry budget.
-            throwIfTransientProjectionLockError(err);
-            // Fail loud below: a DB that genuinely lacks the slice rows is a
-            // real error, and the stop diagnosis reports it verbatim.
-            planRenderError = err instanceof Error ? err.message : String(err);
-            logWarning(
-              "dispatch",
-              `slice PLAN re-render from DB failed for ${unitId}: ${planRenderError}`,
-            );
-          }
-          if (slicePlanHasEmbeddedTasks(artifactBasePath, mid, sid)) {
-            session?.missingTaskPlanRetryCount?.delete(unitId);
-            // PLAN restored — fall through to the normal execute-task rule.
-            return null;
+          if (preview) {
+            // Preview: the re-render is a PLAN projection write. Mirror the
+            // failure-free outcome read-only: renderPlanFromDb writes only
+            // after the slice and its active tasks resolve from the DB, and
+            // its rendered plan always carries a <tasks> block — so a real
+            // turn would restore the PLAN, see embedded tasks, and fall
+            // through to the normal execute-task rule (#2230). Otherwise the
+            // render would throw and reach the same replan decision below.
+            const { getSlice, getSliceTasks } = await import("./gsd-db.js");
+            if (
+              isDbAvailable() &&
+              getSlice(mid, sid) &&
+              getSliceTasks(mid, sid).some((task) => task.status !== "skipped")
+            ) {
+              session?.missingTaskPlanRetryCount?.delete(unitId);
+              return null;
+            }
+          } else {
+            try {
+              const { renderPlanFromDb } = await import("./markdown-renderer.js");
+              const rendered = await renderPlanFromDb(artifactBasePath, mid, sid);
+              process.stderr.write(
+                `gsd-projection-heal: re-rendered missing slice PLAN for ${unitId} from the DB at ${rendered.planPath}\n`,
+              );
+            } catch (err) {
+              // A Windows sharing violation is transient contention, not a DB
+              // projection gap. Preserve it as a typed throw so Recovery
+              // Classification routes through the loop's existing retry budget.
+              throwIfTransientProjectionLockError(err);
+              // Fail loud below: a DB that genuinely lacks the slice rows is a
+              // real error, and the stop diagnosis reports it verbatim.
+              planRenderError = err instanceof Error ? err.message : String(err);
+              logWarning(
+                "dispatch",
+                `slice PLAN re-render from DB failed for ${unitId}: ${planRenderError}`,
+              );
+            }
+            if (slicePlanHasEmbeddedTasks(artifactBasePath, mid, sid)) {
+              session?.missingTaskPlanRetryCount?.delete(unitId);
+              // PLAN restored — fall through to the normal execute-task rule.
+              return null;
+            }
           }
         }
         // #1520: if the slice plan with embedded tasks exists at the original
@@ -1961,7 +2015,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   {
     name: "validating-milestone → validate-milestone",
     match: async (ctx) => {
-      const { state, mid, midTitle, basePath, prefs, session } = ctx;
+      const { state, mid, midTitle, basePath, prefs, session, preview } = ctx;
       if (state.phase !== "validating-milestone") return null;
 
       const adoptedMilestone = isMilestoneLifecycleAdopted(mid);
@@ -1982,8 +2036,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // #6225: validation requires per-slice ASSESSMENT artifacts (MV02), but
       // the default auto path can complete all slices without creating them.
       // Backfill no-change assessments for completed slices that already have
-      // SUMMARY evidence before dispatching validate-milestone.
-      if (!adoptedMilestone) backfillMissingAssessmentsFromSummaries(basePath, mid);
+      // SUMMARY evidence before dispatching validate-milestone. Preview skips
+      // the backfill writes; the dispatch decision below is unaffected.
+      if (!adoptedMilestone && !preview) backfillMissingAssessmentsFromSummaries(basePath, mid);
 
       // #4781 phase 2: trivial-scope milestones skip the dedicated validate
       // unit — complete-milestone's own verification steps (3/4/5 in the
@@ -1995,21 +2050,28 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (prefs?.phases?.skip_milestone_validation || trivialVariant) {
         const skipReason = trivialVariant ? "trivial-scope" : "preference";
         if (adoptedMilestone) {
-          const waiver = recordAdoptedMilestoneValidationWaiver(
-            basePath,
-            mid,
-            skipReason,
-            prefs,
-          );
-          if (!waiver.ok) {
-            return {
-              action: "stop",
-              reason: `Cannot waive milestone validation for ${mid}: ${waiver.error}`,
-              level: "warning",
-            };
+          // Preview: skip the waiver commit but keep the downstream guarded
+          // dispatch decision identical.
+          if (!preview) {
+            const waiver = recordAdoptedMilestoneValidationWaiver(
+              basePath,
+              mid,
+              skipReason,
+              prefs,
+            );
+            if (!waiver.ok) {
+              return {
+                action: "stop",
+                reason: `Cannot waive milestone validation for ${mid}: ${waiver.error}`,
+                level: "warning",
+              };
+            }
           }
           const { evaluateGuardedCompleteMilestoneDispatch } = await import("./milestone-closeout.js");
-          return evaluateGuardedCompleteMilestoneDispatch(ctx);
+          // Preview suppressed the waiver write above; tell the guarded
+          // evaluation to treat the would-be waiver as recorded so the
+          // returned decision equals the real turn's (#2230).
+          return evaluateGuardedCompleteMilestoneDispatch(ctx, { assumeValidationWaived: preview });
         }
         const artifactBasePath = resolveArtifactBasePath(basePath, mid, session);
         const projectRoot = resolveWorktreeProjectRoot(basePath, session?.originalBasePath);
@@ -2045,6 +2107,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
           "",
           `Milestone validation was skipped via ${skipSource}.`,
         ].join("\n");
+        // Preview shares the skip decision; the VALIDATION projection and the
+        // DB-backed pass rows are dispatch effects and are not persisted.
+        if (preview) return { action: "skip" };
         atomicWriteSync(validationPath, content, "utf-8");
         try {
           // DB-backed state derivation keys off assessments, not only the file
