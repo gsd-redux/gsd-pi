@@ -126,6 +126,128 @@ test("closeout consistency treats deferred slices as inactive", () => {
   }
 });
 
+test("closeout consistency ignores pending gates of replanned-away (husk) tasks (#2239)", (t) => {
+  t.after(() => closeDatabase());
+  assert.equal(openDatabase(":memory:"), true);
+  insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete" });
+  // Real task: evaluated gate rows are complete.
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Real", status: "complete" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q5", scope: "task", taskId: "T01", status: "complete" });
+  // Husk tasks retained by replan-slice for history/FK state; their
+  // task-scoped gate rows stay pending forever because no session will
+  // ever evaluate them.
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T02", title: "Husk skipped", status: "skipped" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q6", scope: "task", taskId: "T02" });
+  // Legacy/imported rows can carry the raw "cancelled" alias.
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T03", title: "Husk cancelled", status: "cancelled" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q7", scope: "task", taskId: "T03" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  // In-memory DB resolves no artifact base path, so the husk gates have no
+  // evidence and are not evidence-repairable — matching the reported wedge.
+  assert.deepEqual(checkCloseoutConsistencyGate("M001"), { ok: true });
+});
+
+test("closeout consistency still blocks on a slice-scoped gate row that carries a task_id (#2239)", (t) => {
+  t.after(() => closeDatabase());
+  assert.equal(openDatabase(":memory:"), true);
+  insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete" });
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Real", status: "complete" });
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T02", title: "Husk skipped", status: "skipped" });
+  // Scope is what makes a gate task-owned, not a non-empty task_id: the
+  // schema permits slice-scoped rows that carry a task_id, and such a row
+  // must block even when the referenced task was replanned away.
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q8", scope: "slice", taskId: "T02" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  const result = checkCloseoutConsistencyGate("M001");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "quality-gate-pending");
+});
+
+test("closeout consistency still blocks on a pending gate owned by a completed task", (t) => {
+  t.after(() => closeDatabase());
+  assert.equal(openDatabase(":memory:"), true);
+  insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete" });
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Real", status: "complete" });
+  // Evaluated-gate row lost: the task ran, but its gate row is still pending.
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q5", scope: "task", taskId: "T01" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  const result = checkCloseoutConsistencyGate("M001");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "quality-gate-pending");
+});
+
+test("closeout consistency still blocks on a pending slice-scoped gate", (t) => {
+  t.after(() => closeDatabase());
+  assert.equal(openDatabase(":memory:"), true);
+  insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete" });
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Real", status: "complete" });
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T02", title: "Husk skipped", status: "skipped" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q8", scope: "slice" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  const result = checkCloseoutConsistencyGate("M001");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "quality-gate-pending");
+});
+
+test("closeout consistency blocks a deferred task at task-open before gates are consulted", (t) => {
+  t.after(() => closeDatabase());
+  assert.equal(openDatabase(":memory:"), true);
+  insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete" });
+  // Precedence document: "deferred" is not a closed status, so the task-open
+  // check fires before any gate row is examined — the pending-gate exclusion
+  // never gets a chance to run for a deferred task owner.
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Deferred", status: "deferred" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q5", scope: "task", taskId: "T01" });
+  insertAssessment({
+    path: "milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "verdict: pass",
+  });
+
+  const result = checkCloseoutConsistencyGate("M001");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "task-open");
+});
+
 test("closeout consistency persists evidence-backed gate closures before checking pending gates", (t) => {
   const artifactBasePath = realpathSync(mkdtempSync(join(tmpdir(), "closeout-gate-order-")));
   t.after(() => {
