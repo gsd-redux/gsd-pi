@@ -178,6 +178,9 @@ async function runHeadlessQueryUnsafe(
       midTitle: state.activeMilestone.title,
       state,
       prefs: loaded?.preferences,
+      // Read-only contract: the preview decides like a real turn but must not
+      // persist dispatch effects (#2230 — e.g. gate omission on evaluating-gates).
+      preview: true,
     })
     next = {
       action: dispatch.action,

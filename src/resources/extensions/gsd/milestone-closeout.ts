@@ -193,6 +193,7 @@ export async function evaluateCompleteMilestoneDispatch(
 /** Run the complete-milestone guards independently of legacy state derivation. */
 export async function evaluateGuardedCompleteMilestoneDispatch(
   ctx: DispatchContext,
+  opts: { assumeValidationWaived?: boolean } = {},
 ): Promise<DispatchAction> {
   const { mid, midTitle, basePath, prefs } = ctx;
   const adoptedMilestone = isDbAvailable() && isMilestoneLifecycleAdopted(mid);
@@ -204,6 +205,12 @@ export async function evaluateGuardedCompleteMilestoneDispatch(
       const summaryPath = resolveExpectedArtifactPath("complete-milestone", mid, artifactBasePath);
       const summaryMissing = !summaryPath || !existsSync(summaryPath);
       if (summaryMissing) {
+        // Preview must not persist dispatch effects (#2230): report the skip
+        // a successful repair produces without writing the projection.
+        // Failure-path divergence (accepted): when the repair would fail, the
+        // real turn dispatches complete-milestone to retry while preview
+        // still reports skip — a preview cannot write the repair.
+        if (ctx.preview) return { action: "skip" };
         const repair = await repairMissingMilestoneSummaryProjection(basePath, mid);
         if (!repair.ok) {
           logWarning(
@@ -219,8 +226,19 @@ export async function evaluateGuardedCompleteMilestoneDispatch(
     }
   }
 
-  const closeoutGitStop = commitPendingMilestoneCloseoutChanges(basePath, mid);
-  if (closeoutGitStop) return closeoutGitStop;
+  // Preview must never commit from a read-only query (#2230): skip the
+  // closeout preflight commit and continue evaluating the guards.
+  // Failure-path divergence (accepted): when the commit would fail or the
+  // tree has unresolved conflicts, the real turn stops here while preview
+  // continues to the guards below — a preview cannot commit. If the commit
+  // SUCCEEDS it advances HEAD before the consistency gate captures its source
+  // revision, so a dirty tree can make the real turn stop with a revision
+  // mismatch that the preview (evaluated against the uncommitted tree) did
+  // not see.
+  if (!ctx.preview) {
+    const closeoutGitStop = commitPendingMilestoneCloseoutChanges(basePath, mid);
+    if (closeoutGitStop) return closeoutGitStop;
+  }
 
   if (prefs?.uat_dispatch) {
     // DB-authoritative (ADR-017): UAT sign-off gating never parses the
@@ -259,6 +277,11 @@ export async function evaluateGuardedCompleteMilestoneDispatch(
       allowOpenMilestone: true,
       allowPassThroughValidation: !adoptedMilestone,
       artifactBasePath: resolveCanonicalMilestoneRoot(basePath, mid),
+      assumeValidationWaived: opts.assumeValidationWaived,
+      // Preview must not persist the gate's own effects (pass-through
+      // validation recording, evidence-based gate closure) — decisions are
+      // mirrored read-only inside the gate (#2230).
+      readOnly: ctx.preview,
     });
     if (adoptedMilestone && !consistency.ok) {
       return {

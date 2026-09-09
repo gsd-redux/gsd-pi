@@ -128,6 +128,7 @@ function downstreamSetupArtifactsValid(root: string, basePath: string): boolean 
 export function resolveDeepProjectSetupState(
   prefs: GSDPreferences | undefined,
   basePath: string,
+  preview = false,
 ): DeepProjectSetupState {
   if (prefs?.planning_depth !== "deep") {
     return {
@@ -143,8 +144,12 @@ export function resolveDeepProjectSetupState(
     // the missing `workflow_prefs_captured: true` flag is drift (manual edit,
     // partial write, merge conflict). Restore it instead of forcing the user
     // back through setup — the original Bug #2 false-pending root cause.
+    // The heal is persistence-only: the fall-through re-derives its decision
+    // from the same artifacts `downstreamSetupArtifactsValid` just verified,
+    // so suppressing it under preview keeps the returned decision identical
+    // (#2230).
     if (downstreamSetupArtifactsValid(root, basePath)) {
-      ensureWorkflowPreferencesCaptured(basePath);
+      if (!preview) ensureWorkflowPreferencesCaptured(basePath);
       // Fall through — checks below will pass since downstreamSetupArtifactsValid
       // already verified them.
     } else {
@@ -190,7 +195,9 @@ export function resolveDeepProjectSetupState(
 
   const marker = readDecision(basePath);
   if (!marker.exists) {
-    writeDefaultResearchSkipDecision(basePath, "missing-default-repair");
+    // The deterministic skip default below is decided here either way; the
+    // marker write is persistence-only for future turns (#2230 preview).
+    if (!preview) writeDefaultResearchSkipDecision(basePath, "missing-default-repair");
     return {
       status: "complete",
       stage: null,
@@ -198,7 +205,7 @@ export function resolveDeepProjectSetupState(
     };
   }
   if (!marker.valid) {
-    writeDefaultResearchSkipDecision(basePath, "malformed-default-repair");
+    if (!preview) writeDefaultResearchSkipDecision(basePath, "malformed-default-repair");
     return {
       status: "complete",
       stage: null,
@@ -213,7 +220,7 @@ export function resolveDeepProjectSetupState(
     };
   }
   if (!isExplicitResearchDecision(marker)) {
-    writeDefaultResearchSkipDecision(basePath, "legacy-workflow-research-default", marker.source);
+    if (!preview) writeDefaultResearchSkipDecision(basePath, "legacy-workflow-research-default", marker.source);
     return {
       status: "complete",
       stage: null,

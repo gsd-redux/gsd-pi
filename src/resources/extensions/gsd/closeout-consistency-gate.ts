@@ -30,6 +30,7 @@ import { invalidateAllCaches } from "./cache.js";
 import {
   isMilestoneLifecycleAdopted,
   readMilestoneCloseoutAuthorization,
+  type MilestoneCloseoutAuthorization,
   type MilestoneCloseoutBlocker,
 } from "./db/milestone-closeout-readiness.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
@@ -43,6 +44,24 @@ import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
 
 export const CLOSEOUT_CONSISTENCY_BLOCKED_REASON = "closeout-consistency-blocked";
+
+/**
+ * Authorization blockers a fresh validation waiver supersedes. The real
+ * grant only requires an adopted, open lifecycle — it never inspects the
+ * recorded validation state — so under a preview dry-run these blockers are
+ * exactly the ones the would-be waiver would erase. `validation-receipt-invalid`
+ * is excluded: it implies corrupt or multiple waivers, where the real grant
+ * throws and the dispatch rule stops.
+ */
+const VALIDATION_SHAPED_BLOCKERS: ReadonlySet<MilestoneCloseoutBlocker["kind"]> = new Set([
+  "validation-missing",
+  "validation-not-pass",
+  "validation-stale",
+  "validation-attempt-newer",
+  "validation-source-revision-mismatch",
+  "criterion-unsatisfied",
+  "source-revision-mismatch",
+]);
 
 export type CloseoutConsistencyFailureReason =
   | "db-unavailable"
@@ -70,6 +89,20 @@ export interface CloseoutConsistencyOptions {
   allowOpenMilestone?: boolean;
   artifactBasePath?: string;
   allowPassThroughValidation?: boolean;
+  /**
+   * Preview dry-run (#2230): the dispatch rule records the validation waiver
+   * immediately before this gate in a real turn, and preview suppresses that
+   * write. When set, a missing-waiver block is treated as waived (without
+   * writing) so the preview decision equals the real turn's. Any other
+   * blocker still blocks, matching the real post-waiver evaluation.
+   */
+  assumeValidationWaived?: boolean;
+  /**
+   * Preview dry-run (#2230): evaluate without the gate's own writes — the
+   * pass-through validation recorder and evidence-based gate closure.
+   * Decisions are mirrored read-only so the result equals the real turn's.
+   */
+  readOnly?: boolean;
 }
 
 function blocked(reason: CloseoutConsistencyFailureReason, message: string): CloseoutConsistencyResult {
@@ -253,13 +286,21 @@ export function checkCloseoutConsistencyGate(
     validationRequired &&
     !adoptedMilestone &&
     validation?.status !== "pass" &&
-    options.allowPassThroughValidation &&
-    recordCloseoutPassThroughValidationIfReady(
-      milestoneId,
-      options.artifactBasePath ?? artifactBasePathFromDb(),
-    )
+    options.allowPassThroughValidation
   ) {
-    validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+    const artifactBasePath = options.artifactBasePath ?? artifactBasePathFromDb();
+    if (options.readOnly) {
+      // Preview: the pass-through recorder writes a VALIDATION projection and
+      // assessment/gate rows. It only records when no assessment exists and
+      // every closed slice has SUMMARY evidence — mirror those read-only
+      // preconditions and evaluate the rest of the gate as if recorded,
+      // without writing (#2230).
+      if (!validation && artifactBasePath && allSlicesHaveCloseoutSummaryEvidence(milestoneId, artifactBasePath)) {
+        validation = { status: "pass" } as NonNullable<typeof validation>;
+      }
+    } else if (recordCloseoutPassThroughValidationIfReady(milestoneId, artifactBasePath)) {
+      validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+    }
   }
   let canonicalAuthorization = null;
   let authorizationDrift: VerificationSourceDriftDiagnosis = {
@@ -298,6 +339,31 @@ export function checkCloseoutConsistencyGate(
       milestoneId,
       sourceRevision: source.sourceRevision,
     });
+    if (
+      options.assumeValidationWaived &&
+      !canonicalAuthorization.authorized &&
+      canonicalAuthorization.blockers.length > 0 &&
+      canonicalAuthorization.blockers.every(
+        (blocker) => VALIDATION_SHAPED_BLOCKERS.has(blocker.kind),
+      )
+    ) {
+      // Preview dry-run: the would-be waiver is treated as recorded. The real
+      // grant is unconditional with respect to validation state (it only
+      // requires an adopted, open lifecycle and supersedes any prior waiver
+      // or validation event), so any all-validation-shaped blocker would be
+      // erased by the fresh waiver. The fabricated receipt carries the
+      // gate's own source revision, so the revision-match outcome equals the
+      // real waiver granted for this tree. `validation-receipt-invalid` is
+      // excluded: it implies corrupt/multiple waivers, where the real grant
+      // throws and the rule stops.
+      canonicalAuthorization = {
+        authorized: true,
+        kind: "waived",
+        eventId: `preview:${milestoneId}`,
+        revision: 0,
+        testedSourceRevision: source.sourceRevision,
+      } satisfies MilestoneCloseoutAuthorization;
+    }
     if (
       !canonicalAuthorization.authorized &&
       canonicalAuthorization.blockers.some(
@@ -355,7 +421,10 @@ export function checkCloseoutConsistencyGate(
     ? inspectQualityGatesFromEvidence(milestoneId, gateClosureOptions)
     : { repaired: [], unresolved: [] };
 
-  if (!adoptedMilestone && gateClosureOptions) {
+  // Closing gates persists what the read-only inspection above already found;
+  // the pending-gate decision below uses plannedGateClosure either way, so
+  // suppressing the write under preview is decision-neutral (#2230).
+  if (!adoptedMilestone && gateClosureOptions && !options.readOnly) {
     closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
   }
 
